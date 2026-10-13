@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Town12 · 城市空间标定</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./map.js" defer></script>
+  <script src="./airsim.js" defer></script>
+</head>
+<body>
+  <header>
+    <div><span class="eyebrow">TOWN12 / 城市标定</span><h1>城市空间标定</h1></div>
+    <div class="version">4 × 4 km</div>
+  </header>
+  <main>
+    <section class="map-panel" aria-label="交互标定地图">
+      <canvas id="map" aria-label="滚轮缩放，拖动平移，点击区域查看详情"></canvas>
+      <div class="map-tools">
+        <button id="fit" type="button">全图</button>
+        <button id="zoom-in" type="button" aria-label="放大">＋</button>
+        <button id="zoom-out" type="button" aria-label="缩小">－</button>
+      </div>
+      <div id="loading" role="status">正在读取标定数据…</div>
+      <div id="coords">X — · Y — m</div>
+      <div class="map-key"><span class="native">道路分段</span><span class="constructed">分段连接</span><span class="drone">无人机</span></div>
+    </section>
+    <aside>
+      <div class="sidebar-content">
+      <section id="zones-panel">
+        <h2>查找区域与任务点</h2>
+        <label class="sr-only" for="search">名称、编号或别名</label>
+        <input id="search" type="search" placeholder="搜索医院、学校、基地或编号" disabled>
+        <div id="results" class="results" aria-live="polite"></div>
+        <label class="field" for="category">功能区类型</label>
+        <select id="category" disabled><option value="">全部类型</option></select>
+        <p id="zone-stats" class="muted"></p>
+      </section>
+      <section class="layers">
+        <h2>显示图层</h2>
+        <div class="layer-grid">
+          <label><input id="layer-base" type="checkbox" checked>实景底图</label>
+          <label><input id="layer-zones" type="checkbox" checked>功能区</label>
+          <label><input id="layer-roads" type="checkbox" checked>道路拓扑</label>
+          <label><input id="layer-buildings" type="checkbox" disabled>建筑轮廓</label>
+          <label><input id="layer-drones" type="checkbox" checked>实时无人机</label>
+          <label><input id="layer-trails" type="checkbox" checked>飞行轨迹</label>
+        </div>
+        <label class="field" for="point-mode">任务点</label>
+        <select id="point-mode" disabled>
+          <option value="verified">仅静态核验点（372）</option>
+          <option value="all">全部点位（含定位参考）</option>
+          <option value="none">隐藏点位</option>
+        </select>
+      </section>
+      <section id="object-panel">
+        <div class="section-heading"><h2>选中对象</h2><button id="export" disabled>导出 JSON</button></div>
+        <div id="object-detail" class="object-detail">点击地图中的地块或任务点，查看坐标与用途。</div>
+      </section>
+      </div>
+      <section class="camera-panel" aria-label="无人机实时监控">
+        <div class="camera-heading">
+          <h2>无人机视角</h2>
+          <div class="camera-controls"><label class="sr-only" for="camera-drone">选择无人机</label><select id="camera-drone">
+            <option>UAV_01</option><option>UAV_02</option><option>UAV_03</option><option>UAV_04</option><option>UAV_05</option>
+          </select></div>
+          <span id="airsim-status" role="status">正在连接 AirSim…</span>
+        </div>
+        <div id="drone-cameras" class="camera-grid"></div>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>
