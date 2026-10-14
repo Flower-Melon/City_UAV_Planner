@@ -194,8 +194,15 @@ function draw() {
   if ($('layer-drones').checked) {
     liveDrones.forEach((drone, index) => {
       const [x, y] = drone.position_m;
-      ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale); ctx.rotate(drone.yaw_rad || 0);
-      ctx.beginPath(); ctx.moveTo(11, 0); ctx.lineTo(-7, -6); ctx.lineTo(-4, 0); ctx.lineTo(-7, 6); ctx.closePath();
+      ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale);
+      ctx.beginPath();
+      if (Number.isFinite(drone.course_rad)) {
+        // 地图 X 向右、Y 向下，箭头沿实际水平速度方向旋转。
+        ctx.rotate(drone.course_rad);
+        ctx.moveTo(11, 0); ctx.lineTo(-7, -6); ctx.lineTo(-4, 0); ctx.lineTo(-7, 6); ctx.closePath();
+      } else {
+        ctx.arc(0, 0, 6, 0, Math.PI * 2);
+      }
       ctx.fillStyle = drone.color; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke(); ctx.restore();
       const labelX = x + 14 / scale, labelY = y + (index * 14 - 10) / scale;
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(labelX, labelY); ctx.strokeStyle = drone.color; ctx.lineWidth = 1 / scale; ctx.stroke();
@@ -288,7 +295,7 @@ $('export').onclick = exportSelection;
 $('search').oninput = () => {
   const query = $('search').value.trim().toLowerCase(); const target = $('results'); target.replaceChildren();
   if (!query || !ready) return;
-  const matches = [...zones.features, ...points.features].filter(f => [f.id, f.properties.name, ...(f.properties.aliases || [])].some(v => String(v).toLowerCase().includes(query)));
+  const matches = [...zones.features, ...points.features].filter(f => [f.id, f.properties.name].some(v => String(v).toLowerCase().includes(query)));
   for (const f of matches.slice(0, 30)) target.append(resultButton(f));
   if (!matches.length) target.textContent = '没有匹配对象。';
 };
@@ -352,6 +359,10 @@ async function initialize() {
 background = new Image(); background.src = './assets/town12.png'; background.onload = schedule;
 background.onerror = () => { $('loading').textContent = '无法读取 assets/town12.png，请保留完整的 web 文件夹。'; };
 window.liveMap = {
+  clearTrails() {
+    liveDrones = liveDrones.map(drone => ({...drone, trail: []}));
+    schedule();
+  },
   setDrones(records) {
     liveDrones = records.filter(drone => Array.isArray(drone.position_m) && drone.position_m.length === 3 && drone.position_m.every(Number.isFinite));
     schedule();

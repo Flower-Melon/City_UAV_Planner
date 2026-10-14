@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+import sys
 import time
 from numbers import Real
 
-from ..utils import find_shortest_path
+# 支持 python UAV/API/fly_to_point.py 直接运行。
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    __package__ = "UAV.API"
+
+from ..utils import plan_flight_path
 from ..utils.airsim_client import AirSimClient, WorldFrame, vector, vehicle_name, vehicle_lock
 
 
@@ -36,7 +43,9 @@ def _hold(client, name, z, duration=.5):
 
 def _settle(client, name, destination, scale):
     """低速完成最后少量位置误差，并将速度归零。"""
-    deadline = time.monotonic() + 15
+    initial = vector(client.call("simGetVehiclePose", name)["position"])
+    distance = math.dist(initial, destination)*scale
+    deadline = time.monotonic() + max(15.0, distance*2 + 10.0)
     while time.monotonic() < deadline:
         current = vector(client.call("simGetVehiclePose", name)["position"])
         delta = [a-b for a,b in zip(destination,current)]
@@ -61,9 +70,9 @@ def fly_to_point(drone_id, target_position, flight_height, flight_speed=25.0) ->
     """飞往道路图上的二维目标点，完成后悬停，无返回值。
 
     drone_id: 正整数编号（1对应UAV_01）或AirSim中的完整无人机名称。
-    target_position: UE世界(x, y)，单位米，必须位于道路拓扑图边上。
+    target_position: UE世界(x, y)，单位米；图外目标以最近拓扑边投影点为终点。
     flight_height: 相对起飞地面的正高度，单位米；航程内保持此高度平面。
-    flight_speed: 沿路径飞行的正速度，单位米/秒，默认25.0。
+    flight_speed: 巡航速度上限，单位米/秒，默认25.0；拐弯与到站前自动降速。
 
     同步执行；连接、输入、路径或飞行失败时抛出异常。成功后保留API控制。
     """
@@ -88,7 +97,8 @@ def fly_to_point(drone_id, target_position, flight_height, flight_speed=25.0) ->
             frame = WorldFrame(client)
             world, local, origin = frame.vehicle(name)
             # Invalid targets or disconnected routes are rejected before arming.
-            path = find_shortest_path(world[:2], target)
+            path, segments = plan_flight_path(world[:2], target, flight_speed)
+            target = path[-1]
             landed = client.call("getMultirotorState", name)["landed_state"] == 0
             ground = frame.ground_z(world if landed else origin, name, remember=landed)
             altitude_world = ground + float(flight_height)
@@ -113,18 +123,27 @@ def fly_to_point(drone_id, target_position, flight_height, flight_speed=25.0) ->
             current_local = vector(client.call("simGetVehiclePose", name)["position"])
             current_xy = [origin[i] + current_local[i] * frame.scale for i in (0, 1)]
             if math.dist(current_xy, path[0]) > 1e-4:
-                path = find_shortest_path(current_xy, target)
-            points = [{"x_val": (x-origin[0])/frame.scale,
-                       "y_val": (y-origin[1])/frame.scale, "z_val": z} for x,y in path]
-            length = math.fsum(math.dist(a,b) for a,b in zip(path,path[1:]))
-            route_timeout = max(60.0, length / flight_speed * 3 + 30)
-            yaw_forward = {"is_rate": False, "yaw_or_rate": 0.0}
-            client.call("moveOnPath", points, flight_speed / frame.scale, route_timeout,
-                        1, yaw_forward, lookahead, 0.0, name, timeout=route_timeout+5)
+                path, segments = plan_flight_path(current_xy, target, flight_speed)
+                target = path[-1]
+            for segment, segment_speed in segments:
+                # AirSim 会自动加入当前位置，省略共享起点可避免切换速度时回头追点。
+                points = [{"x_val": (x-origin[0])/frame.scale,
+                           "y_val": (y-origin[1])/frame.scale, "z_val": z} for x,y in segment[1:]]
+                length = math.fsum(math.dist(a,b) for a,b in zip(segment,segment[1:]))
+                route_timeout = max(30.0, length / segment_speed * 3 + 15)
+                # 自动前视及自适应修正；保持航向，避免每次纠偏都改变机头方向。
+                completed = client.call("moveOnPath", points, segment_speed / frame.scale, route_timeout,
+                                        0, yaw_hold, -1.0, 1.0, name, timeout=route_timeout+5)
+                if completed is not True:
+                    raise RuntimeError(f"{name}路径段未完成，可能超时或被取消（速度 {segment_speed:.2f} 米/秒）")
+            destination = [(target[0]-origin[0])/frame.scale,
+                           (target[1]-origin[1])/frame.scale, z]
+            _hold(client, name, z, duration=1.0)
             near_target = vector(client.call("simGetVehiclePose",name)["position"])
-            destination = [points[-1][k] for k in ("x_val","y_val","z_val")]
-            if math.dist(near_target,destination)*frame.scale > 2:
-                raise RuntimeError(f"{name}路径飞行中断或未到达目标附近")
+            xy_error = math.dist(near_target[:2], destination[:2])*frame.scale
+            z_error = abs(near_target[2]-z)*frame.scale
+            if xy_error > 10 or z_error > 3:
+                raise RuntimeError(f"{name}路径结束后仍明显偏离目标（水平误差 {xy_error:.2f} 米，高度误差 {z_error:.2f} 米）")
             _settle(client,name,destination,frame.scale)
             final = vector(client.call("simGetVehiclePose", name)["position"])
             actual = [origin[i] + final[i]*frame.scale for i in (0, 1)]
@@ -140,3 +159,11 @@ def fly_to_point(drone_id, target_position, flight_height, flight_speed=25.0) ->
             raise
         finally:
             lock.release()
+
+
+if __name__ == "__main__":
+    drone_id = "UAV_01"
+    target_position = (1802.468, -2467.915)
+    flight_height = 20.0
+    flight_spead = 50.0
+    fly_to_point(drone_id, target_position, flight_height,flight_spead)

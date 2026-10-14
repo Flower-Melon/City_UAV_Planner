@@ -62,7 +62,7 @@
 |---|---|
 | `categories` | 用途类别的代码、名称、子类及显示颜色 |
 | `features[].id`、`geometry` | 区域或设施编号及边界 |
-| `properties.name`、`aliases` | 名称与别名 |
+| `properties.name` | 名称 |
 | `properties.object_type` | `region` 功能区、`facility` 设施 |
 | `properties.category`、`subtype`、`environment` | 用途类别、子类及环境 |
 | `properties.area_m2`、`label_xy_m` | 面积及标签位置 |
@@ -88,7 +88,7 @@
 | 字段 | 含义 |
 |---|---|
 | `features[].id`、`geometry` | 点位编号及 XY 位置 |
-| `properties.name`、`aliases`、`point_type` | 名称、别名及用途 |
+| `properties.name`、`point_type` | 名称及用途 |
 | `properties.region_id` | 所属区域或设施编号 |
 | `properties.xyz_m` | 世界位置 `[X, Y, Z]` |
 | `properties.position_status`、`execution_enabled` | 静态核验状态及启用标记 |

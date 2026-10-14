@@ -29,7 +29,7 @@
       <div class="sidebar-content">
       <section id="zones-panel">
         <h2>查找区域与任务点</h2>
-        <label class="sr-only" for="search">名称、编号或别名</label>
+        <label class="sr-only" for="search">名称或编号</label>
         <input id="search" type="search" placeholder="搜索医院、学校、基地或编号" disabled>
         <div id="results" class="results" aria-live="polite"></div>
         <label class="field" for="category">功能区类型</label>
@@ -37,7 +37,8 @@
         <p id="zone-stats" class="muted"></p>
       </section>
       <section class="layers">
-        <h2>显示图层</h2>
+        <div class="section-heading"><h2>显示图层</h2><button id="clear-trails" type="button" title="清除所有无人机已记录的运动轨迹">清除轨迹</button></div>
+        <p id="trail-status" class="muted" role="status" hidden></p>
         <div class="layer-grid">
           <label><input id="layer-base" type="checkbox" checked>实景底图</label>
           <label><input id="layer-zones" type="checkbox" checked>功能区</label>

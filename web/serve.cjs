@@ -7,7 +7,7 @@ const {createHash} = require('node:crypto');
 const {spawn} = require('node:child_process');
 const readline = require('node:readline');
 const root = fs.realpathSync(path.resolve(__dirname, '..'));
-const identity = createHash('sha256').update('town12-live-viewer-v5:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
+const identity = createHash('sha256').update('town12-live-viewer-v6:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
 const preferredPort = 8765;
 const types = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -18,6 +18,7 @@ let capturing = true;
 let selectedCamera = 'UAV_01';
 let airsimState = {connected: false, updated_at: 0, drones: []};
 const cameraFrames = new Map();
+let trailsClearedAt = 0;
 
 function startBridge() {
   if (bridge || Date.now() < nextBridgeStart) return;
@@ -35,7 +36,11 @@ function startBridge() {
   lines.on('line', line => {
     try {
       const message = JSON.parse(line);
-      if (message.type === 'state') airsimState = message;
+      if (message.type === 'state') {
+        // 已排队的旧采样也不能在清除后重新显示。
+        airsimState = {...message, drones: message.drones.map(drone => ({...drone,
+          trail: (drone.trail || []).filter(point => point[0] > trailsClearedAt)}))};
+      }
       else if (message.type === 'reset') cameraFrames.clear();
       else if (message.type === 'frame') {
         if (capturing && message.name === selectedCamera) {
@@ -89,12 +94,21 @@ function liveState() {
 }
 const server = http.createServer((request, response) => {
   response.setHeader('X-Town12-Viewer', identity);
-  if (!['GET', 'HEAD'].includes(request.method)) {
-    response.writeHead(405, {Allow: 'GET, HEAD'}); response.end(); return;
-  }
   try {
     const url = new URL(request.url, 'http://127.0.0.1');
     const pathname = decodeURIComponent(url.pathname);
+    if (pathname === '/api/airsim/trails/clear') {
+      if (request.method !== 'POST') {
+        response.writeHead(405, {Allow: 'POST'}); response.end(); return;
+      }
+      trailsClearedAt = Date.now();
+      airsimState = {...airsimState, drones: airsimState.drones.map(drone => ({...drone, trail: []}))};
+      if (bridge) bridge.stdin.write('{"clear_trails":true}\n');
+      sendJSON(response, 200, {cleared: true}); return;
+    }
+    if (!['GET', 'HEAD'].includes(request.method)) {
+      response.writeHead(405, {Allow: 'GET, HEAD'}); response.end(); return;
+    }
     if (pathname === '/api/airsim/state') {
       const camera = url.searchParams.get('camera') || selectedCamera;
       if (camera.length > 128 || /[\x00-\x1f]/.test(camera)) {

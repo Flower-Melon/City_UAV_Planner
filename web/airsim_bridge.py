@@ -75,6 +75,7 @@ class Monitor:
         self.capture = threading.Event()
         self.capture.set()
         self.camera_name = "UAV_01"
+        self.clear_trails = threading.Event()
 
     def commands(self):
         for line in sys.stdin:
@@ -82,6 +83,8 @@ class Monitor:
                 message = json.loads(line)
                 if not isinstance(message, dict):
                     continue
+                if message.get('clear_trails') is True:
+                    self.clear_trails.set()
                 if isinstance(message.get('camera'), str):
                     with self.lock:
                         self.camera_name = message['camera']
@@ -161,7 +164,7 @@ class Monitor:
                 trails = {name: deque(maxlen=2000) for name in names}
                 with self.lock:
                     self.records = {name: {"name": name, "position_m": None, "updated_at": 0,
-                        "camera_updated_at": 0, "camera_error": None} for name in names}
+                        "course_rad": None, "camera_updated_at": 0, "camera_error": None} for name in names}
                     if self.camera_name not in self.records:
                         self.camera_name = names[0]
                 emit({"type": "reset"})
@@ -169,6 +172,10 @@ class Monitor:
                 next_calibration = 0
                 while True:
                     started = time.monotonic()
+                    if self.clear_trails.is_set():
+                        self.clear_trails.clear()
+                        for trail in trails.values():
+                            trail.clear()
                     if anchor is None and started >= next_calibration:
                         try:
                             anchor = calibrate(rpc)
@@ -183,7 +190,11 @@ class Monitor:
                     for name in names:
                         current = rpc.call("simGetObjectPose", name)
                         ned = vector(current["position"])
-                        q = quat(current["orientation"])
+                        # 箭头表示实际移动方向；NED 与地图的 X、Y 轴一致。
+                        kinematics = rpc.call("simGetGroundTruthKinematics", name)
+                        velocity = vector(kinematics["linear_velocity"])
+                        course = (math.atan2(velocity[1], velocity[0])
+                                  if math.hypot(velocity[0], velocity[1]) >= .1 else None)
                         position = [a+b*scale for a, b in zip(world_offset, [ned[0], ned[1], -ned[2]])] if anchor else None
                         stamp = int(time.time()*1000)
                         trail = trails[name]
@@ -192,13 +203,16 @@ class Monitor:
                         if position is not None and (not trail or math.hypot(position[0]-trail[-1][1], position[1]-trail[-1][2]) >= .25):
                             trail.append([stamp, position[0], position[1]])
                         with self.lock:
-                            self.records[name].update(position_m=position, updated_at=stamp, trail=list(trail),
-                                yaw_rad=math.atan2(2*(q[0]*q[3]+q[1]*q[2]), 1-2*(q[2]**2+q[3]**2)))
+                            record = self.records[name]
+                            record.update(position_m=position, updated_at=stamp, trail=list(trail))
+                            # 停止或只有微小漂移时保留最后移动方向，避免箭头抖动。
+                            if course is not None:
+                                record["course_rad"] = course
                     with self.lock:
                         records = [dict(record) for record in self.records.values()]
                     emit({"type": "state", "connected": True, "coordinate_error": coordinate_error, "session_id": session_id,
                           "updated_at": int(time.time()*1000), "drones": records})
-                    time.sleep(max(0, .25-(time.monotonic()-started)))
+                    time.sleep(max(0, .1-(time.monotonic()-started)))
             except Exception as error:
                 self.epoch.set()
                 rpc.close()

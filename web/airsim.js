@@ -5,6 +5,9 @@
   const container = document.getElementById('drone-cameras');
   const selector = document.getElementById('camera-drone');
   const status = document.getElementById('airsim-status');
+  const clearTrails = document.getElementById('clear-trails');
+  const trailStatus = document.getElementById('trail-status');
+  let clearingTrails = false;
   let selected = selector.value;
   let frameRequest = null, stateRequest = null, timer, generation = 0;
   let stamp = 0, imageUrl = null;
@@ -74,6 +77,7 @@
   async function update() {
     clearTimeout(timer); stateRequest?.abort();
     const current = ++generation;
+    if (clearingTrails) return;
     if (location.protocol === 'file:') { status.textContent = '请通过本地 HTTP 服务打开'; return; }
     if (!document.hidden) {
       const controller = new AbortController(); stateRequest = controller;
@@ -109,8 +113,30 @@
         if (stateRequest === controller) stateRequest = null;
       }
     }
-    if (current === generation) timer = setTimeout(update, 250);
+    if (current === generation) timer = setTimeout(update, 100);
   }
+
+  clearTrails.disabled = location.protocol === 'file:';
+  clearTrails.onclick = async () => {
+    if (clearingTrails) return;
+    clearingTrails = true; clearTrails.disabled = true; clearTrails.textContent = '清除中…';
+    clearTimeout(timer); stateRequest?.abort(); ++generation;
+    trailStatus.hidden = false; trailStatus.textContent = '正在清除所有无人机轨迹…';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch('/api/airsim/trails/clear', {method: 'POST', signal: controller.signal});
+      if (!response.ok) throw new Error('清除失败，请确认本地服务已更新并重试');
+      window.liveMap?.clearTrails();
+      trailStatus.textContent = '所有无人机轨迹已清除，继续记录新轨迹。';
+    } catch (error) {
+      trailStatus.textContent = error.name === 'AbortError' ? '清除请求超时，请重试。' : error.message;
+    } finally {
+      clearTimeout(timeout); clearingTrails = false;
+      clearTrails.disabled = false; clearTrails.textContent = '清除轨迹';
+      void update();
+    }
+  };
 
   selector.onchange = () => { selected = selector.value; resetSelection(); void update(); };
   document.addEventListener('visibilitychange', () => {
