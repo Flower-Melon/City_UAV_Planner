@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Town12 · 城市空间标定</title>
-  <link rel="stylesheet" href="./styles.css">
-  <script src="./map.js" defer></script>
+  <link rel="stylesheet" href="./styles.css?v=20261019-2">
+  <script src="./map.js?v=20261019-3" defer></script>
   <script src="./airsim.js" defer></script>
 </head>
 <body>
@@ -23,7 +23,7 @@
       </div>
       <div id="loading" role="status">正在读取标定数据…</div>
       <div id="coords">X — · Y — m</div>
-      <div class="map-key"><span class="native">道路分段</span><span class="constructed">分段连接</span><span class="drone">无人机</span></div>
+      <div class="map-key" aria-label="地图符号图例"><span class="native">道路拓扑</span><span class="drone">无人机</span></div>
     </section>
     <aside>
       <div class="sidebar-content">
@@ -53,6 +53,18 @@
           <option value="all">全部点位（含定位参考）</option>
           <option value="none">隐藏点位</option>
         </select>
+      </section>
+      <section class="legend-panel" aria-label="功能区颜色图例">
+        <details open>
+          <summary>图例 · 功能区类型</summary>
+          <div id="legend" class="legend"></div>
+          <div class="symbol-legend">
+            <span><i class="legend-building" aria-hidden="true"></i>建筑轮廓</span>
+            <span><i class="legend-selected" aria-hidden="true"></i>选中对象</span>
+            <span><i class="legend-point" aria-hidden="true"></i>核验任务点</span>
+            <span><i class="legend-access" aria-hidden="true"></i>道路接入点</span>
+          </div>
+        </details>
       </section>
       <section id="object-panel">
         <div class="section-heading"><h2>选中对象</h2><button id="export" disabled>导出 JSON</button></div>

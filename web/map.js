@@ -1,5 +1,109 @@
 'use strict';
 
+// Cache the current viewport, rather than magnifying a fixed world raster.
+// Geometry and line widths are rendered again only when the view/layers change.
+class CityMapVisuals {
+  constructor() {
+    this.cache = document.createElement('canvas');
+    this.key = '';
+    this.roads = [];
+    this.buildings = [];
+  }
+
+  static bounds(coordinates) {
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [x, y] of coordinates) {
+      b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], y);
+      b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], y);
+    }
+    return b;
+  }
+
+  async prepare(zoneParts, network, colors) {
+    this.zones = zoneParts;
+    this.colors = colors;
+    for (let i = 0; i < network.edges.length; i++) {
+      const edge = network.edges[i];
+      if (edge.enabled === false || edge.length_m === 0) continue;
+      const line = edge.polyline_xy_m, path = new Path2D();
+      line.forEach(([x, y], j) => j ? path.lineTo(x, y) : path.moveTo(x, y));
+      this.roads.push({path, bounds: CityMapVisuals.bounds(line)});
+      if (i % 2000 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    this.invalidate();
+  }
+
+  async setBuildings(features, polygonPath) {
+    const records = [];
+    for (let i = 0; i < features.length; i++) {
+      const f = features[i];
+      const polygons = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+      for (const rings of polygons) {
+        records.push({path: polygonPath(rings), bounds: CityMapVisuals.bounds(rings[0])});
+      }
+      if (i % 800 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    this.buildings = records;
+    this.invalidate();
+  }
+
+  invalidate() { this.key = ''; }
+
+  draw(target, view, layers) {
+    const {scale, ox, oy, width, height, ratio} = view;
+    const key = JSON.stringify([scale, ox, oy, width, height, ratio, layers]);
+    if (key !== this.key) {
+      const pixelWidth = Math.max(1, Math.round(width * ratio));
+      const pixelHeight = Math.max(1, Math.round(height * ratio));
+      if (this.cache.width !== pixelWidth) this.cache.width = pixelWidth;
+      if (this.cache.height !== pixelHeight) this.cache.height = pixelHeight;
+      const c = this.cache.getContext('2d');
+      c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, pixelWidth, pixelHeight);
+      c.setTransform(ratio * scale, 0, 0, ratio * scale, ratio * ox, ratio * oy);
+      const pad = 5 / scale;
+      const bounds = [-ox / scale - pad, -oy / scale - pad,
+        (width - ox) / scale + pad, (height - oy) / scale + pad];
+      const visible = record => {
+        const b = record.bounds;
+        return b[0] <= bounds[2] && b[2] >= bounds[0] && b[1] <= bounds[3] && b[3] >= bounds[1];
+      };
+      if (layers.zones) {
+        c.lineWidth = 1 / scale;
+        for (const part of this.zones) {
+          if (!visible(part) || (layers.category && part.feature.properties.category !== layers.category)) continue;
+          const color = this.colors.get(part.feature.properties.category) || '#a0adb6';
+          c.fillStyle = color + '42'; c.strokeStyle = color;
+          c.fill(part.path, 'evenodd'); c.stroke(part.path);
+        }
+      }
+      if (layers.roads) {
+        c.strokeStyle = '#dfe8fb'; c.lineWidth = .8 / scale;
+        for (const record of this.roads) if (visible(record)) c.stroke(record.path);
+      }
+      if (layers.buildings) {
+        c.fillStyle = '#18294377'; c.strokeStyle = '#172c42'; c.lineWidth = .7 / scale;
+        for (const record of this.buildings) {
+          if (visible(record)) { c.fill(record.path, 'evenodd'); c.stroke(record.path); }
+        }
+      }
+      this.key = key;
+    }
+    target.save(); target.setTransform(1, 0, 0, 1, 0, 0);
+    target.drawImage(this.cache, 0, 0); target.restore();
+  }
+
+  static legend(categories, container) {
+    container.replaceChildren();
+    for (const category of categories) {
+      const item = document.createElement('span');
+      const swatch = document.createElement('i');
+      swatch.className = 'legend-swatch'; swatch.style.backgroundColor = category.color;
+      swatch.setAttribute('aria-hidden', 'true');
+      item.append(swatch, document.createTextNode(category.name)); container.append(item);
+    }
+  }
+};
+
 const $ = id => document.getElementById(id);
 const canvas = $('map'), ctx = canvas.getContext('2d');
 const state = {scale: 1, ox: 0, oy: 0, width: 1, height: 1, ratio: 1,
@@ -8,11 +112,8 @@ let zones, points, roads, background, buildings;
 let zoneParts = [], pointRecords = [], colors = new Map(), categoryNames = new Map();
 let ready = false, buildingRequest;
 let liveDrones = [];
-const rasterSize = 4096, worldSize = 4000, rasterScale = rasterSize / worldSize;
-const roadRaster = document.createElement('canvas');
-const zoneRaster = document.createElement('canvas');
-const buildingRaster = document.createElement('canvas');
-for (const c of [roadRaster, zoneRaster, buildingRaster]) c.width = c.height = rasterSize;
+const worldSize = 4000;
+const visuals = new CityMapVisuals();
 
 class SpatialGrid {
   constructor(size = 100) { this.size = size; this.cells = new Map(); }
@@ -30,20 +131,13 @@ class SpatialGrid {
 }
 const zoneIndex = new SpatialGrid();
 const groups = new Map();
-const yieldFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+const yieldFrame = () => new Promise(resolve => setTimeout(resolve, 0));
 
 async function loadJSON(name) {
   const response = await fetch(`../Map/${name}`, {cache: 'no-store'});
   if (!response.ok) throw new Error(`无法读取 ${name}（HTTP ${response.status}）`);
   try { return await response.json(); }
   catch { throw new Error(`${name} 不是有效的 JSON 文件`); }
-}
-function rasterContext(target) {
-  const context = target.getContext('2d');
-  context.setTransform(1, 0, 0, 1, 0, 0);
-  context.clearRect(0, 0, rasterSize, rasterSize);
-  context.setTransform(rasterScale, 0, 0, rasterScale, 1000 * rasterScale, 3000 * rasterScale);
-  return context;
 }
 function polygonPath(rings) {
   const path = new Path2D();
@@ -61,11 +155,6 @@ function boundsOf(ring) {
   }
   return b;
 }
-function strokeLine(context, coordinates) {
-  context.beginPath();
-  coordinates.forEach(([x, y], i) => i ? context.lineTo(x, y) : context.moveTo(x, y));
-  context.stroke();
-}
 async function prepareGeometry() {
   for (let i = 0; i < zones.features.length; i++) {
     const feature = zones.features[i];
@@ -79,40 +168,18 @@ async function prepareGeometry() {
     if (i % 16 === 0) await yieldFrame();
   }
   pointRecords = points.features;
-  const r = rasterContext(roadRaster);
-  r.lineWidth = .9 / rasterScale;
-  for (let i = 0; i < roads.edges.length; i++) {
-    const e = roads.edges[i];
-    if (e.enabled === false) continue;
-    r.strokeStyle = e.kind === 'road' ? '#2778c5' : '#04a3ae';
-    strokeLine(r, e.polyline_xy_m);
-    if (i % 2000 === 0) await yieldFrame();
-  }
+  await visuals.prepare(zoneParts, roads, colors);
   rebuildZones();
 }
 function rebuildZones() {
-  const r = rasterContext(zoneRaster), category = $('category').value;
-  r.lineWidth = .6 / rasterScale;
-  for (const part of zoneParts) {
-    if (category && part.feature.properties.category !== category) continue;
-    const color = colors.get(part.feature.properties.category) || '#a0adb6';
-    r.fillStyle = color; r.globalAlpha = .20; r.fill(part.path, 'evenodd');
-    r.strokeStyle = color; r.globalAlpha = .65; r.stroke(part.path);
-  }
-  r.globalAlpha = 1;
+  visuals.invalidate();
   schedule();
 }
 async function ensureBuildings() {
   if (!buildingRequest) buildingRequest = (async () => {
     buildings = await loadJSON('buildings.json');
     if (!Array.isArray(buildings.features)) throw new Error('buildings.json 缺少 features 数组');
-    const r = rasterContext(buildingRaster); r.fillStyle = '#e6eef7'; r.strokeStyle = '#405872'; r.lineWidth = .5;
-    for (let i = 0; i < buildings.features.length; i++) {
-      const f = buildings.features[i];
-      const polygons = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
-      for (const rings of polygons) { const path = polygonPath(rings); r.fill(path, 'evenodd'); r.stroke(path); }
-      if (i % 800 === 0) await yieldFrame();
-    }
+    await visuals.setBuildings(buildings.features, polygonPath);
   })().catch(error => { buildingRequest = null; throw error; });
   await buildingRequest;
 }
@@ -143,31 +210,33 @@ function draw() {
   ctx.setTransform(ratio * scale, 0, 0, ratio * scale, ratio * ox, ratio * oy);
   if ($('layer-base').checked && background?.complete && background.naturalWidth) ctx.drawImage(background, -1000, -3000, worldSize, worldSize);
   if (!ready) return;
-  if ($('layer-zones').checked) ctx.drawImage(zoneRaster, -1000, -3000, worldSize, worldSize);
-  if ($('layer-buildings').checked && buildings) ctx.drawImage(buildingRaster, -1000, -3000, worldSize, worldSize);
-  if ($('layer-roads').checked) ctx.drawImage(roadRaster, -1000, -3000, worldSize, worldSize);
+  visuals.draw(ctx, state, {
+    zones: $('layer-zones').checked, category: $('category').value,
+    buildings: $('layer-buildings').checked, roads: $('layer-roads').checked
+  });
   if ($('layer-zones').checked) {
-    ctx.font = `${11 / scale}px "Microsoft YaHei", sans-serif`;
-    ctx.textAlign = 'center'; ctx.lineWidth = 3 / scale;
+    ctx.font = `600 ${16 / scale}px system-ui, "Microsoft YaHei", sans-serif`;
+    ctx.textAlign = 'center'; ctx.lineWidth = 4 / scale; ctx.lineJoin = 'round';
     for (const f of zones.features) {
       if (f.properties.object_type !== 'facility' || ($('category').value && f.properties.category !== $('category').value)) continue;
       const q = f.properties.label_xy_m;
       if (!q || q[0] * scale + ox < -80 || q[0] * scale + ox > width + 80 || q[1] * scale + oy < -20 || q[1] * scale + oy > height + 20) continue;
-      ctx.strokeStyle = '#ffffffdd'; ctx.fillStyle = '#18334a';
+      ctx.strokeStyle = '#142638'; ctx.fillStyle = '#fff';
       ctx.strokeText(f.properties.name, q[0], q[1]); ctx.fillText(f.properties.name, q[0], q[1]);
     }
   }
-  ctx.lineWidth = 1.5 / scale;
+  ctx.lineWidth = 1 / scale;
   for (const point of pointRecords) {
     if (!visiblePoint(point)) continue;
     const [x, y] = point.geometry.coordinates;
     if (x * scale + ox < -8 || x * scale + ox > width + 8 || y * scale + oy < -8 || y * scale + oy > height + 8) continue;
-    ctx.beginPath(); ctx.arc(x, y, 2.5 / scale, 0, Math.PI * 2);
-    ctx.fillStyle = point.properties.execution_enabled ? '#fff' : '#8293a4';
-    ctx.strokeStyle = point.properties.execution_enabled ? '#174b70' : '#dbe4ec'; ctx.fill(); ctx.stroke();
+    const access = point.properties.point_type === 'outdoor_access';
+    ctx.beginPath(); ctx.arc(x, y, (access ? 2 : 4) / scale, 0, Math.PI * 2);
+    ctx.fillStyle = point.properties.execution_enabled ? (access ? '#eeeef4' : '#ffde69') : '#8293a4';
+    ctx.strokeStyle = point.properties.execution_enabled ? '#253c56' : '#dbe4ec'; ctx.fill(); ctx.stroke();
   }
   if (state.selected) {
-    ctx.strokeStyle = '#ed307a'; ctx.lineWidth = 3 / scale;
+    ctx.strokeStyle = '#ff3d7b'; ctx.lineWidth = 3 / scale;
     if (state.selected.geometry.type === 'Point') {
       const [x, y] = state.selected.geometry.coordinates;
       ctx.beginPath(); ctx.arc(x, y, 8 / scale, 0, Math.PI * 2); ctx.stroke();
@@ -204,10 +273,10 @@ function draw() {
         ctx.arc(0, 0, 6, 0, Math.PI * 2);
       }
       ctx.fillStyle = drone.color; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke(); ctx.restore();
-      const labelX = x + 14 / scale, labelY = y + (index * 14 - 10) / scale;
+      const labelX = x + 14 / scale, labelY = y + (index * 18 - 10) / scale;
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(labelX, labelY); ctx.strokeStyle = drone.color; ctx.lineWidth = 1 / scale; ctx.stroke();
-      ctx.font = `${11 / scale}px "Microsoft YaHei", sans-serif`; ctx.textAlign = 'left';
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 / scale; ctx.strokeText(drone.name, labelX, labelY);
+      ctx.font = `600 ${14 / scale}px "Microsoft YaHei", sans-serif`; ctx.textAlign = 'left';
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 / scale; ctx.lineJoin = 'round'; ctx.strokeText(drone.name, labelX, labelY);
       ctx.fillStyle = drone.color; ctx.fillText(drone.name, labelX, labelY);
     });
   }
@@ -344,6 +413,7 @@ async function initialize() {
     colors.set(category.code, category.color); categoryNames.set(category.code, category.name);
     const option = document.createElement('option'); option.value = category.code; option.textContent = category.name; $('category').append(option);
   }
+  CityMapVisuals.legend(zones.categories, $('legend'));
   $('loading').textContent = '正在建立地图缓存…'; await prepareGeometry();
   const roadCount = roads.edges.filter(edge => edge.kind === 'road').length;
   const connectionCount = roads.edges.filter(edge => edge.kind !== 'road' && edge.enabled !== false).length;
