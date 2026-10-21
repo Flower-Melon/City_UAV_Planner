@@ -155,7 +155,7 @@ class Monitor:
                 settings = json.loads(rpc.call("getSettingsString"))
                 vehicles = rpc.call("listVehicles")
                 configured = settings.get("Vehicles", {})
-                names = [name for name in vehicles if configured.get(name, {}).get("VehicleType", "SimpleFlight") in ("SimpleFlight", "PX4Multirotor")][:5]
+                names = [name for name in vehicles if configured.get(name, {}).get("VehicleType", "SimpleFlight") in ("SimpleFlight", "PX4Multirotor")]
                 if not names:
                     raise RuntimeError("No multirotor vehicles are available")
                 self.epoch.set()
@@ -164,6 +164,7 @@ class Monitor:
                 trails = {name: deque(maxlen=2000) for name in names}
                 with self.lock:
                     self.records = {name: {"name": name, "position_m": None, "updated_at": 0,
+                        "available": False,
                         "course_rad": None, "camera_updated_at": 0, "camera_error": None} for name in names}
                     if self.camera_name not in self.records:
                         self.camera_name = names[0]
@@ -193,6 +194,8 @@ class Monitor:
                         # 箭头表示实际移动方向；NED 与地图的 X、Y 轴一致。
                         kinematics = rpc.call("simGetGroundTruthKinematics", name)
                         velocity = vector(kinematics["linear_velocity"])
+                        landed = rpc.call("getMultirotorState", name).get("landed_state")
+                        available = type(landed) is int and landed == 0 and math.hypot(*velocity) * scale <= .1 if anchor else False
                         course = (math.atan2(velocity[1], velocity[0])
                                   if math.hypot(velocity[0], velocity[1]) >= .1 else None)
                         position = [a+b*scale for a, b in zip(world_offset, [ned[0], ned[1], -ned[2]])] if anchor else None
@@ -204,7 +207,7 @@ class Monitor:
                             trail.append([stamp, position[0], position[1]])
                         with self.lock:
                             record = self.records[name]
-                            record.update(position_m=position, updated_at=stamp, trail=list(trail))
+                            record.update(position_m=position, updated_at=stamp, trail=list(trail), available=available)
                             # 停止或只有微小漂移时保留最后移动方向，避免箭头抖动。
                             if course is not None:
                                 record["course_rad"] = course

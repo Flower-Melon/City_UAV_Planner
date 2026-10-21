@@ -12,7 +12,7 @@ from numbers import Real
 from pathlib import Path
 from typing import Sequence
 
-__all__ = ["plan_flight_path", "NoPathError"]
+__all__ = ["plan_flight_path", "flight_segments", "NoPathError"]
 
 Point = tuple[float, float]
 _TIE_TOLERANCE_M = 1e-9
@@ -77,6 +77,7 @@ class _RoadGraph:
             raise ValueError("道路图存在重复节点编号")
         self.node_points = [_point(node["position_m"][:2], "图节点") for node in nodes]
         self.edges: list[_Edge] = []
+        self.edge_ids = []
         self.adjacency = defaultdict(list)
         self.cells = defaultdict(list)
         for record in data["edges"]:
@@ -95,6 +96,7 @@ class _RoadGraph:
             edge = _Edge(source, target, points)
             index = len(self.edges)
             self.edges.append(edge)
+            self.edge_ids.append(record["id"])
             # 弧记录：终点、边索引、沿原折线的起止偏移。
             self.adjacency[source].append((target, index, 0.0, edge.length))
             self.adjacency[target].append((source, index, edge.length, 0.0))
@@ -344,3 +346,13 @@ def _flight_segments(path, cruise_speed):
         else:
             segments.append(([points[i], points[i+1]], speed))
     return segments
+
+
+def flight_segments(path, flight_speed):
+    """为已确定的道路巡查折线生成原有加减速分段，不再重新寻路。"""
+    if isinstance(flight_speed, bool) or not isinstance(flight_speed, Real) or not math.isfinite(flight_speed) or flight_speed <= 0:
+        raise ValueError("飞行速度必须是大于0的有限数值")
+    points = [_point(p, "路径点") for p in path]
+    if not points:
+        raise ValueError("路径不能为空")
+    return _flight_segments(points, float(flight_speed))

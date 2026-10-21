@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 from pathlib import Path
 import sys
-import time
 from numbers import Real
 
 # 支持 python UAV/API/fly_to_point.py 直接运行。
@@ -14,6 +13,7 @@ if not __package__:
     __package__ = "UAV.API"
 
 from ..utils import plan_flight_path
+from ..utils.flight_control import _action, _hold, _settle
 from ..utils.airsim_client import AirSimClient, WorldFrame, vector, vehicle_name, vehicle_lock
 
 
@@ -28,42 +28,6 @@ def _target(value):
         return point
     except (TypeError, ValueError, OverflowError):
         raise ValueError("目标位置必须为两个有限数值组成的(x, y)，单位为米") from None
-
-
-def _action(client, method, *args, timeout):
-    if client.call(method, *args, timeout=timeout + 5) is not True:
-        raise RuntimeError(f"AirSim执行{method}失败或超时")
-
-
-def _hold(client, name, z, duration=.5):
-    # Native hover can return False without issuing a command for a zero-length path.
-    _action(client, "moveByVelocityZ", 0.0, 0.0, z, duration, 0,
-            {"is_rate": True, "yaw_or_rate": 0.0}, name, timeout=max(5, duration+2))
-
-
-def _settle(client, name, destination, scale):
-    """低速完成最后少量位置误差，并将速度归零。"""
-    initial = vector(client.call("simGetVehiclePose", name)["position"])
-    distance = math.dist(initial, destination)*scale
-    deadline = time.monotonic() + max(15.0, distance*2 + 10.0)
-    while time.monotonic() < deadline:
-        current = vector(client.call("simGetVehiclePose", name)["position"])
-        delta = [a-b for a,b in zip(destination,current)]
-        if math.hypot(delta[0],delta[1])*scale <= .25 and abs(delta[2])*scale <= .25:
-            _hold(client,name,destination[2],.8)
-            stopped = vector(client.call("simGetVehiclePose",name)["position"])
-            velocity = vector(client.call("getMultirotorState",name)["kinematics_estimated"]["linear_velocity"])
-            if math.dist(stopped,destination)*scale <= .35 and math.sqrt(sum(v*v for v in velocity))*scale <= .15:
-                return
-            continue
-        velocity = [delta[0]*.8,delta[1]*.8]
-        speed = math.hypot(*velocity)
-        limit = 1.0/scale
-        if speed > limit:
-            velocity = [v*limit/speed for v in velocity]
-        _action(client,"moveByVelocityZ",*velocity,destination[2],.25,0,
-                {"is_rate": True,"yaw_or_rate": 0.0},name,timeout=5)
-    raise RuntimeError(f"{name}未能稳定在目标位置")
 
 
 def fly_to_point(drone_id, target_position, flight_height, flight_speed=25.0) -> None:

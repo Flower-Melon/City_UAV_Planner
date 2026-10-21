@@ -75,3 +75,41 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .drone-position { margin: 0; padding: 6px 8px; font-size: 10px; line-height: 1.5; color: #526a7c; min-height: 42px; }
 @media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1fr) 380px; } .camera-panel { padding: 10px; } }
 @media (max-width: 760px) { .camera-heading { align-items: flex-start; } }
+
+.sidebar-tabs { display: flex; flex-shrink: 0; gap: 4px; padding: 10px 12px 0; border-bottom: 1px solid #dce5eb; }
+.sidebar-tabs [role="tab"] { flex: 1; border: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; padding: 10px 8px; color: #617887; }
+.sidebar-tabs [aria-selected="true"] { border-bottom-color: #147ba4; background: #eef6fa; color: #123f58; font-weight: 650; }
+.sidebar-content[hidden], .llm-panel [hidden] { display: none; }
+.llm-badge { border: 1px solid #bed8e2; border-radius: 4px; padding: 1px 6px; font-size: 10px; color: #23647b; background: #f1f8fa; }
+.llm-intro { margin: 0 0 16px; }
+.llm-panel textarea { display: block; width: 100%; min-height: 74px; resize: vertical; border: 1px solid #c7d8e2; border-radius: 7px; padding: 10px 12px; font: inherit; line-height: 1.7; color: #18334a; background: #fbfdfe; }
+.llm-panel textarea::placeholder { color: #7c909e; }
+.llm-panel textarea:focus-visible { outline: 2px solid #147ba4; outline-offset: 2px; }
+.llm-panel button[type="submit"] { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 10px; padding: 9px 12px; border-color: #176080; background: #176080; color: white; }
+.llm-panel button[type="submit"]:hover { background: #124d68; }
+.llm-panel button:disabled { opacity: .6; cursor: wait; }
+.llm-followup { display: grid; grid-template-columns: minmax(0, 1fr) 88px; gap: 6px; margin-top: 18px; border-top: 1px solid #dce5eb; padding-top: 8px; }
+.llm-followup .field, .llm-followup .muted { grid-column: 1 / -1; margin: 0; }
+.llm-followup textarea { min-height: 60px; }
+.llm-followup button[type="submit"] { margin: 0; justify-content: center; gap: 5px; padding: 8px; }
+.llm-history { margin: 12px 0; color: #647b8a; font-size: 12px; }
+.llm-history summary { cursor: pointer; }
+.llm-history p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.llm-queue { margin-top: 12px; padding: 8px 10px; border-left: 2px solid #176080; background: #f1f7fa; font-size: 12px; }
+.llm-status { margin: 14px 0 0; font-size: 12px; color: #647b8a; }
+.llm-status[data-state="busy"] { color: #147ba4; }
+.llm-status[data-state="ready"] { color: #15815d; }
+.llm-status[data-state="question"] { color: #93631b; }
+.llm-status[data-state="error"] { color: #b43b35; }
+.llm-submitted { margin: 0 0 14px; padding-left: 9px; border-left: 2px solid #b5cbd6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.llm-answer { margin: 0; font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.llm-command-panel { margin-top: 16px; border: 1px solid #dce5eb; border-radius: 7px; background: #f8fafc; }
+.llm-command-panel summary { padding: 8px 10px; cursor: pointer; font-size: 12px; font-weight: 650; }
+#llm-commands { margin: 0; padding: 0 10px 12px; max-height: 240px; overflow: auto; font: 11px/1.65 Consolas, monospace; color: #274b60; tab-size: 2; }
+.llm-flight-settings { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+#llm-height { width: 76px; padding: 5px 8px; border: 1px solid #c7d8e2; border-radius: 5px; color: #18334a; }
+#llm-flight-hint { margin: 5px 0 12px; }
+.llm-mission { margin: 16px 0; padding: 12px; border: 1px solid #bed8e2; border-radius: 7px; background: #f1f8fa; }
+.llm-mission progress { width: 100%; height: 6px; accent-color: #176080; margin-bottom: 10px; }
+#llm-mission-tasks { font-size: 12px; }
+#llm-stop { padding: 4px 9px; border-color: #ddbbb5; color: #a53831; font-size: 12px; }

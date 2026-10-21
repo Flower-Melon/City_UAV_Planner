@@ -7,7 +7,12 @@ const {createHash} = require('node:crypto');
 const {spawn} = require('node:child_process');
 const readline = require('node:readline');
 const root = fs.realpathSync(path.resolve(__dirname, '..'));
-const identity = createHash('sha256').update('town12-live-viewer-v6:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
+const planningFleet = require('./llm-fleet.cjs');
+const plannerProcess = require('./llm-process.cjs')({root});
+const missionAPI = require('./mission-api.cjs')({root});
+const llmAPI = require('./llm-api.cjs')({root, spawnProcess: plannerProcess.spawnProcess,
+  getFleet: () => planningFleet(airsimState), assertIdle: missionAPI.assertIdle, onReady: missionAPI.start});
+const identity = createHash('sha256').update('town12-live-viewer-v8-execute:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
 const preferredPort = 8765;
 const types = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -97,6 +102,10 @@ const server = http.createServer((request, response) => {
   try {
     const url = new URL(request.url, 'http://127.0.0.1');
     const pathname = decodeURIComponent(url.pathname);
+    if (pathname === '/api/llm/plan') { void llmAPI.handle(request, response); return; }
+    if (pathname === '/api/llm/mission' || pathname === '/api/llm/cancel') {
+      void missionAPI.handle(request, response); return;
+    }
     if (pathname === '/api/airsim/trails/clear') {
       if (request.method !== 'POST') {
         response.writeHead(405, {Allow: 'POST'}); response.end(); return;
@@ -179,11 +188,15 @@ function listen(port) {
       if (await isExistingViewer(port)) { console.log(`已在运行：${url}`); open(url); return; }
       continue;
     }
+    plannerProcess.start();
     console.log(`Town12 标定可视化：${url}\n按 Ctrl+C 停止服务。`); open(url); return;
   }
   throw Error('8765至8784端口均被占用，请关闭不需要的本地服务后重试。');
 })().catch(error => { console.error(error.message); process.exitCode = 1; if (server.listening) server.close(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
+  llmAPI.close();
+  plannerProcess.close();
+  missionAPI.close();
   if (bridge) bridge.kill();
   server.close(); process.exit(0);
 });
@@ -193,4 +206,4 @@ setInterval(() => {
     cameraFrames.clear();
   }
 }, 5000).unref();
-process.on('exit', () => { if (bridge) bridge.kill(); });
+process.on('exit', () => { llmAPI.close(); plannerProcess.close(); missionAPI.close(); if (bridge) bridge.kill(); });
