@@ -7,19 +7,17 @@
   const followupForm = $('llm-followup-form'), followupInput = $('llm-followup-input');
   const followupSubmit = $('llm-followup-submit'), newTask = $('llm-new-task');
   const status = $('llm-status'), resultPanel = $('llm-result');
-  const height = $('llm-height'), stop = $('llm-stop');
   let pending = false, conversation = [], previousTurn = null;
   let checking = true, flying = false, mission = null, pollTimer;
 
   // 根据规划与飞行状态锁定输入，防止刷新或重复点击再次派发。
   function controls() {
-    for (const element of [submit, input, followupSubmit, followupInput, newTask, height])
+    for (const element of [submit, input, followupSubmit, followupInput, newTask])
       element.disabled = pending || checking || flying;
     followupForm.hidden = flying;
-    stop.disabled = !mission || mission.status !== 'running';
   }
 
-  // 读取/取消任务使用短请求；超时只停止等待，不终止无人机控制进程。
+  // 读取任务使用短请求；超时只停止等待，不终止无人机控制进程。
   async function missionRequest(url, options = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
@@ -31,29 +29,28 @@
     } finally { clearTimeout(timer); }
   }
 
-  // 展示后台真实任务状态；图片分析完成与飞行完成分别表述。
+  // 展示真实巡查任务状态。
   function showMission(data) {
     mission = data.execution;
-    flying = !!data.starting || !!data.uncertain || !!mission && !['completed', 'failed', 'cancelled'].includes(mission.status);
+    flying = !!data.starting || !!data.uncertain || !!mission && !['completed', 'failed'].includes(mission.status);
     $('llm-mission').hidden = !mission && !flying;
     if (mission) {
-      const labels = {queued: '排队', running: '搜索中', completed: '完成', failed: '失败', skipped: '跳过', cancelled: '已取消'};
+      const labels = {queued: '排队', running: '搜索中', completed: '完成', failed: '失败', skipped: '跳过'};
       const completed = mission.tasks.filter(task => task.status === 'completed').length;
       $('llm-mission-title').textContent = `搜索进度 · ${completed}/${mission.tasks.length} 区域`;
       $('llm-progress').max = mission.tasks.length; $('llm-progress').value = completed;
       $('llm-mission-tasks').textContent = mission.tasks.map(task =>
-        `${task.drone_id} · ${task.target.zone_id}${task.target.scope === 'nearby' ? `周边${task.target.buffer_m}米` : ''} · ${labels[task.status] || task.status}` +
+        `${task.drone_id} · ${task.target.zone_id}周边${task.target.buffer_m ?? 50}米 · ${labels[task.status] || task.status}` +
         (task.error ? `\n${task.error}` : '')).join('\n');
-      const messages = {running: '搜索已开始 · 无人机执行中，拍照和识别由搜索后台管理。',
-        cancelling: '正在停止任务 · 等待当前飞行检查点返回，不再执行后续区域。',
-        completed: '飞行队列已完成 · 图片分析由后台继续处理。',
-        failed: '搜索任务失败 · 请查看各区域状态与错误。', cancelled: '搜索已取消 · 请查看各区域状态。'};
+      const messages = {running: '搜索已开始 · 无人机正在沿路巡查并定时拍照。',
+        completed: '搜索已完成 · 照片和飞行记录已保存。',
+        failed: '搜索任务失败 · 请查看各区域状态与错误。'};
       setStatus(mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready', messages[mission.status] || '正在确认执行状态…');
       newTask.hidden = false;
       if (resultPanel.hidden && data.plan) {
         resultPanel.hidden = false; form.hidden = true;
         $('llm-submitted').textContent = '已恢复最近搜索任务';
-        $('llm-answer').textContent = data.plan.reply || '已生成搜索任务。';
+        $('llm-answer').textContent = data.plan.message;
         $('llm-commands').textContent = JSON.stringify(data.plan.commands, null, 2);
         $('llm-command-panel').hidden = false;
       }
@@ -100,10 +97,6 @@
 
   async function plan(source, button) {
     if (pending || checking || flying) return;
-    const flightHeight = Number(height.value);
-    if (!Number.isFinite(flightHeight) || flightHeight <= 0) {
-      setStatus('error', '请输入有效的飞行高度。'); height.focus(); return;
-    }
     const instruction = source.value.trim();
     if (!instruction) { setStatus('error', '请先输入任务描述。'); source.focus(); return; }
     if (conversation.length > 12 || instruction.length + conversation.reduce((n, m) => n + m.content.length, 0) > 16000) {
@@ -125,19 +118,19 @@
     try {
       const response = await fetch('/api/llm/plan', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({instruction, conversation, flight: {flight_height: flightHeight}}), signal: controller.signal
+        body: JSON.stringify({instruction, conversation}), signal: controller.signal
       });
       if (!response.headers.get('Content-Type')?.includes('application/json')) {
         throw new Error('网页服务未返回有效数据，请重启 node web/serve.cjs 后刷新页面。');
       }
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || '规划请求失败，请重试。');
-      if (!['ready', 'needs_clarification'].includes(result.status) || result.executed !== false || !Array.isArray(result.commands)) {
+      if (!['ready', 'needs_clarification'].includes(result.status) ||
+          typeof result.message !== 'string' || !result.message.trim() || !Array.isArray(result.commands)) {
         throw new Error('服务返回格式异常，请重试。');
       }
-      if (result.stop_reason === 'max_iterations') throw new Error(result.reason);
       const ready = result.status === 'ready';
-      const answer = ready ? (result.reply || result.reason) : result.reason;
+      const answer = result.message;
       if (previousTurn) {
         for (const [label, text] of [['你', previousTurn.instruction], ['助手', previousTurn.answer]]) {
           const message = document.createElement('p');
@@ -145,16 +138,14 @@
         }
         $('llm-history').hidden = false;
       }
-      const commands = result.commands.map(command => ({action: command.action, drone_id: command.drone_id,
-        sequence: command.sequence, target: {zone_id: command.zone_id,
-          ...(command.target?.scope === 'nearby' ? {scope: 'nearby', buffer_m: command.target.buffer_m} : {})}}));
+      const commands = result.commands;
       conversation.push({role: 'user', content: instruction}, {role: 'assistant', content: JSON.stringify({
-        status: result.status, answer, tasks: commands.map(({sequence, ...task}) => task)})});
+        status: result.status, message: answer, tasks: commands.map(({sequence, ...task}) => task)})});
       previousTurn = {instruction, answer};
       $('llm-submitted').textContent = instruction;
-      $('llm-answer-heading').textContent = ready ? (result.reply ? '模型回答' : '规划说明') : '需要你补充';
+      $('llm-answer-heading').textContent = ready ? '规划说明' : '需要你补充';
       $('llm-answer').textContent = answer;
-      $('llm-iterations').textContent = Number.isInteger(result.iterations) ? `${result.iterations} 轮判断 · ${elapsed()} 秒` : `${elapsed()} 秒`;
+      $('llm-elapsed').textContent = `${elapsed()} 秒`;
       $('llm-command-panel').hidden = !ready;
       $('llm-queue').hidden = !ready;
       if (ready) {
@@ -165,7 +156,7 @@
         }
         $('llm-queue').textContent = `共 ${commands.length} 个区域 · ${queues.size} 架无人机，分别按顺序搜索：\n` + [...queues].map(([drone, tasks]) =>
           `${drone}：${tasks.sort((a, b) => a.sequence - b.sequence).map(c =>
-            (c.target?.name || c.zone_id) + (c.target?.scope === 'nearby' ? `周边${c.target.buffer_m}米` : '')).join(' → ')}`).join('\n');
+            c.target.zone_id + `周边${c.target.buffer_m}米`).join(' → ')}`).join('\n');
         $('llm-commands').textContent = JSON.stringify(commands.length === 1 ? commands[0] : {tasks: commands}, null, 2);
       } else $('llm-commands').textContent = '';
       form.hidden = true; newTask.hidden = false;
@@ -202,16 +193,6 @@
     input.value = ''; followupInput.value = ''; form.hidden = false; newTask.hidden = true;
     $('llm-mission').hidden = true;
     setStatus('idle', '输入任务后自动规划并开始搜索。'); input.focus();
-  };
-  // 请求后台停止当前任务；保留轮询，直到飞行线程报告最终状态。
-  stop.onclick = async () => {
-    if (!mission || stop.disabled) return;
-    stop.disabled = true;
-    try {
-      showMission(await missionRequest('/api/llm/cancel', {method: 'POST',
-        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mission_id: mission.mission_id})}));
-    } catch (error) { setStatus('error', `停止请求未确认：${error.message}`); }
-    clearTimeout(pollTimer); pollTimer = setTimeout(pollMission, 1000);
   };
   controls(); void pollMission();
 })();

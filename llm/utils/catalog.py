@@ -1,13 +1,47 @@
 """只读原始地图；按条件筛选真实区域，几何数据始终留在本地。"""
 
-from collections import Counter
 from math import hypot
 import json
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 EPS = 1e-8
 
-MAP_PATH = Path(__file__).resolve().parents[2] / "Map" / "functional_zones.json"
+MAP_PATH = Path(__file__).resolve().parents[2] / "Map" / "zones" / "functional_zones.json"
+
+
+class ZoneQuery(BaseModel):
+    """地图筛选条件，不包含飞行或巡查参数。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    category: str | None = None
+    name: str | None = None
+    zone_id: str | None = None
+    subtype: str | None = None
+    direction: Literal["none", "east", "west", "north", "south", "northeast", "northwest", "southeast", "southwest"] = "none"
+    reference: str | None = None
+    radius_m: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    selection: Literal["single", "nearest", "all"] = "single"
+
+    @field_validator("category", "name", "zone_id", "subtype", "reference")
+    @classmethod
+    def nonempty_filter(cls, value):
+        """去掉筛选文字首尾空格，拒绝空白条件。"""
+        if value is not None:
+            if not value.strip():
+                raise ValueError("未使用的条件请省略，不要填空字符串")
+            return value.strip()
+        return value
+
+    @model_validator(mode="after")
+    def check_target(self):
+        """保证至少提供一个区域筛选条件。"""
+        if not any((self.category, self.name, self.zone_id, self.subtype)):
+            raise ValueError("需要目标类别、名称、子类或 ID")
+        return self
 
 
 class Clarification(ValueError):
@@ -20,16 +54,15 @@ class Clarification(ValueError):
 
 class ZoneCatalog:
     # 读取本地功能区地图，校验坐标制并建立类别、区域摘要和几何索引。
-    # 输入为地图路径；数据保存在实例中，不连接模型或 AirSim。
-    def __init__(self, path=MAP_PATH):
-        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    # 固定读取项目地图；数据保存在实例中，不连接模型或 AirSim。
+    def __init__(self):
+        data = json.loads(MAP_PATH.read_text(encoding="utf-8-sig"))
         metadata = data["coordinate_metadata"]
         if metadata.get("system") != "UE_WORLD_METRES" or metadata.get("unit") != "m":
             raise ValueError("地图必须使用 UE_WORLD_METRES，单位米")
         self.bounds = metadata["bounds_m"]
         self.zones, self._geometries = {}, {}
-        self.categories = data["categories"]
-        self.category_names = {c["code"]: c["name"] for c in self.categories}
+        self.category_names = {c["code"]: c["name"] for c in data["categories"]}
         for feature in data["features"]:
             props, zone_id = feature["properties"], feature["id"]
             if zone_id in self.zones:
@@ -41,19 +74,6 @@ class ZoneCatalog:
                 "label_xy_m": props.get("label_xy_m"),
             }
             self._geometries[zone_id] = feature["geometry"]
-
-    # 生成类别统计、区域四字段摘要和地图方向约定。
-    # 返回完整摘要目录；规划器再筛选首次发送内容，此处不包含几何坐标。
-    def overview(self):
-        """发送全部区域和设施的四字段目录，几何和位置仅保留在本地。"""
-        counts = Counter(z["category"] for z in self.zones.values())
-        return {"categories": [{"code": c["code"], "name": c["name"],
-                                "subtypes": c.get("subtypes", []), "count": counts[c["code"]]}
-                               for c in self.categories],
-                "zones": [{"zone_id": z["zone_id"], "name": z["name"],
-                           "category": z["category"], "subtype": z["subtype"]}
-                          for z in self.zones.values()],
-                "direction_convention": "地图右东(+X)、上北(-Y)；不是地理真北"}
 
     # 将地图、无人机或区域参照解析成空间计算使用的点和边界。
     # 返回参照点、可选区域几何及 ID；缺失、重名或无位置时抛出澄清异常。
@@ -73,15 +93,15 @@ class ZoneCatalog:
                 raise Clarification(f"缺少 {reference} 的当前位置，请提供 UE 世界米制坐标。")
             return drones[0]["position_m"][:2], None, None
         if len(matches) != 1:
-            raise Clarification(f"参照“{reference}”不存在或不唯一，请提供无人机 ID 或真实区域 ID。", matches)
+            raise Clarification(f"参照“{reference}”不存在或不唯一，请提供无人机 ID 或真实区域 ID。", self._clean(matches))
         zone = matches[0]
         if zone["label_xy_m"] is None:
             raise Clarification(f"参照区域 {zone['zone_id']} 缺少代表位置。")
         return zone["label_xy_m"], self._geometries[zone["zone_id"]], zone["zone_id"]
 
     # 按名称、类别、方向和距离筛选真实区域，并处理最近、全部与唯一选择。
-    # 输入为目标条件和无人机快照；返回区域摘要，无匹配或歧义时要求补充。
-    def query(self, target, fleet):
+    # 输入为查询条件和可选无人机位置；返回区域摘要，无匹配或歧义时要求补充。
+    def query(self, target: ZoneQuery, fleet=None):
         if target.category and target.category not in self.category_names:
             raise Clarification(f"地图没有类别 {target.category}，请使用实际类别。")
         if target.zone_id and target.zone_id not in self.zones:
@@ -93,7 +113,7 @@ class ZoneCatalog:
                    and (not target.subtype or target.subtype == z["subtype"])]
         spatial = target.direction != "none" or target.radius_m is not None or target.selection == "nearest"
         if spatial:
-            point, anchor_geometry, anchor_id = self._anchor(target.reference, fleet)
+            point, anchor_geometry, anchor_id = self._anchor(target.reference, fleet or [])
             filtered = []
             for zone in matches:
                 if zone["zone_id"] == anchor_id:
@@ -123,16 +143,14 @@ class ZoneCatalog:
             matches = matches[:1]
         elif target.selection == "single" and len(matches) > 1:
             raise Clarification("目标不唯一，请指定区域，或明确搜索全部区域。", self._clean(matches))
-        if target.scope == "nearby":
-            for zone in matches:
-                zone.update(scope="nearby", buffer_m=target.buffer_m)
         return self._clean(matches)
 
-    # 去掉候选区域中仅供内部排序使用的临时字段。
+    # 只返回区域标识、名称、类别、子类和可选距离，隐藏内部位置及所属区域信息。
     # 输入为区域列表；返回新的摘要列表，不修改原字典。
     @staticmethod
     def _clean(zones):
-        return [{k: v for k, v in z.items() if not k.startswith("_")} for z in zones]
+        fields = ("zone_id", "name", "category", "subtype", "distance_m")
+        return [{k: zone[k] for k in fields if k in zone} for zone in zones]
 
 
 # 将 Polygon 与 MultiPolygon 统一成可逐个处理的多边形列表。

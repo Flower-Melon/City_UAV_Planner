@@ -2,6 +2,6 @@
 
 from .fly_to_point import fly_to_point
 from .reset_uav import reset_uav
-from .search import search
+from .search_area import search_area
 
-__all__ = ["fly_to_point", "reset_uav", "search"]
+__all__ = ["fly_to_point", "reset_uav", "search_area"]

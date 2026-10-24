@@ -14,7 +14,7 @@ import time
 
 from PIL import Image
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from UAV.utils.airsim_client import AirSimClient as Rpc, calibrate, vector
 
 

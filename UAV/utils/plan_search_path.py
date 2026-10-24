@@ -11,7 +11,8 @@ from shapely.geometry import LineString, Point, shape
 
 from .plan_flight_path import NoPathError, _RoadGraph, _point
 
-MAP_PATH = Path(__file__).resolve().parents[2] / "Map" / "functional_zones.json"
+MAP_DIR = Path(__file__).resolve().parents[2] / "Map"
+MAP_PATH = MAP_DIR / "zones" / "functional_zones.json"
 
 
 # 读取并缓存本地机动车道路图，供多次搜索规划复用。
@@ -19,7 +20,7 @@ MAP_PATH = Path(__file__).resolve().parents[2] / "Map" / "functional_zones.json"
 @lru_cache(maxsize=1)
 def _search_graph():
     """保留机动车道拓扑用于通行；必巡目标另外按道路合并。"""
-    data = json.loads(MAP_PATH.with_name("road_network.json").read_text(encoding="utf-8-sig"))
+    data = json.loads((MAP_DIR / "road_network.json").read_text(encoding="utf-8-sig"))
     return _driving_graph(data)
 
 
@@ -65,22 +66,16 @@ def _merge_lane_clips(graph, clips):
                              if lane_ids.get(graph.edge_ids[index]) in representatives})
 
 
-# 用真实区域边界构造搜索范围：区域内部，或边界外默认 50 米的环带。
-# 输入为 target 和地图路径；返回 Shapely 范围及规范化目标，不把附近自动换成居住区。
-def search_scope(target, map_path=MAP_PATH):
-    """接受现有command.target（允许携带名称等摘要），范围只由ID/scope/buffer决定。"""
+# 用真实区域边界构造搜索范围：边界外默认 50 米的环带。
+# 输入为 target，读取默认地图；返回 Shapely 范围及规范化目标，不把附近自动换成居住区。
+def search_scope(target):
+    """接受现有command.target（允许携带名称等摘要），范围只由区域ID和周边宽度决定。"""
     if not isinstance(target, dict) or not isinstance(target.get("zone_id"), str):
         raise ValueError("target需要真实zone_id")
-    scope = target.get("scope", "zone")
-    if scope not in ("zone", "nearby"):
-        raise ValueError("scope只支持zone或nearby")
-    width = target.get("buffer_m", 50 if scope == "nearby" else None)
-    if scope == "nearby":
-        if isinstance(width, bool) or not isinstance(width, (int, float)) or not math.isfinite(width) or width <= 0:
-            raise ValueError("buffer_m必须为正的有限米数")
-    elif width is not None:
-        raise ValueError("buffer_m仅用于nearby")
-    data = json.loads(Path(map_path).read_text(encoding="utf-8-sig"))
+    width = target.get("buffer_m", 50)
+    if isinstance(width, bool) or not isinstance(width, (int, float)) or not math.isfinite(width) or width <= 0:
+        raise ValueError("buffer_m必须为正的有限米数")
+    data = json.loads(MAP_PATH.read_text(encoding="utf-8-sig"))
     if data["coordinate_metadata"].get("system") != "UE_WORLD_METRES":
         raise ValueError("地图必须使用UE世界米制坐标")
     feature = next((f for f in data["features"] if f["id"] == target["zone_id"]), None)
@@ -89,9 +84,8 @@ def search_scope(target, map_path=MAP_PATH):
     geometry = shape(feature["geometry"])
     if not geometry.is_valid or geometry.geom_type not in ("Polygon", "MultiPolygon"):
         raise ValueError("区域边界无效")
-    area = geometry.buffer(width).difference(geometry) if scope == "nearby" else geometry
-    return area, {"zone_id": feature["id"], "scope": scope,
-                  **({"buffer_m": float(width)} if width is not None else {})}
+    area = geometry.buffer(width).difference(geometry)
+    return area, {"zone_id": feature["id"], "buffer_m": float(width)}
 
 
 # 从几何裁剪结果中递归提取线段，忽略不构成道路长度的其他几何。
@@ -220,11 +214,11 @@ def _shorten_route(walk, adjacency, targets):
 
 # 裁剪目标道路、合并同路车道，并按拓扑连接各段直到全部目标路段被覆盖。
 # 输入为当前位置和目标；返回航段、必巡路段及总距离，可有重复连接，不保证全局最短。
-def plan_search_path(current_position, target, *, graph=None, map_path=MAP_PATH):
+def plan_search_path(current_position, target):
     """同路车道去重，按拓扑覆盖后优化方向和顺序；允许必要重复，不保证全局最短。"""
     start = _point(current_position, "当前位置")
-    graph = graph or _search_graph()
-    area, target = search_scope(target, map_path)
+    graph = _search_graph()
+    area, target = search_scope(target)
     bounds = area.bounds
     clips = defaultdict(list)
     for index, edge in enumerate(graph.edges):
@@ -236,14 +230,12 @@ def plan_search_path(current_position, target, *, graph=None, map_path=MAP_PATH)
             if part.length > 0.05:
                 a, b = ((0.0, line.length) if part.is_closed else
                         sorted((line.project(Point(part.coords[0])), line.project(Point(part.coords[-1])))))
-                # 校界本身不属于校界外环带。
-                if target["scope"] == "nearby" and not area.contains(part.interpolate(.5, normalized=True)):
+                # 区域边界本身不属于边界外环带。
+                if not area.contains(part.interpolate(.5, normalized=True)):
                     continue
                 clips[index].append((a, b))
     clips = _merge_lane_clips(graph, clips)
     if not clips:
-        if target["scope"] == "zone":
-            raise NoPathError(f"区域 {target['zone_id']} 内部没有可巡查道路，未起飞；可改为搜索该区域周边（默认50米）")
         raise NoPathError(f"区域 {target['zone_id']} 周边{target['buffer_m']:g}米内没有可巡查道路，未起飞")
     _, anchors = graph.nearest(start)
     cuts = defaultdict(set)
@@ -362,7 +354,7 @@ def check_building_clearance(plan, altitude_world_m, margin_m=3):
     from shapely.ops import unary_union
     paths = [LineString(leg["points"]) for leg in plan["legs"] if leg["length_m"] > 0.01]
     corridor = unary_union(paths).buffer(1.0)
-    data = json.loads(MAP_PATH.with_name("buildings.json").read_text(encoding="utf-8-sig"))
+    data = json.loads((MAP_DIR / "objects" / "buildings.json").read_text(encoding="utf-8-sig"))
     for feature in data["features"]:
         height = feature["properties"].get("z_max_m")
         if height is None:

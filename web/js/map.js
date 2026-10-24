@@ -177,7 +177,7 @@ function rebuildZones() {
 }
 async function ensureBuildings() {
   if (!buildingRequest) buildingRequest = (async () => {
-    buildings = await loadJSON('buildings.json');
+    buildings = await loadJSON('objects/buildings.json');
     if (!Array.isArray(buildings.features)) throw new Error('buildings.json 缺少 features 数组');
     await visuals.setBuildings(buildings.features, polygonPath);
   })().catch(error => { buildingRequest = null; throw error; });
@@ -401,7 +401,7 @@ window.addEventListener('resize', () => { resize(); schedule(); });
 
 async function initialize() {
   [zones, points, roads] = await Promise.all([
-    loadJSON('functional_zones.json'), loadJSON('task_points.json'),
+    loadJSON('zones/functional_zones.json'), loadJSON('objects/task_points.json'),
     loadJSON('road_network.json')
   ]);
   if (![zones, points].every(data => Array.isArray(data?.features)) || !Array.isArray(zones?.categories)) {

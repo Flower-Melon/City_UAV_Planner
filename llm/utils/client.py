@@ -34,7 +34,7 @@ def error_message(error):
     try:
         from openai import APIConnectionError, APIStatusError, APITimeoutError
     except ImportError:
-        return "缺少 openai SDK，请安装 llm/requirements.txt 中的依赖。"
+        return "缺少 openai SDK，请安装项目根目录 requirements.txt 中的依赖。"
     if isinstance(error, APITimeoutError):
         return "连接模型服务超时，请检查网络或稍后重试。"
     if isinstance(error, APIConnectionError):

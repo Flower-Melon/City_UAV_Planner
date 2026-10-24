@@ -1,3 +1,0 @@
-msgpack>=1,<2
-Pillow>=9,<13
-shapely>=2,<3

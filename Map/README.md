@@ -1,5 +1,18 @@
 # Map 数据说明
 
+```text
+Map/
+├─ README.md
+├─ road_network.json          道路拓扑
+├─ objects/                   建筑与任务点
+│  ├─ buildings.json
+│  └─ task_points.json
+└─ zones/                     功能区与模型目录
+   ├─ functional_zones.json
+   ├─ zone_catalog.json
+   └─ generate_catalog.py     将功能区数据转换为模型目录
+```
+
 ## road_network.json
 
 保存车道、节点及连接线，供车辆按车道方向、无人机沿拓扑边双向规划最短路径。
@@ -42,7 +55,7 @@
 | `edges[].polyline_xy_m` | 完整 XY 折线，反向通行时反转坐标顺序 |
 | `edges[].length_m` | 折线长度，道路与连接均计入路径成本 |
 
-## functional_zones.json
+## zones/functional_zones.json
 
 保存功能区和设施的边界、用途及关联对象，用于区域查询和地图展示。
 
@@ -70,7 +83,28 @@
 | `properties.building_ids`、`point_ids`、`facility_ids` | 关联建筑、点位和设施编号 |
 | `properties.nearby_graph_edge_ids` | 15 米内的道路边编号，仅表示空间邻近 |
 
-## task_points.json
+## zones/zone_catalog.json
+
+保存供规划模型读取的静态区域目录，包含全部功能区和设施的 ID、名称、类别及子类，不包含几何坐标。
+
+| 字段 | 含义 |
+|---|---|
+| `zone_fields` | `zones` 每行的字段顺序：`zone_id`、`name`、`category`、`subtype` |
+| `zones` | 全部区域及设施的目录，如 `["F-SCHOOL-1", "第一学校", "education", "中学"]` |
+| `categories` | 类别代码、名称、子类及对象数量 |
+| `facility_ids` | 默认发送给模型的设施 ID；其他区域按任务文字筛选 |
+| `total_objects` | 目录对象总数 |
+| `direction_convention` | 地图方向约定 |
+
+`planner.py` 直接读取此文件；真实边界及空间查询仍使用 `functional_zones.json`。
+
+同目录的 `generate_catalog.py` 根据 `functional_zones.json` 生成此目录，在项目根目录运行：
+
+```powershell
+python Map/zones/generate_catalog.py
+```
+
+## objects/task_points.json
 
 保存任务点的位置、用途和道路接入候选，用于指定目标点及接入道路图。
 
@@ -98,7 +132,7 @@
 | `road_access_candidates.*[].edge_id`、`offset_m` | 道路边编号及沿边起点累计的投影距离 |
 | `road_access_candidates.*[].xy_m`、`distance_m` | 投影位置及其到原点位的平面距离 |
 
-## buildings.json
+## objects/buildings.json
 
 保存建筑轮廓、用途及高度范围，用于建筑展示和空间位置参考。
 

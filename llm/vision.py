@@ -1,18 +1,16 @@
-"""图片分析入口；沿用llm/.env，模型/提示词可独立替换，不控制飞行。"""
+"""分析本地巡查图片，返回异常状态和中文说明，不控制飞行。"""
 
 import base64
-import argparse
 import json
 import os
 from pathlib import Path
 import sys
-import time
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "llm"
 
-from .functions.client import create_client, error_message
+from .utils.client import create_client, error_message
 
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "search_vision.txt"
 
@@ -31,32 +29,30 @@ def validate_analysis(value):
 class VisionAnalyzer:
     # 加载视觉提示词并准备可复用的模型连接，可注入已有客户端和模型。
     # 自行创建的连接由本实例负责关闭；此处不上传图片。
-    def __init__(self, client=None, model=None, prompt_path=PROMPT_PATH):
+    def __init__(self, client=None, model=None):
+        self.prompt = PROMPT_PATH.read_text(encoding="utf-8")
         self.owns_client = client is None
         if client is None:
             client, default_model = create_client(timeout=25.0, max_retries=0)
-            # 网络各阶段超时，不是整次请求的墙钟上限；重试由后台统一控制。
+            # 超时分别应用于请求的各个网络阶段。
             model = model or os.getenv("OPENAI_VISION_MODEL", "").strip() or default_model
         if not model:
             raise ValueError("视觉模型不能为空")
         self.client, self.model = client, model
-        self.prompt = Path(prompt_path).read_text(encoding="utf-8")
 
-    # 将本地 JPEG/PNG 编码后，连同帧信息发送给视觉模型，校验其 JSON 结果。
-    # 输入为图片路径和元数据；同步等待并返回 status、description，由调用方安排后台执行。
-    def __call__(self, image_path, metadata):
+    # 将本地 JPEG/PNG 编码后发送给视觉模型，校验其 JSON 结果。
+    # 输入为图片路径；同步等待并返回 status、description。
+    def __call__(self, image_path):
         path = Path(image_path)
         suffix = path.suffix.lower()
         if suffix not in (".jpg", ".jpeg", ".png"):
             raise ValueError("视觉分析仅接收JPEG/PNG")
         mime = "image/png" if suffix == ".png" else "image/jpeg"
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-        context = {k: metadata[k] for k in ("frame_id", "target", "phase", "edge_id") if k in metadata}
         response = self.client.responses.create(
             model=self.model, store=False, instructions=self.prompt, temperature=0,
             reasoning={"effort": "minimal"}, text={"format": {"type": "json_object"}},
             input=[{"role": "user", "content": [
-                {"type": "input_text", "text": json.dumps(context, ensure_ascii=False)},
                 {"type": "input_image", "image_url": f"data:{mime};base64,{encoded}", "detail": "high"}]}])
         if response.status != "completed":
             raise RuntimeError("视觉模型响应未完成")
@@ -72,33 +68,20 @@ class VisionAnalyzer:
             self.client.close()
 
 
-# 独立测试一张本地图片，复用现有配置并打印模型判断和测试耗时。
-# 输入为可选命令行参数列表；成功返回 0，失败输出错误并返回 1，不启动无人机。
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="独立测试本地图片的视觉识别，不连接 AirSim")
-    parser.add_argument("image", type=Path, help="本地 JPEG/PNG 图片路径")
-    parser.add_argument("--model", help="仅本次测试使用的模型名称，默认沿用 llm/.env")
-    args = parser.parse_args(argv)
-    started = time.perf_counter()
+if __name__ == "__main__":
+    # 修改下面的图片路径即可调试。
+    image_path = Path(__file__).resolve().parents[1] / "巡查照片.jpg"
     try:
-        if not args.image.is_file():
-            raise ValueError(f"图片文件不存在：{args.image}")
-        if args.image.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+        if not image_path.is_file():
+            raise ValueError(f"图片文件不存在：{image_path}")
+        if image_path.suffix.lower() not in (".jpg", ".jpeg", ".png"):
             raise ValueError("视觉分析仅接收JPEG/PNG")
-        analyzer = VisionAnalyzer(model=args.model)
+        analyzer = VisionAnalyzer()
         try:
-            result = analyzer(args.image, {})
+            result = analyzer(image_path)
         finally:
             analyzer.close()
-        print(json.dumps({"image": str(args.image.resolve()), "model": analyzer.model,
-                          **result, "elapsed_s": round(time.perf_counter()-started, 3)},
-                         ensure_ascii=False, indent=2))
-        return 0
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as error:
-        print(json.dumps({"type": "vision_error", "message": error_message(error)}, ensure_ascii=False),
-              file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+        print(error_message(error), file=sys.stderr)
+        raise SystemExit(1)

@@ -65,6 +65,54 @@ reset_uav()            # 复位全部无人机
 None
 ```
 
+### 1.3 search_area
+
+巡查指定区域边界外环带内的道路，默认宽度 50 米。先计算完整巡查路线并检查建筑净空，再起飞、沿路飞行并定时拍照，完成后悬停。
+
+| 入参 | 类型 | 含义 |
+|---|---|---|
+| `drone_id` | `int` 或 `str` | 无人机编号，`1` 或 `"UAV_01"` |
+| `target` | `dict` | 搜索目标，包含区域 ID 和搜索范围，字段见下表；可直接传入规划结果中的 `SearchArea.target` |
+| `flight_height` | `float` | 相对起飞地面的飞行高度，单位米，大于 `0`；需满足沿途建筑净空检查 |
+| `flight_speed` | `float` | 巡航速度上限，单位米/秒，大于 `0`，默认 `5.0`；拐弯及短路段自动降速 |
+| `capture_interval` | `float` | 拍照间隔，单位秒，大于 `0`，默认 `3.0`；实际间隔还受取图和保存耗时影响 |
+| `output_dir` | `str` 或 `Path` | 结果保存的父目录，默认是 `UAV/` 下的 `search_results/` |
+
+`target` 字段：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `zone_id` | `str` | `Map/zones/functional_zones.json` 中真实的区域 ID，如 `"F-SCHOOL-1"` |
+| `buffer_m` | `float` | 区域边界外环带宽度，单位米，大于 `0`；省略时默认 `50` |
+
+| 出参 | 类型 | 含义 |
+|---|---|---|
+| 返回值 | `None` | 同步完成飞行、悬停和停止拍照后返回，释放无人机任务锁 |
+
+入参样例与调用：
+
+```python
+from UAV.API import search_area
+
+target = {
+    "zone_id": "F-SCHOOL-1",
+    "buffer_m": 50,
+}
+result = search_area(
+    "UAV_01",
+    target,
+    flight_height=40.0,
+    flight_speed=5.0,
+    capture_interval=3.0,
+)
+```
+
+出参样例：
+
+```python
+None  # result；飞行与拍照已结束
+```
+
 ## 2 utils
 
 ### 2.1 plan_flight_path.py
@@ -108,8 +156,47 @@ segments = [([(439.42848, -528.55233), (440.05435324415504, -532.3873894705624)]
 
 ### 2.2 airsim_client.py
 
-提供 AirSim 通信、UE 世界坐标转换与标定、起飞地面高度测量，以及共用的无人机编号解析和任务锁。
+封装与 AirSim 仿真环境的通信、位置转换和飞行控制，负责让无人机实际执行规划好的路线。主要功能如下：
 
-## 3 沿路搜索 search
+- `AirSimClient`：连接 AirSim，发送控制指令并读取仿真状态。
+- `AirSimFleet.read`：读取各架无人机的位置和可用状态。
+- `vehicle_name`：根据无人机编号或名称，确定要控制的无人机。
+- `vehicle_lock`：防止同一架无人机同时执行多个任务。
+- `vector`：读取并检查仿真返回的三维坐标。
+- `editor_log`、`calibrate`：获取仿真中的参考位置，建立地图坐标与仿真坐标的对应关系。
+- `WorldFrame.vehicle`：获取无人机在地图和仿真中的位置。
+- `WorldFrame.ground_z`：测量起飞地面高度，为飞行高度提供基准。
+- `SearchFlight.prepare`：检查飞行高度，接管无人机并升至指定高度。
+- `SearchFlight.fly`：沿规划路线飞行，检查到达位置与碰撞情况。
+- `SearchFlight.stop`：停止当前飞行，使无人机减速并悬停。
 
-新增`from UAV.API import search`，同步完成指定区域或周边的道路巡查和定时拍照，完成后悬停并释放任务锁；图片识别与报告在后台继续，不阻塞下一次飞行。接口参数、目录结构、提示词及测试说明见[SEARCH.md](SEARCH.md)。网页目前仍只规划，没有自动执行。
+### 2.3 plan_search_path.py
+
+为 `search_area()` 计算区域巡查路线。读取区域边界和道路拓扑，裁剪搜索范围内的道路，为同一道路同一分段选择一条代表车道，再安排巡查顺序和路段间的连接路线。连接路线可以经过搜索范围外，结果覆盖全部必巡路段，允许必要的重复通行。
+
+| 入参 | 类型 | 含义 |
+|---|---|---|
+| `current_position` | `(x, y)` 或 `[x, y]` | 无人机当前位置，UE 世界 XY 坐标，单位米 |
+| `target` | `dict` | 与 `search_area()` 的 `target` 相同，指定区域 ID 和周边宽度 |
+
+| 出参 | 类型 | 含义 |
+|---|---|---|
+| 返回值 | `dict` | 巡查计划，主要字段如下 |
+| `target` | `dict` | 规范化后的区域 ID 和周边宽度 |
+| `legs` | `list[dict]` | 按执行顺序排列的航段，包含路点 `points`、类型 `kind`、路段 ID 和长度；`patrol` 为巡查段，`connection` 为连接段 |
+| `target_piece_ids` | `list[str]` | 必须完成的巡查路段 ID |
+| `distance_m` | `float` | 全部航段总长度，包含接入、连接和重复通行，单位米 |
+| `target_distance_m` | `float` | 必巡路段去重后的总长度，单位米 |
+
+入参样例与调用：
+
+```python
+from UAV.utils.plan_search_path import plan_search_path
+
+plan = plan_search_path(
+    (439.42848, -528.55233),
+    {"zone_id": "F-SCHOOL-1", "buffer_m": 50},
+)
+path_legs = plan["legs"]
+distance_m = plan["distance_m"]
+```

@@ -13,8 +13,9 @@ if not __package__:
     __package__ = "UAV.API"
 
 from ..utils import plan_flight_path
-from ..utils.flight_control import _action, _hold, _settle
-from ..utils.airsim_client import AirSimClient, WorldFrame, vector, vehicle_name, vehicle_lock
+from ..utils.airsim_client import (
+    AirSimClient, WorldFrame, _action, _hold, _settle, vector, vehicle_name, vehicle_lock,
+)
 
 
 

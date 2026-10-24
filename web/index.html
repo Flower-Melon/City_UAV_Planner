@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Town12 · 城市空间标定</title>
-  <link rel="stylesheet" href="./styles.css?v=20261020-queue">
-  <script src="./map.js?v=20261019-3" defer></script>
-  <script src="./airsim.js" defer></script>
-  <script src="./llm.js?v=20261021-execute" defer></script>
+  <link rel="stylesheet" href="./css/styles.css?v=20261020-queue">
+  <script src="./js/map.js?v=20261019-3" defer></script>
+  <script src="./js/airsim.js" defer></script>
+  <script src="./js/llm.js?v=20261021-execute" defer></script>
 </head>
 <body>
   <header>
@@ -78,9 +78,7 @@
       </div>
       <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab" hidden>
         <div class="section-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" hidden>新任务</button></div>
-        <p class="muted llm-intro">输入任务后自动规划并开始 AirSim 搜索，同步拍照与后台分析。</p>
-        <div class="llm-flight-settings"><label for="llm-height">飞行高度</label><div><input id="llm-height" type="number" min="1" step="1" value="40" aria-describedby="llm-flight-hint"> 米</div></div>
-        <p id="llm-flight-hint" class="muted">相对起飞地面 · 5米/秒 · 每3秒拍照</p>
+        <p class="muted llm-intro">输入任务后自动规划并开始 AirSim 搜索，沿路定时拍照。</p>
         <form id="llm-form">
           <label class="field" for="llm-instruction">任务描述</label>
           <textarea id="llm-instruction" rows="4" maxlength="4000" required placeholder="例如：让 UAV_01 搜索地图东边的学校"></textarea>
@@ -88,17 +86,17 @@
         </form>
         <p id="llm-status" class="llm-status" role="status" aria-live="polite">正在检查执行状态…</p>
         <section id="llm-mission" class="llm-mission" hidden>
-          <div class="section-heading"><h2 id="llm-mission-title">搜索进度</h2><button id="llm-stop" type="button">停止任务</button></div>
+          <div class="section-heading"><h2 id="llm-mission-title">搜索进度</h2></div>
           <progress id="llm-progress" max="1" value="0" aria-label="区域搜索完成进度"></progress>
           <p id="llm-mission-tasks" class="llm-answer"></p>
-          <p class="muted">完成进度按区域计数。图片分析独立进行，不阻塞飞行；结果保存在 UAV/search_results/。</p>
+          <p class="muted">完成进度按区域计数。照片和飞行记录保存在 UAV/search_results/。</p>
         </section>
         <details id="llm-history" class="llm-history" hidden>
           <summary>前面的对话</summary><div id="llm-messages"></div>
         </details>
         <section id="llm-result" hidden>
           <p id="llm-submitted" class="muted llm-submitted"></p>
-          <div class="section-heading"><h2 id="llm-answer-heading">模型回答</h2><span id="llm-iterations" class="muted"></span></div>
+          <div class="section-heading"><h2 id="llm-answer-heading">模型回答</h2><span id="llm-elapsed" class="muted"></span></div>
           <p id="llm-answer" class="llm-answer"></p>
           <p id="llm-queue" class="llm-answer llm-queue" hidden></p>
           <details id="llm-command-panel" class="llm-command-panel" open hidden>
