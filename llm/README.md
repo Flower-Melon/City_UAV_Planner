@@ -24,7 +24,7 @@
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
-| `instruction` | `str` | 自然语言任务，1–4000 字，如“让 UAV_01 搜索第一学校周边50米” |
+| `instruction` | `str` | 自然语言任务，1–4000 字，如“让 UAV_01 完整巡查第一学校所在街区” |
 | `fleet` | `list[dict]` | 调用方提供的非空无人机列表，字段见下表 |
 | `conversation` | `list[dict]` 或 `None` | 可选历史问答，默认 `None`；每条含 `role` 和 `content`，按 `user`、`assistant` 成对排列，最多 6 组 |
 
@@ -51,11 +51,10 @@
 |---|---|---|
 | `drone_id` | `str` | 执行该区域任务的无人机名称 |
 | `sequence` | `int` | 同一架无人机的任务顺序，从 `1` 开始 |
-| `target` | `dict` | 搜索目标，包含下面两个字段 |
+| `target` | `dict` | 搜索目标，仅包含区域 ID |
 | `target.zone_id` | `str` | 地图中的真实区域 ID |
-| `target.buffer_m` | `float` | 区域边界外的巡查宽度，单位米，默认 `50` |
 
-`buffer_m` 表示区域边界外的巡查宽度，单位米，默认 `50`。`target` 可直接传给 `UAV.API.search_area()`。
+`target` 可直接传给 `UAV.API.search_area()`。实际搜索按目标所在完整街区的道路覆盖执行，不设置缓冲宽度；查询中的 `radius_m` 仍仅用于筛选目标区域，不用于裁剪巡查道路。
 
 入参样例与调用：
 
@@ -70,7 +69,7 @@ fleet = [
 client, model = create_client()
 with client:
     result = Planner(client, model, ZoneCatalog()).plan(
-        "让 UAV_01 搜索第一学校周边50米",
+        "让 UAV_01 完整巡查第一学校所在街区",
         fleet,
     )
 ```
@@ -80,12 +79,12 @@ with client:
 ```python
 {
     "status": "ready",
-    "message": "已规划第一学校周边50米的巡查任务。",
+    "message": "已规划第一学校所在街区的完整巡查任务。",
     "commands": [
         {
             "drone_id": "UAV_01",
             "sequence": 1,
-            "target": {"zone_id": "F-SCHOOL-1", "buffer_m": 50.0},
+            "target": {"zone_id": "F-SCHOOL-1"},
         },
     ],
 }

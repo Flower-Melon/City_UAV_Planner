@@ -257,19 +257,24 @@ def _hold(client, name, z, duration=.5):
 # 低速修正到站位置，并核实位置误差和速度都已进入容差。
 # 输入为 NED 目标点和米制比例；成功无返回值，无法稳定时抛出异常。
 def _settle(client, name, destination, scale):
-    """低速完成最后少量位置误差，并将速度归零。"""
+    """低速到站，允许水平偏差0.75米、高度偏差0.5米、速度0.3米/秒。"""
     initial = vector(client.call("simGetVehiclePose", name)["position"])
     distance = math.dist(initial, destination)*scale
     deadline = time.monotonic() + max(15.0, distance*2 + 10.0)
-    while time.monotonic() < deadline:
+    while True:
         current = vector(client.call("simGetVehiclePose", name)["position"])
         delta = [a-b for a,b in zip(destination,current)]
-        if math.hypot(delta[0],delta[1])*scale <= .25 and abs(delta[2])*scale <= .25:
-            _hold(client,name,destination[2],.8)
-            stopped = vector(client.call("simGetVehiclePose",name)["position"])
-            velocity = vector(client.call("getMultirotorState",name)["kinematics_estimated"]["linear_velocity"])
-            if math.dist(stopped,destination)*scale <= .35 and math.sqrt(sum(v*v for v in velocity))*scale <= .15:
-                return
+        horizontal = math.hypot(*delta[:2])*scale
+        vertical = abs(delta[2])*scale
+        velocity = vector(client.call("getMultirotorState",name)["kinematics_estimated"]["linear_velocity"])
+        speed = math.hypot(*velocity)*scale
+        if horizontal <= .75 and vertical <= .5 and speed <= .3:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"{name}未能稳定在目标位置：水平误差{horizontal:.2f}米，"
+                               f"高度误差{vertical:.2f}米，速度{speed:.2f}米/秒")
+        if horizontal <= .75 and vertical <= .5:
+            _hold(client,name,destination[2],.5)
             continue
         velocity = [delta[0]*.8,delta[1]*.8]
         speed = math.hypot(*velocity)
@@ -278,7 +283,6 @@ def _settle(client, name, destination, scale):
             velocity = [v*limit/speed for v in velocity]
         _action(client,"moveByVelocityZ",*velocity,destination[2],.25,0,
                 {"is_rate": True,"yaw_or_rate": 0.0},name,timeout=5)
-    raise RuntimeError(f"{name}未能稳定在目标位置")
 
 
 class SearchFlight:
@@ -342,21 +346,67 @@ class SearchFlight:
                     0, {"is_rate": True, "yaw_or_rate": 0.0}, -1.0, 1.0, self.name, timeout=timeout+5)
                 local = vector(self.client.call("simGetVehiclePose", self.name)["position"])
                 actual = [self.origin[i]+local[i]*self.frame.scale for i in (0, 1)]
-                if completed is not True:
-                    if math.dist(actual, b) > 2 or abs(local[2]-self.z)*self.frame.scale > 2:
-                        raise RuntimeError(f"巡查路径未完成或被取消：水平误差{math.dist(actual,b):.2f}米，"
-                                           f"高度误差{abs(local[2]-self.z)*self.frame.scale:.2f}米，速度{segment_speed:g}米/秒")
-                    # AirSim在接近短段终点时也可能返回False；只对已到达附近的点低速校准。
-                    _hold(self.client, self.name, self.z, 2.0)
+                horizontal_error = math.dist(actual, b)
+                vertical_error = abs(local[2]-self.z)*self.frame.scale
+                if completed is not True or horizontal_error > 1.5 or vertical_error > 1.5:
+                    if horizontal_error > 2 or vertical_error > 2:
+                        raise RuntimeError(f"巡查路径未到达终点：水平误差{horizontal_error:.2f}米，"
+                                           f"高度误差{vertical_error:.2f}米，指令速度{execution_speed:g}米/秒，"
+                                           f"AirSim返回值{completed!r}")
+                    # True只表示路径跟踪结束，并不保证精确到站或停稳；附近偏差统一制动校准。
+                    self.stop()
                     _settle(self.client, self.name, [points[-1]["x_val"], points[-1]["y_val"], self.z], self.frame.scale)
                     local = vector(self.client.call("simGetVehiclePose", self.name)["position"])
                     actual = [self.origin[i]+local[i]*self.frame.scale for i in (0, 1)]
                 if math.dist(actual, b) > 1.5 or abs(local[2]-self.z)*self.frame.scale > 1.5:
-                    raise RuntimeError("巡查路径未到达指定路点，停止以免误报完成")
+                    raise RuntimeError(f"巡查路径校准后仍未到达指定路点：水平误差{math.dist(actual,b):.2f}米，"
+                                       f"高度误差{abs(local[2]-self.z)*self.frame.scale:.2f}米")
                 observe(actual)
                 collision = self.client.call("simGetCollisionInfo", self.name)
                 if collision.get("has_collided") and collision.get("time_stamp") != self.collision_timestamp:
                     raise RuntimeError("检测到碰撞，搜索停止")
+
+    def land(self, home):
+        """在各自起飞基点精确对位、降落，上锁并释放 API 控制。"""
+        self.stop()
+        destination = [(home[i] - self.origin[i]) / self.frame.scale for i in (0, 1)] + [self.z]
+        _settle(self.client, self.name, destination, self.frame.scale)
+        ground = self.frame.ground_z([home[0], home[1], self.origin[2]], self.name)
+        position = vector(self.client.call("simGetVehiclePose", self.name)["position"])
+        height = self.origin[2] - position[2]*self.frame.scale - ground
+        # AirSim land 的下降速度为0.2米/秒；局部NED原点可能高于地面，不能用abs(self.z)估计航程。
+        timeout = max(30.0, max(0.0, height)/0.2 + 30.0)
+        completed = self.client.call("land", timeout, self.name, timeout=timeout + 5)
+        # SimpleFlight可能在上锁后才更新landed_state；先确认近地且持续静止，再上锁。
+        deadline, stable_since = time.monotonic() + 3.0, None
+        while True:
+            state = self.client.call("getMultirotorState", self.name)
+            position = vector(self.client.call("simGetVehiclePose", self.name)["position"])
+            height = self.origin[2] - position[2]*self.frame.scale - ground
+            speed = math.hypot(*vector(state["kinematics_estimated"]["linear_velocity"]))*self.frame.scale
+            now = time.monotonic()
+            if (completed is True or state["landed_state"] == 0) and abs(height) <= .75 and speed <= .15:
+                if stable_since is None:
+                    stable_since = now
+                if now - stable_since >= 1.0:
+                    break
+            else:
+                stable_since = None
+            if now >= deadline:
+                raise RuntimeError(f"无人机未完成降落：离地高度{height:.2f}米，速度{speed:.2f}米/秒，"
+                                   f"降落时限{timeout:.1f}秒，AirSim返回值{completed!r}")
+            time.sleep(.1)
+        self.client.call("armDisarm", False, self.name)
+        deadline = time.monotonic() + 3.0
+        while self.client.call("getMultirotorState", self.name)["landed_state"] != 0:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("无人机着地上锁后仍未确认落地状态")
+            time.sleep(.1)
+        self.client.call("enableApiControl", False, self.name)
+        self.controlling = False
+        if (math.dist(position[:2], destination[:2])*self.frame.scale > 1.0
+                or abs(height) > 2.0):
+            raise RuntimeError("无人机未在起飞基点落地")
 
     # 取消当前飞行动作并重复发送制动指令，确认实际速度已降到悬停范围。
     # 成功无返回值；达到重试上限仍未稳定则抛出异常。

@@ -1,4 +1,4 @@
-"""沿道路拓扑图规划无人机的 XY 最短路径及飞行速度分段。"""
+"""沿无人机二维拓扑图规划 XY 最短路径及飞行速度分段。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ __all__ = ["plan_flight_path", "flight_segments", "NoPathError"]
 Point = tuple[float, float]
 _TIE_TOLERANCE_M = 1e-9
 _CELL_SIZE_M = 50.0
-_MAP_PATH = Path(__file__).resolve().parents[2] / "Map" / "road_network.json"
+_MAP_PATH = Path(__file__).resolve().parents[2] / "Map" / "roads" / "uav-road-network.json"
 _SAMPLE_SPACING_M = 5.0
 _CORNER_WINDOW_M = 5.0
 _ACCELERATION_M_S2 = 3.0
@@ -63,26 +63,25 @@ class _Edge:
 
 
 class _RoadGraph:
-    """只读图及空间索引；每次查询的临时接入边仅存在于局部变量中。"""
+    """无人机双向图及空间索引；临时接入边仅存在于单次查询中。"""
 
     def __init__(self, data: dict):
-        rules = data.get("routing_rules", {})
-        if rules.get("distance_metric", "xy") != "xy":
-            raise ValueError("道路图必须使用 XY 距离")
-        if rules.get("uav", {}).get("direction", "both") != "both":
-            raise ValueError("道路图必须允许无人机双向通行")
+        if data.get("coordinate_system") != "UE_WORLD_XY_METRES":
+            raise ValueError("无人机路网必须使用 UE_WORLD_XY_METRES 坐标")
         nodes = data["nodes"]
         node_ids = {node["id"]: i for i, node in enumerate(nodes)}
         if len(node_ids) != len(nodes):
             raise ValueError("道路图存在重复节点编号")
-        self.node_points = [_point(node["position_m"][:2], "图节点") for node in nodes]
+        self.node_points = [_point(node["position_xy_m"], "图节点") for node in nodes]
         self.edges: list[_Edge] = []
         self.edge_ids = []
         self.adjacency = defaultdict(list)
         self.cells = defaultdict(list)
+        edge_ids = set()
         for record in data["edges"]:
-            if record.get("enabled") is False:
-                continue
+            if record["id"] in edge_ids:
+                raise ValueError(f"无人机路网存在重复边编号 {record['id']}")
+            edge_ids.add(record["id"])
             points = tuple(_point(p, "边折线点") for p in record["polyline_xy_m"])
             if len(points) < 2:
                 raise ValueError(f"边 {record['id']} 至少需要两个折线点")
@@ -229,7 +228,8 @@ class _RoadGraph:
 
 @lru_cache(maxsize=1)
 def _default_graph() -> _RoadGraph:
-    with _MAP_PATH.open(encoding="utf-8") as source:
+    """导航与搜索共用同一份只读无人机路网。"""
+    with _MAP_PATH.open(encoding="utf-8-sig") as source:
         return _RoadGraph(json.load(source))
 
 
@@ -238,7 +238,7 @@ def plan_flight_path(
     target_position: Sequence[float],
     flight_speed: float = 25.0,
 ) -> tuple[list[Point], list[tuple[list[Point], float]]]:
-    """一次返回道路最短路径及全部飞行分段，不连接仿真或保存文件。
+    """一次返回无人机拓扑最短路径及全部飞行分段，不连接仿真或保存文件。
 
     Args:
         current_position: 当前 UE 世界 (x, y)，单位米，允许位于图外。
@@ -253,10 +253,11 @@ def plan_flight_path(
     Raises:
         ValueError: 坐标、速度或地图无效。
         NoPathError: 起点与目标的最近投影点之间不存在道路拓扑路径。
-        OSError: 无法读取项目 Map/road_network.json。
+        OSError: 无法读取项目 Map/roads/uav-road-network.json。
 
     地图首次调用时读取并在进程内缓存。起点在图外时接入最近边，
-    目标在图外时仅到达最近投影点；仅规划 XY，高度由调用方设置。
+    目标在图外时仅到达最近投影点；所有边均按双向通行，长度由 XY
+    路径坐标计算。仅规划 XY，高度由调用方设置。
     """
     if isinstance(flight_speed, bool) or not isinstance(flight_speed, Real):
         raise ValueError("飞行速度必须是大于0的有限数值，单位为米/秒")

@@ -3,7 +3,9 @@
 ```text
 Map/
 ├─ README.md
-├─ road_network.json          道路拓扑
+├─ roads/                     道路拓扑
+│  ├─ road_network.json       原始车道级路网
+│  └─ uav-road-network.json   无人机导航与搜索路网
 ├─ objects/                   建筑与任务点
 │  ├─ buildings.json
 │  └─ task_points.json
@@ -13,7 +15,7 @@ Map/
    └─ generate_catalog.py     将功能区数据转换为模型目录
 ```
 
-## road_network.json
+## roads/road_network.json
 
 保存车道、节点及连接线，供车辆按车道方向、无人机沿拓扑边双向规划最短路径。
 
@@ -54,6 +56,46 @@ Map/
 | `edges[].lane_id` | 道路边所属车道，引用 `lanes[].id` |
 | `edges[].polyline_xy_m` | 完整 XY 折线，反向通行时反转坐标顺序 |
 | `edges[].length_m` | 折线长度，道路与连接均计入路径成本 |
+
+## roads/uav-road-network.json
+
+保存无人机可双向通行的二维拓扑，当前包含 574 个节点、880 条边。导航按边的 XY 长度寻路；搜索根据闭合道路识别目标关联的完整街区，覆盖其边界和内部道路，选中后保留完整原始边，不按距离范围截断。
+
+```json
+{
+  "coordinate_system": "UE_WORLD_XY_METRES",
+  "nodes": [
+    {
+      "id": "N1",
+      "position_xy_m": [0, 0]
+    },
+    {
+      "id": "N2",
+      "position_xy_m": [10, 0]
+    }
+  ],
+  "edges": [
+    {
+      "id": "E1",
+      "from_node_id": "N1",
+      "to_node_id": "N2",
+      "polyline_xy_m": [
+        [0, 0],
+        [10, 0]
+      ]
+    }
+  ]
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `coordinate_system` | UE 世界 XY 坐标，单位为米 |
+| `nodes[].id` | 节点唯一编号 |
+| `nodes[].position_xy_m` | 节点位置 `[X, Y]` |
+| `edges[].id` | 边唯一编号，可用于标识巡查路段和记录搜索进度 |
+| `edges[].from_node_id`、`to_node_id` | 起止节点编号，引用 `nodes[].id` |
+| `edges[].polyline_xy_m` | 从起点到终点的 XY 路径；直路仅包含两个端点，实际弯道保留必要的转向点 |
 
 ## zones/functional_zones.json
 

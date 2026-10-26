@@ -33,18 +33,10 @@
   function showMission(data) {
     mission = data.execution;
     flying = !!data.starting || !!data.uncertain || !!mission && !['completed', 'failed'].includes(mission.status);
-    $('llm-mission').hidden = !mission && !flying;
     if (mission) {
-      const labels = {queued: '排队', running: '搜索中', completed: '完成', failed: '失败', skipped: '跳过'};
-      const completed = mission.tasks.filter(task => task.status === 'completed').length;
-      $('llm-mission-title').textContent = `搜索进度 · ${completed}/${mission.tasks.length} 区域`;
-      $('llm-progress').max = mission.tasks.length; $('llm-progress').value = completed;
-      $('llm-mission-tasks').textContent = mission.tasks.map(task =>
-        `${task.drone_id} · ${task.target.zone_id}周边${task.target.buffer_m ?? 50}米 · ${labels[task.status] || task.status}` +
-        (task.error ? `\n${task.error}` : '')).join('\n');
-      const messages = {running: '搜索已开始 · 无人机正在沿路巡查并定时拍照。',
-        completed: '搜索已完成 · 照片和飞行记录已保存。',
-        failed: '搜索任务失败 · 请查看各区域状态与错误。'};
+      const messages = {running: '搜索执行中 · 到达巡查节点拍照，结束后返航降落。',
+        completed: '搜索已完成 · 已返航降落，照片和飞行记录已保存。',
+        failed: '搜索任务失败。' + (mission.tasks.find(task => task.error)?.error || '')};
       setStatus(mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready', messages[mission.status] || '正在确认执行状态…');
       newTask.hidden = false;
       if (resultPanel.hidden && data.plan) {
@@ -156,7 +148,7 @@
         }
         $('llm-queue').textContent = `共 ${commands.length} 个区域 · ${queues.size} 架无人机，分别按顺序搜索：\n` + [...queues].map(([drone, tasks]) =>
           `${drone}：${tasks.sort((a, b) => a.sequence - b.sequence).map(c =>
-            c.target.zone_id + `周边${c.target.buffer_m}米`).join(' → ')}`).join('\n');
+            c.target.zone_id + ' 完整街区').join(' → ')}`).join('\n');
         $('llm-commands').textContent = JSON.stringify(commands.length === 1 ? commands[0] : {tasks: commands}, null, 2);
       } else $('llm-commands').textContent = '';
       form.hidden = true; newTask.hidden = false;
@@ -191,7 +183,6 @@
     $('llm-history').open = false; resultPanel.hidden = true;
     $('llm-commands').textContent = ''; $('llm-answer').textContent = ''; $('llm-queue').textContent = '';
     input.value = ''; followupInput.value = ''; form.hidden = false; newTask.hidden = true;
-    $('llm-mission').hidden = true;
     setStatus('idle', '输入任务后自动规划并开始搜索。'); input.focus();
   };
   controls(); void pollMission();

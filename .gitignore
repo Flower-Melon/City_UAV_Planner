@@ -15,7 +15,7 @@ venv/
 !.env.template
 
 # 巡查照片与运行记录
-/UAV/**/search_results/
+/output/
 
 # JavaScript 依赖
 node_modules/

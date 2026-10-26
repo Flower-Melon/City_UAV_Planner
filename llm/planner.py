@@ -20,17 +20,13 @@ class StrictModel(BaseModel):
 
 
 class Target(ZoneQuery):
-    buffer_m: float = Field(default=50.0, gt=0, allow_inf_nan=False,
-                            description="原区域边界外的搜索宽度，省略默认50米；不是其他区域的筛选半径")
-
     def to_query(self):
-        """提取地图筛选条件，巡查宽度留在规划器中。"""
-        return ZoneQuery.model_validate(self.model_dump(exclude={"buffer_m"}))
+        """提取地图筛选条件，实际巡查范围由街区拓扑确定。"""
+        return ZoneQuery.model_validate(self.model_dump())
 
-    # 生成包含区域 ID 和周边宽度的确认标识。
-    # 输入为可选区域 ID；返回元组，区分不同周边宽度的搜索任务。
+    # 同一区域对应同一完整街区搜索任务。
     def search_key(self, zone_id=None):
-        return (zone_id or self.zone_id, self.buffer_m)
+        return zone_id or self.zone_id
 
 
 class Task(StrictModel):
@@ -116,7 +112,7 @@ class Planner:
                     if output.get("status") == "ok" and output["query"].get("selection") == "all":
                         # all 是完整搜索范围，不能只在文字中承诺覆盖、指令却漏掉目标。
                         for category in {z["category"] for z in output["zones"]}:
-                            coverage[category] = {(z["zone_id"], z["buffer_m"])
+                            coverage[category] = {z["zone_id"]
                                                   for z in output["zones"] if z["category"] == category}
                     message = {"type": "function_call_output", "call_id": call.call_id,
                                "output": json.dumps(output, ensure_ascii=False)}
@@ -168,7 +164,7 @@ class Planner:
                     "candidates": [{"zone_id": z["zone_id"], "name": z["name"]} for z in error.candidates]}
         confirmed.update(target.search_key(z["zone_id"]) for z in zones)
         return {"status": "ok", "query": target.model_dump(exclude_defaults=True),
-                "zones": [{**zone, "buffer_m": target.buffer_m} for zone in zones]}
+                "zones": zones}
 
     @staticmethod
     def _normalize_fleet(fleet):
@@ -254,7 +250,7 @@ class Planner:
                         loads[drone_id] += 1
                     sequences[drone_id] += 1
                     commands.append({"drone_id": drone_id, "sequence": sequences[drone_id],
-                                     "target": {"zone_id": zone["zone_id"], "buffer_m": task.target.buffer_m}})
+                                     "target": {"zone_id": zone["zone_id"]}})
             return {"status": "ready", "message": intent.reply or "已生成搜索计划，同一无人机按顺序逐个搜索。",
                     "commands": commands}
         except Clarification as error:
@@ -281,7 +277,7 @@ class Planner:
                         ("drone_ids" in data and any(not isinstance(d, str) or not d.strip() for d in drones))):
                     return self._clarification("drone_ids 必须是非空无人机 ID 列表。")
                 data = {"tasks": [{"action": "SearchArea", "drone_id": drones[i % len(drones)],
-                                   "target": {"zone_id": z["zone_id"], "buffer_m": z["buffer_m"]}}
+                                   "target": {"zone_id": z["zone_id"]}}
                                   for i, z in enumerate(latest_query["zones"])],
                         **({"reply": data["reply"]} if "reply" in data else {})}
             # sequence 完全由本地重算；修复历史指令回拷，其他未知字段仍严格拒绝。
@@ -293,19 +289,19 @@ class Planner:
                             task.pop("sequence", None)
             intent = Intent.model_validate(data)
         except (ValidationError, ValueError, TypeError):
-            return self._clarification("最终 JSON 格式无效；任务仅允许 action、drone_id、target，target 填 zone_id及已查询的buffer_m；"
+            return self._clarification("最终 JSON 格式无效；任务仅允许 action、drone_id、target，target 仅填已查询的 zone_id；"
                                  "不要输出 sequence 等本地字段，也不要只给 reply。或用 question 提问。")
         if intent.question is not None:
             return {**self._clarification(intent.question), "stop_reason": "needs_clarification"}
         for task in intent.tasks:
-            if not task.target.zone_id or set(task.target.model_dump(exclude_defaults=True)) - {"zone_id", "buffer_m"}:
-                return self._clarification("最终 target 只填写 zone_id 和已确认的 buffer_m；筛选条件请通过 query_map 查询。")
+            if not task.target.zone_id or set(task.target.model_dump(exclude_defaults=True)) - {"zone_id"}:
+                return self._clarification("最终 target 只填写 zone_id；筛选条件请通过 query_map 查询。")
             if task.target.search_key() not in confirmed:
                 return self._clarification(f"区域 {task.target.zone_id} 及其搜索范围尚未通过 query_map 成功确认，请先查询。")
         missing = set(required) - {task.target.search_key() for task in intent.tasks}
         if missing:
             return self._clarification("完整搜索范围仍缺少这些区域，请完整确认查询结果，无需逐个重查：" + ", ".join(
-                f"{zone_id}周边{buffer_m:g}米" for zone_id, buffer_m in sorted(missing)))
+                sorted(missing)))
         return self._resolve_intent(intent, fleet)
 
 
@@ -314,7 +310,7 @@ if __name__ == "__main__":
     from .utils.client import create_client, error_message
 
     # 修改下面的任务和无人机状态即可调试；只调用模型，不连接 AirSim。
-    instruction = "让 UAV_01 搜索第一学校周边50米"
+    instruction = "让 UAV_01 完整巡查第一学校所在街区"
     fleet = [{"name": "UAV_01", "available": True, "position_m": None}]
     try:
         client, model = create_client()

@@ -402,12 +402,12 @@ window.addEventListener('resize', () => { resize(); schedule(); });
 async function initialize() {
   [zones, points, roads] = await Promise.all([
     loadJSON('zones/functional_zones.json'), loadJSON('objects/task_points.json'),
-    loadJSON('road_network.json')
+    loadJSON('roads/road_network.json')
   ]);
   if (![zones, points].every(data => Array.isArray(data?.features)) || !Array.isArray(zones?.categories)) {
     throw new Error('标定 JSON 缺少 features 或 categories 数组');
   }
-  if (!Array.isArray(roads?.edges)) throw new Error('road_network.json 缺少 edges 数组');
+  if (!Array.isArray(roads?.edges)) throw new Error('roads/road_network.json 缺少 edges 数组');
   await background.decode();
   for (const category of zones.categories) {
     colors.set(category.code, category.color); categoryNames.set(category.code, category.name);

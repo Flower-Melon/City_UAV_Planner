@@ -27,5 +27,3 @@ web/
 - `PlanAndSearchController`：接收网页任务，组织状态读取、规划与执行。
 - `PythonRuntime`：管理 Python 进程及请求通信。
 - `MissionExecutor`：同一无人机按序搜索，不同无人机并行，记录任务状态。
-
-队列和状态保存在网页服务进程中；停止服务后不再派发后续区域，已开始的区域会继续完成并悬停。

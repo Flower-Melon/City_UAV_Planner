@@ -5,7 +5,7 @@ const {randomUUID} = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const TERMINAL = new Set(['completed', 'failed']);
-const DEFAULT_FLIGHT = Object.freeze({flight_height: 40, flight_speed: 5, capture_interval: 3});
+const DEFAULT_FLIGHT = Object.freeze({flight_height: 40, flight_speed: 5});
 
 function requestError(message, statusCode) {
   return Object.assign(new Error(message), {statusCode});
@@ -187,11 +187,12 @@ class MissionExecutor {
       numbers.add(sequence); sequences.set(name, numbers);
       if (!raw || typeof raw.zone_id !== 'string' || !zoneIds.has(raw.zone_id))
         throw requestError('target 必须包含真实的 zone_id。', 400);
-      const width = positive(raw.buffer_m === undefined ? 50 : raw.buffer_m, 'buffer_m');
-      const key = JSON.stringify([raw.zone_id, width]);
+      if (Object.keys(raw).some(key => key !== 'zone_id'))
+        throw requestError('target 仅接受 zone_id，搜索按完整街区道路覆盖。', 400);
+      const key = raw.zone_id;
       if (targets.has(key)) throw requestError('同一搜索范围不能重复派发。', 400);
       targets.add(key);
-      return {drone_id: name, sequence, target: {zone_id: raw.zone_id, buffer_m: width}, status: 'queued'};
+      return {drone_id: name, sequence, target: {zone_id: raw.zone_id}, status: 'queued'};
     });
     for (const numbers of sequences.values()) {
       if ([...numbers].some(number => number > numbers.size))
