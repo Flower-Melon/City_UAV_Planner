@@ -3,9 +3,10 @@
 ```text
 Map/
 ├─ README.md
-├─ roads/                     道路拓扑
+├─ roads/                     道路与飞行拓扑
 │  ├─ road_network.json       原始车道级路网
-│  └─ uav-road-network.json   无人机导航与搜索路网
+│  ├─ uav_road_network.json   无人机二维道路导航与搜索路网
+│  └─ uav_flight_network.json 无人机分层飞行导航路网
 ├─ objects/                   建筑与任务点
 │  ├─ buildings.json
 │  └─ task_points.json
@@ -57,7 +58,7 @@ Map/
 | `edges[].polyline_xy_m` | 完整 XY 折线，反向通行时反转坐标顺序 |
 | `edges[].length_m` | 折线长度，道路与连接均计入路径成本 |
 
-## roads/uav-road-network.json
+## roads/uav_road_network.json
 
 保存无人机可双向通行的二维拓扑，当前包含 574 个节点、880 条边。导航按边的 XY 长度寻路；搜索根据闭合道路识别目标关联的完整街区，覆盖其边界和内部道路，选中后保留完整原始边，不按距离范围截断。
 
@@ -96,6 +97,79 @@ Map/
 | `edges[].id` | 边唯一编号，可用于标识巡查路段和记录搜索进度 |
 | `edges[].from_node_id`、`to_node_id` | 起止节点编号，引用 `nodes[].id` |
 | `edges[].polyline_xy_m` | 从起点到终点的 XY 路径；直路仅包含两个端点，实际弯道保留必要的转向点 |
+
+## roads/uav_flight_network.json
+
+保存无人机按离地高度选择航线的路网，包含 10,394 个节点、47,712 条双向路段。路段包括道路、楼间通道和跨街区航线，可用于绕过高楼或飞越低楼。
+
+```json
+{
+  "coordinate_system": "UE_WORLD_METRES",
+  "altitude_rules": {
+    "layers_agl_m": [15, 20, 25, 30, 40, 50, 60, 90, 120],
+    "vertical_margin_m": 5,
+    "drone_radius_m": 0.5,
+    "gap_margin_m": 1,
+    "cruise_margin_m": 2
+  },
+  "nodes": [
+    {
+      "id": "N1",
+      "position_m": [0, 0, 355]
+    },
+    {
+      "id": "N2",
+      "position_m": [10, 0, 356]
+    }
+  ],
+  "edges": [
+    {
+      "id": "E1",
+      "kind": "road",
+      "from_node_id": "N1",
+      "to_node_id": "N2",
+      "polyline_xy_m": [
+        [0, 0],
+        [10, 0]
+      ],
+      "min_altitude_agl_m": 15,
+      "min_passage_width_m": 8,
+      "ground_profile_m": [
+        [0, 355],
+        [10, 356]
+      ]
+    }
+  ]
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `coordinate_system` | UE 世界坐标，单位米，Z 轴向上 |
+| `altitude_rules.layers_agl_m` | 可选的离地高度，单位米；离地高度指无人机与当前位置地面的高度差 |
+| `altitude_rules.vertical_margin_m` | 生成路网时，航线在楼顶上方预留的高度，单位米 |
+| `altitude_rules.drone_radius_m` | 生成路网时使用的无人机半径，单位米 |
+| `altitude_rules.gap_margin_m` | 穿过楼间通道时，机身与每侧建筑之间预留的距离，单位米 |
+| `altitude_rules.cruise_margin_m` | 普通飞行时，机身与两侧建筑之间各预留的距离，单位米 |
+| `nodes[].id` | 节点唯一编号 |
+| `nodes[].position_m` | 节点位置 `[X, Y, 地面Z]`，单位米；地面Z是该位置地面的世界高度 |
+| `edges[].id` | 边唯一编号 |
+| `edges[].kind` | 路段类型，取值见下表 |
+| `edges[].from_node_id`、`to_node_id` | 起止节点编号，引用 `nodes[].id` |
+| `edges[].polyline_xy_m` | 从起点到终点的 XY 路径，单位米；路段长度由相邻坐标间的距离累加得到 |
+| `edges[].min_altitude_agl_m` | 通过该路段所需的最低离地高度，单位米 |
+| `edges[].min_passage_width_m` | 在最低离地高度下，该路段最窄处的通道宽度，单位米 |
+| `edges[].ground_profile_m` | 沿路段采样的 `[距起点距离, 地面Z]` 数组，单位米，按距离递增排列 |
+
+`kind` 取值：
+
+| 值 | 含义 |
+|---|---|
+| `road` | 沿道路飞行 |
+| `door_access` | 从道路进入楼间通道 |
+| `door_pass` | 穿过楼间通道 |
+| `interior` | 在街区内部飞行 |
+| `cross_block` | 跨街区飞行 |
 
 ## zones/functional_zones.json
 

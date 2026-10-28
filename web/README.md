@@ -1,29 +1,40 @@
-# web 文件结构
+# web 项目结构
 
-提供城市地图、无人机实时监控，以及自然语言任务的规划与搜索界面。
+`web/` 是城市仿真的操作界面。在项目根目录运行 `node web/serve.cjs` 启动。
 
 ```text
 web/
-├─ index.html                 页面布局与按钮入口
-├─ serve.cjs                  启动网页服务，分发页面资源和接口请求
-├─ js/                        浏览器端交互
-│  ├─ map.js                  地图绘制、区域查询与图层控制
-│  ├─ airsim.js               无人机位置、飞行轨迹与实时画面
-│  └─ llm.js                  任务提交、模型回答与搜索进度展示
-├─ css/
-│  └─ styles.css              页面样式
-├─ server/                    后端功能
-│  ├─ plan-and-search.cjs     “规划并开始搜索”按钮对应的流程、任务队列与进度查询
-│  ├─ python_bridge.py        调用 Python 中的规划、状态读取和单区域搜索能力
-│  └─ airsim_bridge.py        从 AirSim 读取无人机状态和相机画面
-└─ assets/
+├─ README.md                  目录与文件职责说明
+├─ index.html                 页面结构
+├─ serve.cjs                  网页服务入口
+├─ js/                        浏览器脚本
+│  ├─ map.js                  地图交互
+│  ├─ airsim.js               无人机实时监控
+│  ├─ llm.js                  自然语言任务交互
+│  └─ abnormal.js             异常场景交互
+├─ css/                       页面样式
+│  └─ styles.css              页面外观
+├─ server/                    Node.js 后端
+│  ├─ airsim.cjs              无人机监控接口
+│  ├─ llm.cjs                 任务规划与搜索调度
+│  ├─ abnormal.cjs            异常场景接口
+│  └─ python-runtime.cjs      启动 Python 进程并收发请求
+├─ utils/                     Python 桥接工具
+│  ├─ python_bridge.py        Python 功能调用入口
+│  ├─ airsim_bridge.py        从 AirSim 采集无人机状态和画面
+│  └─ unreal_bridge.py        UE 内的异常目标观测与跟随取景
+└─ assets/                    静态素材
    └─ town12.png              地图实景底图
 ```
 
-地图数据来自项目的 `Map/`。任务规划由 `llm/` 完成，巡查飞行与拍照由 `UAV/` 执行，`web/` 负责连接这些功能并展示结果。
+`js/` 与 `server/` 的同名文件按功能对应。`map.js` 直接读取静态地图数据。
 
-`plan-and-search.cjs` 中的主要对象：
+## 子文件夹分工
 
-- `PlanAndSearchController`：接收网页任务，组织状态读取、规划与执行。
-- `PythonRuntime`：管理 Python 进程及请求通信。
-- `MissionExecutor`：同一无人机按序搜索，不同无人机并行，记录任务状态。
+| 目录 | 功能划分 |
+|---|---|
+| `js/` | 前端部分，实现页面交互。 |
+| `css/` | 定义页面外观。 |
+| `server/` | 后端部分，处理网页请求。 |
+| `utils/` | 脚本工具，连接 Python 功能与仿真环境。 |
+| `assets/` | 存放页面素材。 |

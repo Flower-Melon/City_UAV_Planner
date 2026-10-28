@@ -10,7 +10,22 @@ from pathlib import Path
 from shapely.geometry import LineString, shape
 from shapely.ops import polygonize, unary_union
 
-from .plan_flight_path import NoPathError, _default_graph, _point
+if __name__ == "__main__":
+    # 直接运行文件时，使下方相对导入仍指向工程内的UAV包。
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    __package__ = "UAV.utils"
+
+from .plan_flight_path import (
+    NoPathError,
+    _default_graph,
+    _xyz,
+    _positive,
+    _buildings,
+    flight_route,
+    plan_flight_path,
+)
 
 MAP_DIR = Path(__file__).resolve().parents[2] / "Map"
 MAP_PATH = MAP_DIR / "zones" / "functional_zones.json"
@@ -105,6 +120,7 @@ def cover_edges(adjacency, required_arcs, source):
         return paths(a)[0].get(b, math.inf)
 
     if len(odd) <= 17:
+
         @lru_cache(maxsize=None)
         def match(mask):
             if not mask:
@@ -115,19 +131,22 @@ def cover_edges(adjacency, required_arcs, source):
             for second in range(first + 1, len(odd)):
                 if remaining & (1 << second):
                     length, pairs = match(remaining ^ (1 << second))
-                    candidate = (cost(odd[first], odd[second]) + length,
-                                 ((odd[first], odd[second]),) + pairs)
+                    candidate = (
+                        cost(odd[first], odd[second]) + length,
+                        ((odd[first], odd[second]),) + pairs,
+                    )
                     if candidate < best:
                         best = candidate
             return best
 
         full = (1 << len(odd)) - 1
-        _, _, pairs = min((match(full ^ (1 << i))[0], node,
-                           match(full ^ (1 << i))[1]) for i, node in enumerate(odd))
+        _, _, pairs = min(
+            (match(full ^ (1 << i))[0], node, match(full ^ (1 << i))[1])
+            for i, node in enumerate(odd)
+        )
     else:
         available, pairs = set(odd), []
-        candidates = sorted((cost(a, b), a, b)
-                            for i, a in enumerate(odd) for b in odd[i + 1:])
+        candidates = sorted((cost(a, b), a, b) for i, a in enumerate(odd) for b in odd[i + 1 :])
         for _, a, b in candidates:
             if a in available and b in available:
                 pairs.append((a, b))
@@ -172,7 +191,11 @@ def search_scope(target):
     if feature is None:
         raise ValueError("区域ID不存在")
     geometry = shape(feature["geometry"])
-    if geometry.is_empty or not geometry.is_valid or geometry.geom_type not in ("Polygon", "MultiPolygon"):
+    if (
+        geometry.is_empty
+        or not geometry.is_valid
+        or geometry.geom_type not in ("Polygon", "MultiPolygon")
+    ):
         raise ValueError("区域边界无效")
     return geometry, {"zone_id": feature["id"]}
 
@@ -187,28 +210,36 @@ def _street_blocks(graph):
 def _required_edges(graph, geometry):
     """覆盖目标所占街区及区域内部道路，选中后保留整条原始边。"""
     lines, faces = _street_blocks(graph)
-    blocks = [face for face in faces if face.intersects(geometry)
-              and face.intersection(geometry).area > 1e-6]
+    blocks = [
+        face
+        for face in faces
+        if face.intersects(geometry) and face.intersection(geometry).area > 1e-6
+    ]
     # 区域还可能包含未形成闭合街区的道路，仍按完整边纳入。
     coverage = unary_union([geometry, *blocks])
-    selected = {i for i, line in enumerate(lines)
-                if line.intersection(coverage).length > 1e-7}
+    selected = {i for i, line in enumerate(lines) if line.intersection(coverage).length > 1e-7}
     if not selected:
         raise NoPathError("目标区域没有可关联的街区或道路，未起飞")
     return selected
 
 
-def plan_search_path(current_position, target) -> list[tuple[list[tuple[float, float]], bool]]:
-    """选完整街区、完整边，再生成开放式边覆盖路线；不要求返回起点。
+def plan_search_path(
+    current_position, target, search_height, max_height, flight_speed=5.0
+):
+    """返回[(XYZ速度航点列表, 是否巡查), ...]，不包含返航。
 
-    仅当前位置的路网接入可能是部分边，必巡目标始终是完整原始边。
-    返回按执行顺序排列的 [(XY路点列表, 是否巡查), ...]。
-    True 表示巡查并拍照，False 表示接入或转场；连续同阶段航段合并。
+    current_position为实际世界XYZ；search_height为巡查世界Z。
+    首次接入使用三维飞行图，后续道路覆盖保留完整原始边及真实节点。
     """
-    start = _point(current_position, "当前位置")
+    start = _xyz(current_position, "当前位置")
+    altitude = float(search_height)
+    if isinstance(search_height, (bool, str, bytes)) or not math.isfinite(altitude):
+        raise ValueError("巡查世界高度必须是有限数值")
+    cap, speed = _positive(max_height, "最大离地高度"), _positive(flight_speed, "飞行速度")
     graph = _default_graph()
     geometry, _ = search_scope(target)
     required = _required_edges(graph, geometry)
+    check_building_clearance([graph.edges[i].points for i in required], altitude)
     adjacency, pieces, required_arcs = defaultdict(list), {}, []
     for index, edge in enumerate(graph.edges):
         key = graph.edge_ids[index]
@@ -217,53 +248,149 @@ def plan_search_path(current_position, target) -> list[tuple[list[tuple[float, f
         adjacency[edge.target].append((edge.source, key, edge.length, True))
         if index in required:
             required_arcs.append((edge.source, edge.target, key, edge.length, False))
-
-    # 接入片段只用于走到真实端点，不把完整巡查任务裁成多个小段。
+    candidates = {node for a, b, _, _, _ in required_arcs for node in (a, b)}
+    # 欧氏距离是接入代价下界；逐步扩展候选，避免最近入口不可达就放弃任务。
+    best, entry, navigation = math.inf, None, None
+    for lower, node in sorted((math.dist(start[:2], graph.node_points[n]), n) for n in candidates):
+        if lower > best:
+            break
+        destination = (*graph.node_points[node], altitude)
+        try:
+            route = plan_flight_path(start, destination, cap, speed)
+        except NoPathError:
+            continue
+        cost = sum(
+            math.dist(a[:2], b[:2]) + (2.0 if b[2] >= a[2] else 0.5) * abs(b[2] - a[2])
+            for a, b in zip(route, route[1:])
+        )
+        if cost < best:
+            best, entry, navigation = cost, node, route
+    if entry is None:
+        raise NoPathError("给定高度下无法到达目标街区的任何巡查入口")
+    # 单一虚拟源保留原覆盖算法的入口约束，不把入口切成部分巡查边。
     source = -1
-    _, anchors = graph.nearest(start)
-    for number, (index, offset, projection) in enumerate(anchors):
-        edge = graph.edges[index]
-        entry = -2 - number
-        key = f"access:{number}"
-        length = math.dist(start, projection)
-        pieces[key] = [start, projection]
-        adjacency[source].append((entry, key, length, False))
-        for suffix, node, endpoint, position in (("start", edge.source, 0.0, edge.points[0]),
-                                                  ("end", edge.target, edge.length, edge.points[-1])):
-            key = f"entry:{number}:{suffix}"
-            length = abs(endpoint - offset)
-            pieces[key] = edge.section(offset, endpoint, projection, position)
-            adjacency[entry].append((node, key, length, False))
-
+    adjacency[source].append((entry, "entry", 0.0, False))
+    pieces["entry"] = [graph.node_points[entry], graph.node_points[entry]]
     walk = cover_edges(adjacency, required_arcs, source)
     target_ids = {graph.edge_ids[index] for index in required}
     if not target_ids <= {arc[2] for arc in walk}:
-        raise NoPathError("覆盖路线遗漏必巡道路，未起飞")
-    route = []
+        raise NoPathError("覆盖路线遗漏必巡道路")
+    phases = []
     for _, _, key, length, reverse in walk:
         if length == 0:
             continue
         points = pieces[key][::-1] if reverse else pieces[key]
         patrol = key in target_ids
-        if route and route[-1][1] == patrol:
-            route[-1][0].extend(points[1:])
+        if phases and phases[-1][1] == patrol:
+            phases[-1][0].extend(points[1:])
         else:
-            route.append((list(points), patrol))
-    return route
+            phases.append((list(points), patrol))
+    check_building_clearance([points for points, _ in phases], altitude)
+    nodes = frozenset(graph.node_points)
+    result = [(navigation, False)]
+    for points, patrol in phases:
+        route = flight_route(
+            [(*p, altitude) for p in points], speed, stop_points=nodes if patrol else ()
+        )
+        result.append((route, patrol))
+    return result
 
 
-# 检查计划路径周围的已知建筑是否满足给定高度和净空余量。
-# 输入为 XY 路径列表、世界高度和余量；不满足时抛出异常，此检查不是实时避障。
 def check_building_clearance(paths, altitude_world_m, margin_m=3):
-    """已知道路/接入段与建筑冲突时拒绝，固定高度不是实时避障。"""
-    from shapely.ops import unary_union
-    lines = [LineString(points) for points in paths if len(points) >= 2]
-    corridor = unary_union([line for line in lines if line.length > 0.01]).buffer(1.0)
-    data = json.loads((MAP_DIR / "objects" / "buildings.json").read_text(encoding="utf-8-sig"))
-    for feature in data["features"]:
-        height = feature["properties"].get("z_max_m")
-        if height is None:
-            if shape(feature["geometry"]).intersects(corridor):
-                raise ValueError("路径附近建筑缺少高度，无法核实飞行高度")
-        elif altitude_world_m <= height + margin_m and shape(feature["geometry"]).intersects(corridor):
-            raise ValueError(f"飞行高度不足以避开路径上的建筑{feature['id']}，请调整高度")
+    """核验固定高度道路巡查；输入XY折线和世界Z，冲突时拒绝任务。"""
+    altitude = float(altitude_world_m)
+    margin = _positive(margin_m, "建筑垂直余量")
+    if not math.isfinite(altitude):
+        raise ValueError("世界高度必须是有限数值")
+    for path in paths:
+        for a, b in zip(path, path[1:]):
+            building = _buildings().obstruction((*a[:2], altitude), (*b[:2], altitude), 1.0, margin)
+            if building is not None:
+                raise NoPathError(f"巡查高度不足以避开建筑{building}，请调整巡查高度")
+
+
+if __name__ == "__main__":
+    from PIL import Image, ImageDraw, ImageFont
+
+    # 修改这里的参数后，可直接运行本文件；不会连接AirSim或移动无人机。
+    current_position = (2120.0, -2297.0, 360.0)
+    target = {"zone_id": "F-SCHOOL-1"}
+    search_height = 399.0
+    max_height = 60.0
+    flight_speed = 5.0
+
+    segments = plan_search_path(
+        current_position, target, search_height, max_height, flight_speed
+    )
+    root = Path(__file__).resolve().parents[2]
+    output_path = root / "output" / "temp" / "plan_search_path.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(root / "web" / "assets" / "town12.png") as background:
+        picture = background.convert("RGB")
+    drawing = ImageDraw.Draw(picture, "RGBA")
+    try:
+        font = ImageFont.truetype("msyh.ttc", 26)
+    except OSError:
+        font = ImageFont.load_default()
+
+    def pixel(point):
+        # 底图范围：X[-1000,3000]、Y[-3000,1000]；+Y向下。
+        return (
+            (point[0] + 1000) / 4000 * (picture.width - 1),
+            (point[1] + 3000) / 4000 * (picture.height - 1),
+        )
+
+    geometry, _ = search_scope(target)
+    polygons = [geometry] if geometry.geom_type == "Polygon" else geometry.geoms
+    for polygon in polygons:
+        drawing.line([pixel(p) for p in polygon.exterior.coords], fill=(255, 218, 76), width=4)
+    # 导航先画，巡查后画，避免重复路段遮住巡查轨迹。
+    for patrol in (False, True):
+        color = (27, 216, 139, 255) if patrol else (255, 145, 42, 255)
+        for route, is_patrol in segments:
+            if is_patrol != patrol:
+                continue
+            points = [pixel(p) for p in route]
+            if len(points) < 2:
+                continue
+            drawing.line(points, fill="white", width=11, joint="curve")
+            drawing.line(points, fill=color, width=6, joint="curve")
+            remaining = 90.0
+            for a, b in zip(points, points[1:]):
+                distance = math.dist(a, b)
+                if distance < 1e-9:
+                    continue
+                ux, uy = (b[0] - a[0]) / distance, (b[1] - a[1]) / distance
+                while remaining <= distance:
+                    x, y = a[0] + remaining * ux, a[1] + remaining * uy
+                    drawing.polygon(
+                        [
+                            (x, y),
+                            (x - 18 * ux + 8 * uy, y - 18 * uy - 8 * ux),
+                            (x - 18 * ux - 8 * uy, y - 18 * uy + 8 * ux),
+                        ],
+                        fill=color,
+                    )
+                    remaining += 90
+                remaining -= distance
+    x, y = pixel(segments[0][0][0])
+    drawing.ellipse((x - 12, y - 12, x + 12, y + 12), fill=(35, 184, 112), outline="white", width=3)
+    x, y = pixel(segments[-1][0][-1])
+    drawing.rectangle(
+        (x - 11, y - 11, x + 11, y + 11), fill=(235, 66, 66), outline="white", width=3
+    )
+    drawing.rounded_rectangle((24, 24, 1180, 132), radius=12, fill=(17, 38, 56, 235))
+    drawing.text(
+        (44, 38),
+        "Search path | orange: transit | green: patrol | red: finish",
+        font=font,
+        fill="white",
+    )
+    drawing.text(
+        (44, 80),
+        f"{target['zone_id']} | Patrol Z {search_height:g} m | Max AGL {max_height:g} m",
+        font=font,
+        fill="white",
+    )
+    picture.save(output_path)
+    print(f"规划完成：{len(segments)}个阶段；PNG：{output_path}")

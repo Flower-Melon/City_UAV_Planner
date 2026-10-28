@@ -1,4 +1,4 @@
-"""无人机运行时工具函数。"""
+"""不连接仿真的无人机路径规划。"""
 
 from .plan_flight_path import NoPathError, plan_flight_path
 

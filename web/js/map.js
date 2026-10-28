@@ -24,7 +24,8 @@ class CityMapVisuals {
     this.colors = colors;
     for (let i = 0; i < network.edges.length; i++) {
       const edge = network.edges[i];
-      if (edge.enabled === false || edge.length_m === 0) continue;
+      // Routing connections cross lanes; they are not physical road markings.
+      if (edge.kind !== 'road' || edge.enabled === false || edge.length_m === 0) continue;
       const line = edge.polyline_xy_m, path = new Path2D();
       line.forEach(([x, y], j) => j ? path.lineTo(x, y) : path.moveTo(x, y));
       this.roads.push({path, bounds: CityMapVisuals.bounds(line)});
@@ -112,6 +113,8 @@ let zones, points, roads, background, buildings;
 let zoneParts = [], pointRecords = [], colors = new Map(), categoryNames = new Map();
 let ready = false, buildingRequest;
 let liveDrones = [];
+let abnormalTargets = [], abnormalSelected = null, pickHandler = null, pendingPoint = null;
+const abnormalColors = {vehicle: '#df542f', armed_person: '#914ac5', patient: '#138b80'};
 const worldSize = 4000;
 const visuals = new CityMapVisuals();
 
@@ -280,6 +283,38 @@ function draw() {
       ctx.fillStyle = drone.color; ctx.fillText(drone.name, labelX, labelY);
     });
   }
+  drawAbnormal();
+}
+function drawAbnormal() {
+  const {scale} = state;
+  for (const target of abnormalTargets) {
+    const [x, y] = target.position_m;
+    ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale);
+    if (target.id === abnormalSelected) {
+      ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffffbb'; ctx.fill(); ctx.strokeStyle = '#18334a'; ctx.lineWidth = 2; ctx.stroke();
+    }
+    ctx.fillStyle = abnormalColors[target.kind] || '#df542f'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (target.kind === 'vehicle') {
+      ctx.rotate(target.yaw_rad || 0); ctx.rect(-8, -5, 16, 10); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(3, -3); ctx.lineTo(3, 3); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill();
+    } else {
+      ctx.moveTo(0, -9); ctx.lineTo(8, 0); ctx.lineTo(0, 9); ctx.lineTo(-8, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText(target.kind === 'patient' ? '+' : '!', 0, 4);
+    }
+    ctx.restore();
+    ctx.font = `600 ${12 / scale}px system-ui`; ctx.textAlign = 'left'; ctx.lineJoin = 'round';
+    const label = `${{vehicle: '异常车', armed_person: '持刀人员', patient: '病人'}[target.kind]} ${target.id.split('_').pop()}`;
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 / scale; ctx.strokeText(label, x + 16 / scale, y - 8 / scale);
+    ctx.fillStyle = abnormalColors[target.kind]; ctx.fillText(label, x + 16 / scale, y - 8 / scale);
+  }
+  if (pendingPoint) {
+    const [x, y] = pendingPoint, r = 12 / scale;
+    ctx.strokeStyle = '#df542f'; ctx.lineWidth = 2 / scale; ctx.setLineDash([4 / scale, 3 / scale]);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke();
+  }
 }
 function zoom(factor, x = state.width / 2, y = state.height / 2) {
   const wx = (x - state.ox) / state.scale, wy = (y - state.oy) / state.scale;
@@ -381,6 +416,7 @@ canvas.addEventListener('wheel', event => {
   zoom(Math.exp(-Math.max(-240, Math.min(240, pixels)) * .0018), event.clientX - box.left, event.clientY - box.top);
 }, {passive: false});
 canvas.onpointerdown = event => {
+  if (event.button !== 0 || !event.isPrimary) return;
   state.drag = {x: event.clientX, y: event.clientY, ox: state.ox, oy: state.oy, moved: false}; canvas.setPointerCapture(event.pointerId);
 };
 canvas.onpointermove = event => {
@@ -394,7 +430,14 @@ canvas.onpointermove = event => {
 };
 canvas.onpointerup = event => {
   const drag = state.drag; state.drag = null;
-  if (ready && drag && !drag.moved) showFeature(hitAt(...worldAt(event)));
+  if (ready && drag && !drag.moved) {
+    const point = worldAt(event);
+    if (pickHandler) { pickHandler(point); return; }
+    const target = abnormalTargets.map(target => ({target, distance: Math.hypot(target.position_m[0] - point[0], target.position_m[1] - point[1])}))
+      .filter(hit => hit.distance * state.scale < 15).sort((a, b) => a.distance - b.distance)[0]?.target;
+    if (target) window.dispatchEvent(new CustomEvent('abnormal:select', {detail: {id: target.id}}));
+    else showFeature(hitAt(...point));
+  }
 };
 canvas.onpointercancel = () => { state.drag = null; };
 window.addEventListener('resize', () => { resize(); schedule(); });
@@ -429,6 +472,20 @@ async function initialize() {
 background = new Image(); background.src = './assets/town12.png'; background.onload = schedule;
 background.onerror = () => { $('loading').textContent = '无法读取 assets/town12.png，请保留完整的 web 文件夹。'; };
 window.liveMap = {
+  setAbnormal(records, selectedId) {
+    abnormalTargets = records.filter(target => Array.isArray(target.position_m) && target.position_m.length === 3 && target.position_m.every(Number.isFinite));
+    abnormalSelected = selectedId; schedule();
+  },
+  setPickHandler(handler) { pickHandler = handler; canvas.classList.toggle('picking', !!handler); },
+  setPendingPoint(point) { pendingPoint = point; schedule(); },
+  centerTarget(id) {
+    const target = abnormalTargets.find(target => target.id === id);
+    if (!target || !ready) return;
+    state.scale = Math.max(state.scale, 3);
+    state.ox = state.width / 2 - target.position_m[0] * state.scale;
+    state.oy = state.height / 2 - target.position_m[1] * state.scale;
+    schedule();
+  },
   clearTrails() {
     liveDrones = liveDrones.map(drone => ({...drone, trail: []}));
     schedule();

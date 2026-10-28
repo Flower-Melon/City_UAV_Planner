@@ -3,15 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Town12 · 城市空间标定</title>
+  <title>城市无人机巡查平台</title>
   <link rel="stylesheet" href="./css/styles.css?v=20261020-queue">
-  <script src="./js/map.js?v=20261019-3" defer></script>
+  <script src="./js/map.js?v=20261028-roads" defer></script>
   <script src="./js/airsim.js" defer></script>
   <script src="./js/llm.js?v=20261021-execute" defer></script>
+  <script src="./js/abnormal.js" defer></script>
 </head>
 <body>
   <header>
-    <div><span class="eyebrow">TOWN12 / 城市标定</span><h1>城市空间标定</h1></div>
+    <div><span class="eyebrow">任务规划与实时监控</span><h1>城市无人机巡查平台</h1></div>
     <div class="version">4 × 4 km</div>
   </header>
   <main>
@@ -29,7 +30,8 @@
     <aside>
       <div class="sidebar-tabs" role="tablist" aria-label="右侧工具切换">
         <button id="map-tools-tab" type="button" role="tab" aria-selected="true" aria-controls="map-tools-panel">地图工具</button>
-        <button id="llm-tab" type="button" role="tab" aria-selected="false" aria-controls="llm-panel" tabindex="-1">LLM任务</button>
+        <button id="llm-tab" type="button" role="tab" aria-selected="false" aria-controls="llm-panel" tabindex="-1">LLM助手</button>
+        <button id="abnormal-tab" type="button" role="tab" aria-selected="false" aria-controls="abnormal-panel" tabindex="-1">异常场景</button>
       </div>
       <div id="map-tools-panel" class="sidebar-content" role="tabpanel" aria-labelledby="map-tools-tab">
       <section id="zones-panel">
@@ -47,7 +49,7 @@
         <div class="layer-grid">
           <label><input id="layer-base" type="checkbox" checked>实景底图</label>
           <label><input id="layer-zones" type="checkbox" checked>功能区</label>
-          <label><input id="layer-roads" type="checkbox" checked>道路拓扑</label>
+          <label title="叠加道路分段，不显示寻路连接线"><input id="layer-roads" type="checkbox" checked>道路拓扑</label>
           <label><input id="layer-buildings" type="checkbox" disabled>建筑轮廓</label>
           <label><input id="layer-drones" type="checkbox" checked>实时无人机</label>
           <label><input id="layer-trails" type="checkbox" checked>飞行轨迹</label>
@@ -60,8 +62,8 @@
         </select>
       </section>
       <section class="legend-panel" aria-label="功能区颜色图例">
-        <details open>
-          <summary>图例 · 功能区类型</summary>
+        <details>
+          <summary>功能区类型</summary>
           <div id="legend" class="legend"></div>
           <div class="symbol-legend">
             <span><i class="legend-building" aria-hidden="true"></i>建筑轮廓</span>
@@ -105,7 +107,34 @@
           </form>
         </section>
       </div>
-      <section class="camera-panel" aria-label="无人机实时监控">
+      <div id="abnormal-panel" class="sidebar-content abnormal-panel" role="tabpanel" aria-labelledby="abnormal-tab" hidden>
+        <h2>生成异常场景</h2>
+        <p class="muted">选择类型后点击「地图选点生成」，再点击地图。车辆在机动车道上生成，人员在附近可用的人行道上生成。</p>
+        <label class="field" for="abnormal-kind">异常类型</label>
+        <select id="abnormal-kind"><option value="vehicle">异常车辆</option><option value="armed_person">持刀人员</option><option value="patient">病人</option></select>
+        <div class="abnormal-buttons"><button id="abnormal-pick" type="button">地图选点生成</button><button id="abnormal-cancel" type="button" hidden>取消选点</button></div>
+        <p id="abnormal-operation" class="abnormal-status" role="status" aria-live="polite">选择类型后，可在地图上生成新目标。</p>
+        <p class="muted">车辆需点击距离机动车道 5 米以内的位置，自动沿固定闭环行驶，初始行为为混合模式。人员在选点 100 米内寻找可用人行道。</p>
+        <section>
+          <div class="section-heading"><h2>已生成目标 <span id="abnormal-count">0</span></h2><span id="abnormal-connection" class="muted" role="status">正在连接…</span></div>
+          <div id="abnormal-list" class="abnormal-list" aria-label="异常目标列表"></div>
+          <p id="abnormal-empty" class="muted">暂无由 API 生成的目标。</p>
+        </section>
+        <section id="abnormal-detail" hidden>
+          <div class="section-heading"><h2 id="abnormal-title">当前目标</h2><button id="abnormal-locate" type="button">地图定位</button></div>
+          <p id="abnormal-position" class="muted"></p>
+          <p id="abnormal-action"></p>
+          <div id="abnormal-vehicle-controls" hidden>
+            <label class="field" for="abnormal-behavior">车辆行为</label>
+            <div class="abnormal-buttons"><select id="abnormal-behavior"><option value="mixed">混合（随机切换）</option><option value="cruise">正常巡航</option><option value="surge">突然加速</option><option value="weave">蛇形行驶</option><option value="brake">急刹减速</option><option value="wrong_way">逆向行驶</option><option value="stop">停止</option></select><button id="abnormal-apply" type="button">应用</button></div>
+          </div>
+        </section>
+      </div>
+      <section id="abnormal-camera-panel" class="camera-panel" aria-label="异常目标实时监控" hidden>
+        <div class="camera-heading"><h2>异常目标视角</h2><span class="muted">独立跟随镜头</span></div>
+        <div class="camera-view"><img id="abnormal-image" alt="所选异常目标的仿真实时画面" hidden><div id="abnormal-camera-message" class="camera-placeholder" role="status">选择一个已生成目标以查看画面</div></div>
+      </section>
+      <section id="uav-camera-panel" class="camera-panel" aria-label="无人机实时监控">
         <div class="camera-heading">
           <h2>无人机视角</h2>
           <div class="camera-controls"><label class="sr-only" for="camera-drone">选择无人机</label><select id="camera-drone">

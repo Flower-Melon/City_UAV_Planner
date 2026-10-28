@@ -46,7 +46,7 @@
       const response = await fetch(`/api/airsim/camera/${encodeURIComponent(name)}?t=${updatedAt}`, {cache: 'no-store', signal: controller.signal});
       if (!response.ok) throw new Error('画面暂不可用');
       const blob = await response.blob();
-      if (controller.signal.aborted || name !== selected || document.hidden) return;
+      if (controller.signal.aborted || name !== selected || document.hidden || document.getElementById('uav-camera-panel').hidden) return;
       const previous = imageUrl; imageUrl = URL.createObjectURL(blob); image.src = imageUrl;
       image.hidden = false; placeholder.hidden = true; stamp = updatedAt;
       if (previous) URL.revokeObjectURL(previous);
@@ -83,7 +83,8 @@
       const controller = new AbortController(); stateRequest = controller;
       const timeout = setTimeout(() => controller.abort(), 4000);
       try {
-        const response = await fetch(`/api/airsim/state?camera=${encodeURIComponent(selected)}`, {cache: 'no-store', signal: controller.signal});
+        const capture = !document.getElementById('uav-camera-panel').hidden;
+        const response = await fetch(`/api/airsim/state?camera=${encodeURIComponent(selected)}&capture=${capture}`, {cache: 'no-store', signal: controller.signal});
         if (!response.ok) throw new Error('读取实时状态失败');
         const data = await response.json();
         if (current !== generation) return;
@@ -104,7 +105,7 @@
           status.textContent = located ? `已连接 · ${located} 架无人机实时位置` : data.coordinate_error ? '已连接 · 世界坐标校准失败' : '已连接 · 正在校准世界坐标';
           status.title = data.coordinate_error || '';
           window.liveMap?.setDrones(records);
-          if (drone?.camera_updated_at) void frameFor(selected, drone.camera_updated_at);
+          if (capture && drone?.camera_updated_at) void frameFor(selected, drone.camera_updated_at);
           else clearImage('正在等待摄像头画面…');
         } else disconnected();
       } catch { if (current === generation) disconnected(); }
@@ -139,6 +140,7 @@
   };
 
   selector.onchange = () => { selected = selector.value; resetSelection(); void update(); };
+  window.addEventListener('sidebar:change', () => { clearImage('等待摄像头画面'); void update(); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) frameRequest?.abort();
     else void update();

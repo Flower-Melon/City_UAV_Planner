@@ -80,6 +80,26 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .sidebar-tabs [role="tab"] { flex: 1; border: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; padding: 10px 8px; color: #617887; }
 .sidebar-tabs [aria-selected="true"] { border-bottom-color: #147ba4; background: #eef6fa; color: #123f58; font-weight: 650; }
 .sidebar-content[hidden], .llm-panel [hidden] { display: none; }
+.camera-panel[hidden], .abnormal-panel [hidden] { display: none; }
+#map.picking, #map.picking:active { cursor: crosshair; }
+.abnormal-buttons { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.abnormal-buttons select { flex: 1; width: 0; }
+.abnormal-buttons button { flex-shrink: 0; }
+#abnormal-pick { background: #176080; color: white; border-color: #176080; }
+.abnormal-status { background: #eef6fa; border-radius: 7px; padding: 10px 12px; font-size: 12px; overflow-wrap: anywhere; }
+.abnormal-panel [data-error="true"] { color: #b5402b; }
+.abnormal-list { display: grid; gap: 6px; max-height: 210px; overflow-y: auto; }
+.abnormal-target-row { display: flex; gap: 8px; align-items: stretch; }
+.abnormal-target-row .abnormal-target { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.abnormal-remove { flex-shrink: 0; align-self: center; padding: 6px 10px; font-size: 12px; color: #b5402b; }
+.abnormal-remove:hover { background: #fff1ee; }
+.abnormal-target { text-align: left; width: 100%; border-left: 4px solid #df542f; }
+.abnormal-target[data-kind="armed_person"] { border-left-color: #914ac5; }
+.abnormal-target[data-kind="patient"] { border-left-color: #138b80; }
+.abnormal-target[aria-pressed="true"] { background: #eef6fa; border-top-color: #9bbdce; border-right-color: #9bbdce; border-bottom-color: #9bbdce; }
+.abnormal-target strong, .abnormal-target small { display: block; }
+.abnormal-target small { font-size: 10px; color: #647b8a; }
+#abnormal-action { font-size: 12px; }
 .llm-badge { border: 1px solid #bed8e2; border-radius: 4px; padding: 1px 6px; font-size: 10px; color: #23647b; background: #f1f8fa; }
 .llm-intro { margin: 0 0 16px; }
 .llm-panel textarea { display: block; width: 100%; min-height: 74px; resize: vertical; border: 1px solid #c7d8e2; border-radius: 7px; padding: 10px 12px; font: inherit; line-height: 1.7; color: #18334a; background: #fbfdfe; }

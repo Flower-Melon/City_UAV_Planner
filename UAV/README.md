@@ -1,18 +1,18 @@
 # UAV 功能说明
 
-`API/` 提供直接面向 AirSim 的功能函数；`utils/`提供需要的子算法（除去`airsim_client.py`外严格与仿真环境剥离，都只是算法）。
+`API/` 提供直接面向仿真环境的无人机飞行接口，直接运行即可完成一类任务；`runtime/` 负责 AirSim 通信、状态读取与飞行执行；`utils/` 提供不依赖仿真环境的算法。
 
 ## 1 API
 
 ### 1.1 fly_to_point
 
-飞往目标点，具体实现细节见 `utils.plan_flight_path` 
+根据分层飞行路网飞往指定世界XYZ，完成后悬停。规划包含绕楼、跨楼、升降和速度调整。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
 | `drone_id` | `int` 或 `str` | 无人机编号，`1` 或 `"UAV_01"` |
-| `target_position` | `(x, y)` 或 `[x, y]` | 目标位置，UE 世界坐标，单位米；不在拓扑边上时飞往其最近投影点 |
-| `flight_height` | `float` | 相对起飞地面的飞行高度，单位米，大于 `0`；航程中保持此高度平面 |
+| `target_position` | `(x, y, z)` 或 `[x, y, z]` | 目标UE世界坐标，单位米；Z为世界高度，终点为指定位置 |
+| `max_height` | `float` | 导航最大离地高度，单位米，至少15米；相对沿途当地地面 |
 | `flight_speed` | `float` | 巡航速度上限，单位米/秒，大于 `0`，默认 `25.0`；拐弯及接近终点时自动降速 |
 
 | 出参 | 类型 | 含义 |
@@ -25,10 +25,10 @@
 from UAV.API import fly_to_point
 
 drone_id = "UAV_01"
-target_position = (2123.25, -2288.2970827809468)
-flight_height = 20.0
+target_position = (2123.25, -2288.2970827809468, 380.0)
+max_height = 60.0
 flight_speed = 8.0
-result = fly_to_point(drone_id, target_position, flight_height, flight_speed)
+result = fly_to_point(drone_id, target_position, max_height, flight_speed)
 ```
 
 出参样例：
@@ -73,8 +73,9 @@ None
 |---|---|---|
 | `drone_id` | `int` 或 `str` | 无人机编号，`1` 或 `"UAV_01"` |
 | `target` | `dict` | 搜索目标，仅需区域 ID；可直接传入规划结果中的 `SearchArea.target` |
-| `flight_height` | `float` | 相对起飞地面的飞行高度，单位米，大于 `0`；需满足沿途建筑净空检查 |
+| `flight_height` | `float` | 相对起飞地面的固定巡查高度，单位米，大于 `0`；需满足巡查道路的建筑净空检查 |
 | `flight_speed` | `float` | 巡航速度上限，单位米/秒，大于 `0`，默认 `5.0`；拐弯及短路段自动降速 |
+| `max_height` | `float` | 去程和返航的最大当地离地高度，默认60米，至少15米；仅限关键字传入 |
 | `output_dir` | `str` 或 `Path` | 输出根目录，默认是项目根目录下的 `output/`；每次任务新增连续编号目录，图片及 `frame.json`、`route.json` 保存在其 `capture/` 子目录 |
 
 `target` 字段：
@@ -100,6 +101,7 @@ result = search_area(
     target,
     flight_height=40.0,
     flight_speed=5.0,
+    max_height=60.0,
 )
 ```
 
@@ -116,7 +118,7 @@ output/000001/
 └─ capture/
    ├─ 000001.jpg
    ├─ 000002.jpg
-   ├─ route.json         巡查及返航路径、起飞基点
+   ├─ route.json         导航/巡查航段、返航路径及起飞基点
    └─ frame.json         节点/街道照片及拍摄位置
 ```
 
@@ -128,116 +130,92 @@ output/000001/
 | `type` | `"node"` 为节点下视照，`"edge"` 为街道照 |
 | `position_m` | 实际拍照的 UE 世界坐标 `[X, Y, Z]`，单位米 |
 | `node_xy_m` | 对应的真实拓扑节点坐标 |
-| `edge_id` | 仅街道照包含，对应 `Map/roads/uav-road-network.json` 的边 ID |
+| `edge_id` | 仅街道照包含，对应 `Map/roads/uav_road_network.json` 的边 ID |
 
 ## 2 utils
 
 ### 2.1 plan_flight_path.py
 
-完成最短路径与速度分段规划。读取 `Map/roads/uav-road-network.json`。
+读取 `Map/roads/uav_flight_network.json`，按最大离地高度计算导航路线，并标注升降、转弯、窄通道和到站速度。起终点为精确世界XYZ；航段长度由XY折线计算，地面高度按沿边采样插值。寻路代价由水平距离和升降代价组成，不承诺飞行时间最短。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
-| `current_position` | `(x, y)` 或 `[x, y]` | 无人机当前位置，UE 世界 XY 坐标，单位米；允许位于图外 |
-| `target_position` | `(x, y)` 或 `[x, y]` | 目标位置，同一坐标系；图外目标以最近拓扑边投影点为终点 |
-| `flight_speed` | `float` | 巡航速度上限，单位米/秒，大于 `0`，默认 `25.0` |
+| `current_position` | `(x, y, z)` | 实际UE世界位置，单位米 |
+| `target_position` | `(x, y, z)` | 目标UE世界位置，单位米 |
+| `max_height` | `float` | 沿途最大离地高度，至少15米；导航在不超过该值的高度层中选择 |
+| `flight_speed` | `float` | 速度上限，单位米/秒，大于0，默认25.0 |
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
-| `(path, segments)` | `tuple` | 两项分别为最短路径和全部飞行分段 |
-| `path` | `list[tuple[float, float]]` | 原始最短 XY 路径，首点为当前位置，末点为目标投影点 |
-| `segments` | `list[tuple[list[tuple[float, float]], float]]` | 按飞行顺序排列的 `(XY路径点列表, 速度)`；速度单位米/秒，无需水平移动时为空列表 |
-
-入参样例与调用：
+| `route` | `list[tuple[float, float, float, float]]` | 按飞行顺序排列的 `(X, Y, Z, 到达该点的速度)`，包含精确起终点 |
 
 ```python
 from UAV.utils import plan_flight_path
 
-path, segments = plan_flight_path(
-    (439.42848, -528.55233),
-    (440.05435, -532.38739),
-    flight_speed=25.0,
+route = plan_flight_path(
+    (2120.0, -2297.0, 360.0),
+    (1727.7, -1940.2, 383.0),
+    max_height=60.0,
+    flight_speed=8.0,
 )
 ```
 
-出参样例：
+输出格式示例（坐标仅作示意）：
 
 ```python
-path = [
-    (439.42848, -528.55233),
-    (432.39000022205096, -529.7028772612439),
-    (433.016872697192, -533.5377733913367),
-]
-segments = [
-    ([(439.42848, -528.55233), (435.9092401110255, -529.1276036306219)], 5),
-    ([(435.9092401110255, -529.1276036306219), (432.39000022205096, -529.7028772612439)], 2),
-    ([(432.39000022205096, -529.7028772612439), (433.016872697192, -533.5377733913367)], 1),
+[
+    (100.0, 200.0, 355.0, 2.0),
+    (100.0, 200.0, 395.0, 2.0),
+    (150.0, 200.0, 395.0, 3.0),
+    (150.0, 200.0, 375.0, 1.0),
 ]
 ```
 
-### 2.2 airsim_client.py
+### 2.2 plan_search_path.py
 
-封装与 AirSim 仿真环境的通信、位置转换和飞行控制，负责让无人机实际执行规划好的路线。主要功能如下：
-
-- `AirSimClient`：连接 AirSim，发送控制指令并读取仿真状态。
-- `AirSimFleet.read`：读取各架无人机的位置和可用状态。
-- `vehicle_name`：根据无人机编号或名称，确定要控制的无人机。
-- `vehicle_lock`：防止同一架无人机同时执行多个任务。
-- `vector`：读取并检查仿真返回的三维坐标。
-- `editor_log`、`calibrate`：获取仿真中的参考位置，建立地图坐标与仿真坐标的对应关系。
-- `WorldFrame.vehicle`：获取无人机在地图和仿真中的位置。
-- `WorldFrame.ground_z`：测量起飞地面高度，为飞行高度提供基准。
-- `SearchFlight.prepare`：检查飞行高度，接管无人机并升至指定高度。
-- `SearchFlight.fly`：沿规划路线飞行，检查到达位置与碰撞情况。
-- `SearchFlight.stop`：停止当前飞行，使无人机减速并悬停。
-- `SearchFlight.land`：在起飞基点对位降落，核实落地状态，上锁并释放 API 控制。
-
-### 2.3 plan_search_path.py
-
-为 `search_area()` 计算完整街区巡查路线。读取 `Map/roads/uav-road-network.json` 和 `Map/zones/functional_zones.json`。
+为 `search_area()` 生成导航接入与完整街区巡查路线。导航读取飞行路网，巡查读取 `Map/roads/uav_road_network.json` 和 `Map/zones/functional_zones.json`；不连接AirSim或保存文件。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
-| `current_position` | `(x, y)` 或 `[x, y]` | 无人机当前位置，UE 世界 XY 坐标，单位米；允许位于路网外，先接入最近拓扑边 |
-| `target` | `dict` | 搜索目标，仅需 `{"zone_id": "真实区域ID"}`；按目标所在完整街区选择道路 |
+| `current_position` | `(x, y, z)` | 无人机实际UE世界位置，单位米 |
+| `target` | `dict` | `{"zone_id": "真实区域ID"}`，选择目标所在完整街区的道路 |
+| `search_height` | `float` | 巡查的固定世界Z，单位米，由调用方按起飞地面和巡查高度计算 |
+| `max_height` | `float` | 首次导航的最大当地离地高度，单位米，至少15米 |
+| `flight_speed` | `float` | 速度上限，单位米/秒，大于0，默认5.0 |
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
-| `segments` | `list[tuple[list[tuple[float, float]], bool]]` | 按飞行顺序排列的 `(XY路点列表, 是否巡查)` |
-| `segments[i][0]` | `list[tuple[float, float]]` | 第 `i` 段的世界 XY 路点；保留原始路口和实际弯道 |
-| `segments[i][1]` | `bool` | `True` 表示巡查，调用方在真实节点拍照；`False` 表示接入或转场、不拍照 |
-
-入参样例与调用：
+| `segments` | `list[tuple[list[tuple[float, float, float, float]], bool]]` | 按执行顺序排列的 `(航点列表, 是否巡查)` |
+| `segments[i][0]` | `list` | 世界XYZ和到达速度；巡查段保留完整原道路和真实节点 |
+| `segments[i][1]` | `bool` | `True`按真实节点和道路边拍照；`False`表示导航或转场，不拍照 |
 
 ```python
 from UAV.utils.plan_search_path import plan_search_path
 
-current_position = (2160.0, 20.0)
-target = {"zone_id": "F-SCHOOL-1"}
-segments = plan_search_path(current_position, target)
+segments = plan_search_path(
+    (2120.0, -2297.0, 360.0),
+    {"zone_id": "F-SCHOOL-1"},
+    search_height=399.0,
+    max_height=60.0,
+    flight_speed=5.0,
+)
 ```
 
-出参样例：
+输出格式示例（坐标仅作示意）：
 
 ```python
-segments = [
-    (
-        [
-            (2160.0, 20.0),
-            (2168.486184631315, 21.48710305451246),
-            (2172.1857483712365, 0.37546532569096563),
-        ],
-        False,  # 接入街区道路，不拍照
-    ),
-    (
-        [
-            (2172.1857483712365, 0.37546532569096563),
-            (2402.742619918021, 37.79429523021426),
-            (2382.999723054658, 150.9552078200182),
-            (2152.310450095543, 113.7942699325421),
-            (2172.1857483712365, 0.37546532569096563),
-        ],
-        True,  # 巡查整片街区，在真实节点停稳拍照
-    ),
+[
+    ([(100.0, 200.0, 355.0, 2.0), (100.0, 200.0, 375.0, 1.0)], False),
+    ([(100.0, 200.0, 375.0, 2.0), (150.0, 200.0, 375.0, 1.0)], True),
 ]
 ```
+
+## 3 runtime
+
+供无人机 API 和网页后端使用的仿真运行支持。
+
+| 文件 | 大体功能 |
+|---|---|
+| `airsim_client.py` | 连接 AirSim，发送请求并接收结果 |
+| `airsim_state.py` | 读取机队状态、解析无人机名称，完成坐标标定与地面测量 |
+| `flight_control.py` | 按航点速度执行三维路径，原地升降到高后继续飞行，核对位置和碰撞，管理任务锁与降落 |

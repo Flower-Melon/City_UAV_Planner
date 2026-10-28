@@ -2,7 +2,7 @@
 
 (() => {
   const $ = id => document.getElementById(id);
-  const tabs = [$('map-tools-tab'), $('llm-tab')];
+  const tabs = [...document.querySelectorAll('.sidebar-tabs [role="tab"]')];
   const form = $('llm-form'), input = $('llm-instruction'), submit = $('llm-submit');
   const followupForm = $('llm-followup-form'), followupInput = $('llm-followup-input');
   const followupSubmit = $('llm-followup-submit'), newTask = $('llm-new-task');
@@ -71,11 +71,15 @@
       tab.tabIndex = active ? 0 : -1;
       $(tab.getAttribute('aria-controls')).hidden = !active;
     }
+    const abnormal = selected.id === 'abnormal-tab';
+    $('uav-camera-panel').hidden = abnormal;
+    $('abnormal-camera-panel').hidden = !abnormal;
+    window.dispatchEvent(new CustomEvent('sidebar:change', {detail: {panel: selected.getAttribute('aria-controls')}}));
   }
   for (const [index, tab] of tabs.entries()) {
     tab.onclick = () => selectTab(tab);
     tab.onkeydown = event => {
-      const next = {ArrowLeft: (index + 1) % 2, ArrowRight: (index + 1) % 2, Home: 0, End: 1}[event.key];
+      const next = {ArrowLeft: (index + tabs.length - 1) % tabs.length, ArrowRight: (index + 1) % tabs.length, Home: 0, End: tabs.length - 1}[event.key];
       if (next === undefined) return;
       event.preventDefault(); selectTab(tabs[next]); tabs[next].focus();
     };

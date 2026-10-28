@@ -1,47 +1,43 @@
-# 城市场景
+# 城市无人机巡查平台
 
-本项目以 `Map/` 中的标定数据为核心；`web/` 提供地图与无人机实时监控；`UAV/`存储无人机函数库的具体实现；`llm/`负责自然语言任务规划和图片分析。
-用户在网页输入任务后，系统通过大模型查询本地地图、确定搜索区域并分配无人机，随后自动执行沿道路巡查和定时拍照。
+本项目基于 AirSim 城市场景，提供无人机任务规划、三维导航、道路巡查和实时监控，并支持生成异常车辆、持刀人员和病人。
+用户在网页输入任务后，系统通过大模型确定搜索区域并分配无人机，按高度规划绕楼或跨楼航线，到达后沿完整街区道路巡查、拍摄节点和街道照片，完成任务后返航降落。
 
 ## 文件结构
 
 ```text
-
+├─ .gitignore
 ├─ README.md
+├─ requirements.txt
 ├─ Map/
-│  ├─ road_network.json         统一节点与边、车辆与无人机通行规则
-│  ├─ objects/                  建筑与任务点
-│  │  ├─ buildings.json         6594个建筑轮廓
-│  │  └─ task_points.json       725个任务与参考点、道路接入候选
-│  └─ zones/                    功能区与模型目录
-│     ├─ functional_zones.json  375个功能区与设施、20类标签
-│     ├─ zone_catalog.json      供规划模型读取的静态区域目录
-│     └─ generate_catalog.py    将功能区数据转换为模型目录
+│  ├─ roads/                  车道、巡查道路与分层飞行路网
+│  ├─ objects/                建筑与任务点
+│  └─ zones/                  功能区与模型目录
 ├─ UAV/
-│  ├─ API/                      存储无人机功能函数库(直接面向`airsim`仿真环境)
-│  ├─ utils/                    无人机功能函数所有的子函数
-│  └─ search_results/           本地巡查图片和结果
+│  ├─ API/                    无人机飞行、巡查与复位接口
+│  ├─ runtime/                AirSim 通信、状态读取与飞行执行
+│  └─ utils/                  路径与速度规划
+├─ Abnormal/
+│  ├─ __init__.py             异常场景接口导出
+│  ├─ vehicle/                异常车辆生成与行为控制
+│  ├─ armed_person/           持刀人员生成
+│  └─ patient/                病人生成
 ├─ llm/
+│  ├─ __init__.py             Python 包入口
+│  ├─ .env                    本地模型配置
 │  ├─ planner.py              自然语言任务规划
 │  ├─ vision.py               图片分析
-│  ├─ utils/                  辅助功能
 │  ├─ prompts/                规划与视觉提示词
-│  └─ .env                    本地模型配置
-└─ web/
-   ├─ index.html                网页入口
-   ├─ serve.cjs                 服务启动入口与接口路由
-   ├─ js/                       浏览器脚本
-   │  ├─ map.js                 交互地图面板
-   │  ├─ airsim.js              无人机位置与实时画面面板
-   │  └─ llm.js                 自然语言任务面板
-   ├─ css/
-   │  └─ styles.css             页面样式
-   ├─ server/                   后端代码
-   │  ├─ plan-and-search.cjs    "规划并开始搜索"按钮对应的全流程工作流
-   │  ├─ python_bridge.py       Python 能力的通信适配
-   │  └─ airsim_bridge.py       AirSim 状态与画面读取
-   └─ assets/
-      └─ town12.png             实景底图
+│  └─ utils/                  模型连接与地图查询
+├─ web/
+│  ├─ index.html              网页入口
+│  ├─ serve.cjs               网页服务入口
+│  ├─ js/                     浏览器脚本
+│  ├─ css/                    页面样式
+│  ├─ server/                 网页后端
+│  ├─ utils/                  Python 与仿真桥接工具
+│  └─ assets/                 地图底图等静态素材
+└─ output/                    输出文件夹
 ```
 
 ## 0 项目统一管理注意事项
@@ -68,24 +64,24 @@ python -m pip install -r requirements.txt
 node web/serve.cjs
 ```
 
-运行后自动打开浏览器展现可视化界面。
-
 具体文件分工见[web/README.md](web/README.md)。
 
 ## 2 无人机功能函数库`UAV`
 
-无人机功能函数库，具体细节见[UAV/README.md](UAV/README.md)。
+接口参数与调用示例见[UAV/README.md](UAV/README.md)。
 
 ## 3 地图数据`Map`
 
 地图数据按以下路径保存：
 
 ```text
-road_network.json:存储道路拓扑结构
-zones/functional_zones.json:存储城市功能分区标签
-zones/zone_catalog.json:存储供规划模型读取的区域目录
-objects/buildings.json:存储建筑物的具体信息
-objects/task_points.json:存储城市中手动打好的目标任务点
+roads/road_network.json        原始车道级道路拓扑及通行规则
+roads/uav_road_network.json    完整街区道路巡查使用的二维路网
+roads/uav_flight_network.json  支持绕楼、穿楼间通道和跨楼的分层飞行路网
+zones/functional_zones.json    城市功能区与设施边界
+zones/zone_catalog.json        供模型读取的区域目录
+objects/buildings.json        建筑轮廓与高度
+objects/task_points.json      任务点与道路接入信息
 ```
 
 `zones/zone_catalog.json` 是供模型读取的静态目录，由同目录下的脚本生成：
@@ -98,6 +94,12 @@ python Map/zones/generate_catalog.py
 
 ## 4 大模型`llm`
 
-存储整个项目中关于大模型调用的所有内容，`planner.py` 将自然语言任务转换为搜索指令；`vision.py` 分析本地巡查图片。`utils/` 提供子工具，`prompts/` 保存提示词，模型配置放在 `.env`下。
+`planner.py` 将自然语言任务转换为区域搜索指令，`vision.py` 分析本地巡查图片。`utils/` 提供模型连接和地图查询，`prompts/` 保存提示词，模型配置位于 `llm/.env`。
 
 具体细节参见[llm/README.md](llm/README.md)。
+
+## 5 异常场景`Abnormal`
+
+提供异常行为的生成和操控接口。
+
+具体情况见[Abnormal/README.md](Abnormal/README.md)。

@@ -15,7 +15,8 @@ import time
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from UAV.utils.airsim_client import AirSimClient as Rpc, calibrate, vector
+from UAV.runtime.airsim_client import AirSimClient as Rpc
+from UAV.runtime.airsim_state import calibrate, vector
 
 
 OUTPUT_LOCK = threading.Lock()

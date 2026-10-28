@@ -4,6 +4,7 @@ const {spawn} = require('node:child_process');
 const {randomUUID} = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const PythonRuntime = require('./python-runtime.cjs');
 const TERMINAL = new Set(['completed', 'failed']);
 const DEFAULT_FLIGHT = Object.freeze({flight_height: 40, flight_speed: 5});
 
@@ -29,124 +30,6 @@ function planningFleet(state, now = Date.now()) {
         d.updated_at > now || typeof d.available !== 'boolean' ||
         !Array.isArray(d.position_m) || d.position_m.length !== 3 || !d.position_m.every(Number.isFinite))) return null;
   return state.drones.map(({name, position_m, available}) => ({name, position_m: [...position_m], available}));
-}
-
-// 管理 Python 通信通道；规划、状态读取和每架无人机使用独立进程。
-class PythonRuntime {
-  constructor({root, spawnProcess = spawn}) {
-    this.root = root;
-    this.spawnProcess = spawnProcess;
-    this.workers = new Map();
-    this.nextId = 0;
-    this.closed = false;
-  }
-
-  start(channel = 'planning') {
-    if (this.closed) throw Error('执行服务已停止，请重启网页服务。');
-    let fingerprint = '';
-    if (channel === 'planning') {
-      try {
-        const stat = fs.statSync(path.join(this.root, 'llm', '.env'));
-        fingerprint = `${stat.mtimeMs}:${stat.size}`;
-      } catch { /* 模型也可以直接读取环境变量。 */ }
-    }
-    let worker = this.workers.get(channel);
-    if (worker && channel === 'planning' && worker.fingerprint !== fingerprint) {
-      if (worker.pending.size) throw requestError('已有任务正在规划，请等待完成。', 409);
-      this.cancel(channel);
-      worker = null;
-    }
-    if (worker) return worker;
-    const child = this.spawnProcess('python', ['-B', '-u', '-X', 'utf8',
-      path.join(this.root, 'web', 'server', 'python_bridge.py')], {
-      cwd: this.root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-      env: {...process.env, PYTHONIOENCODING: 'utf-8'}
-    });
-    worker = {channel, child, fingerprint, pending: new Map(), buffer: '', failed: false};
-    this.workers.set(channel, worker);
-    child.stdout.setEncoding('utf8');
-    child.stderr.resume();
-    child.stdout.on('data', chunk => this.receive(worker, chunk));
-    child.stdin.on('error', () => this.fail(worker, Error('Python 通信中断，请核实无人机状态。')));
-    child.stdout.on('error', () => this.fail(worker, Error('Python 结果读取失败，请核实无人机状态。')));
-    child.once('error', () => this.fail(worker, Error('无法启动 Python，请检查本地环境。'), {spawnFailure: true}));
-    child.once('close', () => this.fail(worker, Error('Python 进程已退出，请核实无人机状态。'), {exited: true}));
-    return worker;
-  }
-
-  request(operation, data = {}, {channel = 'planning', timeoutMs = 15000} = {}) {
-    let worker;
-    try { worker = this.start(channel); }
-    catch (error) { return Promise.reject(error); }
-    const id = ++this.nextId;
-    return new Promise((resolve, reject) => {
-      const timer = timeoutMs > 0 ? setTimeout(() => {
-        this.fail(worker, requestError('Python 请求超时，请稍后重试。', 504), {terminate: true});
-      }, timeoutMs) : null;
-      worker.pending.set(id, {operation, resolve, reject, timer});
-      try {
-        worker.child.stdin.write(JSON.stringify({id, operation, ...data}) + '\n', error => {
-          if (error) this.fail(worker, Error('无法向 Python 发送请求，请核实无人机状态。'));
-        });
-      } catch (error) { this.fail(worker, error); }
-    });
-  }
-
-  receive(worker, chunk) {
-    if (worker.failed) return;
-    worker.buffer += chunk;
-    if (worker.buffer.length > 1048576) {
-      this.fail(worker, Error('Python 返回内容过大。'), {terminate: true}); return;
-    }
-    let end;
-    while ((end = worker.buffer.indexOf('\n')) >= 0) {
-      const line = worker.buffer.slice(0, end); worker.buffer = worker.buffer.slice(end + 1);
-      let message;
-      try { message = JSON.parse(line); }
-      catch { this.fail(worker, Error('Python 返回格式无效。'), {terminate: true}); return; }
-      const call = message && worker.pending.get(message.id);
-      if (!call || (!Object.hasOwn(message, 'result') && typeof message.error !== 'string')) {
-        this.fail(worker, Error('Python 返回了无法匹配的结果。'), {terminate: true}); return;
-      }
-      clearTimeout(call.timer); worker.pending.delete(message.id);
-      if (Object.hasOwn(message, 'error')) {
-        call.reject(Object.assign(new Error(message.error), {errorType: message.error_type || 'PythonError'}));
-      } else call.resolve(message.result);
-    }
-  }
-
-  fail(worker, error, {terminate = false, spawnFailure = false, exited = false} = {}) {
-    if (worker.failed) return;
-    worker.failed = true;
-    const searching = [...worker.pending.values()].some(call => call.operation === 'search');
-    for (const call of worker.pending.values()) {
-      clearTimeout(call.timer);
-      call.reject(Object.assign(new Error(error.message), {
-        statusCode: error.statusCode, uncertain: !spawnFailure && call.operation === 'search'
-      }));
-    }
-    worker.pending.clear();
-    if (this.workers.get(worker.channel) === worker) this.workers.delete(worker.channel);
-    if (!exited) {
-      // 飞行进程关闭输入后，仍会完成当前区域及悬停清理。
-      if (terminate && !searching && !worker.channel.startsWith('drone:')) worker.child.kill();
-      else worker.child.stdin.end();
-    }
-  }
-
-  cancel(channel) {
-    const worker = this.workers.get(channel);
-    if (worker) this.fail(worker, Error('请求已取消。'), {terminate: true});
-  }
-
-  close() {
-    if (this.closed) return;
-    this.closed = true;
-    for (const worker of this.workers.values()) {
-      if (worker.channel.startsWith('drone:')) worker.child.stdin.end();
-      else this.fail(worker, Error('网页服务已停止。'), {terminate: true});
-    }
-  }
 }
 
 // 管理一批搜索任务；同机按序执行，不同机并行。
@@ -257,7 +140,7 @@ class MissionExecutor {
 }
 
 // 网页接口只在此组织“取状态 → 规划 → 派发”，进度直接来自任务对象。
-class PlanAndSearchController {
+class LlmController {
   constructor({root, getState = () => null, spawnProcess = spawn,
     timeoutMs = 660000, executionTimeoutMs = 15000, runtime = null}) {
     this.runtime = runtime || new PythonRuntime({root, spawnProcess});
@@ -289,6 +172,12 @@ class PlanAndSearchController {
       throw requestError('对话记录无效或过长，请开始新任务。', 400);
     const flight = {...DEFAULT_FLIGHT, flight_height: positive(data.flight?.flight_height ?? DEFAULT_FLIGHT.flight_height, '飞行高度')};
     return {instruction: instruction.trim(), conversation, flight};
+  }
+
+  handle(request, response, url) {
+    if (url.pathname === '/api/llm/plan') return this.handlePlan(request, response);
+    if (url.pathname === '/api/llm/mission') return this.handleMission(request, response);
+    send(response, 404, {error: '接口不存在'});
   }
 
   async handlePlan(request, response) {
@@ -368,6 +257,5 @@ class PlanAndSearchController {
   }
 }
 
-module.exports = PlanAndSearchController;
-module.exports.PythonRuntime = PythonRuntime;
+module.exports = LlmController;
 module.exports.MissionExecutor = MissionExecutor;

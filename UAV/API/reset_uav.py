@@ -14,7 +14,9 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     __package__ = "UAV.API"
 
-from ..utils.airsim_client import AirSimClient, calibrate, vector, vehicle_name, vehicle_lock
+from ..runtime.airsim_client import AirSimClient
+from ..runtime.airsim_state import calibrate, vector, vehicle_name
+from ..runtime.flight_control import vehicle_lock
 
 _RESET_LOCK = threading.Lock()
 
