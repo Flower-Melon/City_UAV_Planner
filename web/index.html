@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>城市无人机巡查平台</title>
-  <link rel="stylesheet" href="./css/styles.css?v=20261020-queue">
+  <link rel="stylesheet" href="./css/styles.css?v=20261029-vision">
   <script src="./js/map.js?v=20261028-roads" defer></script>
   <script src="./js/airsim.js" defer></script>
-  <script src="./js/llm.js?v=20261021-execute" defer></script>
+  <script src="./js/llm.js?v=20261029-vision" defer></script>
   <script src="./js/abnormal.js" defer></script>
 </head>
 <body>
@@ -80,13 +80,21 @@
       </div>
       <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab" hidden>
         <div class="section-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" hidden>新任务</button></div>
-        <p class="muted llm-intro">输入任务后自动规划并开始 AirSim 搜索，沿路定时拍照。</p>
+        <p class="muted llm-intro">输入任务后自动规划并开始 AirSim 搜索，沿路拍照并识别异常。</p>
         <form id="llm-form">
           <label class="field" for="llm-instruction">任务描述</label>
           <textarea id="llm-instruction" rows="4" maxlength="4000" required placeholder="例如：让 UAV_01 搜索地图东边的学校"></textarea>
           <button id="llm-submit" type="submit">规划并开始搜索 <span aria-hidden="true">→</span></button>
         </form>
         <p id="llm-status" class="llm-status" role="status" aria-live="polite">正在检查执行状态…</p>
+        <section id="llm-vision" class="llm-vision" hidden aria-label="巡查异常识别">
+          <div class="section-heading"><h2>异常识别 <span id="llm-anomaly-count" class="llm-anomaly-count">0</span></h2></div>
+          <p id="llm-vision-status" class="muted" role="status" aria-live="polite"></p>
+          <p id="llm-vision-error" class="llm-vision-error" hidden></p>
+          <p id="llm-vision-empty" class="muted">等待巡查照片，发现异常后将在此显示。</p>
+          <div id="llm-anomalies" class="llm-anomalies"></div>
+          <p class="muted">红框为模型估计的异常位置，需结合原图人工复核。</p>
+        </section>
         <details id="llm-history" class="llm-history" hidden>
           <summary>前面的对话</summary><div id="llm-messages"></div>
         </details>
@@ -146,5 +154,9 @@
       </section>
     </aside>
   </main>
+  <dialog id="llm-image-dialog" class="llm-image-dialog">
+    <div class="section-heading"><h2>异常照片</h2><button id="llm-image-close" type="button">关闭</button></div>
+    <div id="llm-image-detail"></div>
+  </dialog>
 </body>
 </html>

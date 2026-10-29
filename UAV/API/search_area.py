@@ -3,6 +3,7 @@
 import io
 import json
 import math
+from concurrent.futures import ThreadPoolExecutor
 from numbers import Real
 from pathlib import Path
 import sys
@@ -16,7 +17,7 @@ if not __package__:
 
 from ..runtime.airsim_client import AirSimClient
 from ..runtime.airsim_state import WorldFrame, vector, vehicle_name
-from ..runtime.flight_control import FlightControl, settle_at_position, vehicle_lock
+from ..runtime.flight_control import FlightControl, ROUTE_TOLERANCE_M, vehicle_lock
 from ..utils.plan_flight_path import _default_graph, plan_flight_path
 from ..utils.plan_search_path import check_building_clearance, plan_search_path
 
@@ -71,7 +72,7 @@ def new_capture_directory(output_dir):
 
 
 class SearchCapture:
-    """节点下视拍照，进入巡查边前沿边拍照；节点与边分别去重。"""
+    """节点下视、入口斜视及巡查途中下视拍照；节点与入口分别去重。"""
 
     def __init__(self, directory, name, origin, scale, client_factory=None):
         self.directory, self.name = Path(directory), name
@@ -120,7 +121,7 @@ class SearchCapture:
             image.thumbnail((1600, 1200))
             output = io.BytesIO()
             image.save(output, "JPEG", quality=90)
-        return output.getvalue()
+        return output.getvalue(), response
 
     def preflight(self):
         # 起飞前仅检查相机存在，不取图。
@@ -173,34 +174,53 @@ class SearchCapture:
         node = tuple(point)
         if node in self.captured_nodes:
             return False
-        self._capture(node, self.camera, "node")
+        if not self._capture(node, self.camera, "node"):
+            return False
         self.captured_nodes.add(node)
         return True
 
     def capture_edge(self, points, edge_id):
         if edge_id in self.captured_edges:
             return False
-        self._capture(tuple(points[0]), self.street_camera, "edge", (edge_id, points))
+        if not self._capture(tuple(points[0]), self.street_camera, "edge", (edge_id, points)):
+            return False
         self.captured_edges.add(edge_id)
         return True
 
-    def _capture(self, node, camera, trigger, edge=None):
+    def capture_distance(self, point, edge_id, distance, edge_distance):
+        return self._capture(tuple(point), self.camera, "distance", sample={
+            "edge_id": edge_id,
+            "patrol_distance_m": distance,
+            "edge_distance_m": edge_distance,
+            "sample_xy_m": list(point),
+        })
+
+    def _capture(self, node, camera, trigger, edge=None, sample=None):
         for attempt in range(2):
             try:
                 restore = self._aim_street(edge[1]) if edge is not None else None
                 try:
-                    image = self._image(camera)
+                    image, response = self._image(camera)
                 finally:
                     if restore is not None:
                         self.client.call("simSetCameraPose", camera, restore, self.name, False)
-                local = vector(self.client.call("simGetVehiclePose", self.name)["position"])
+                # 飞行中使用图像自带的曝光位置，不能用编码/写盘后的遥测冒充。
+                local = vector(response["camera_position"]) if sample is not None else vector(
+                    self.client.call("simGetVehiclePose", self.name)["position"]
+                )
                 position = [
                     self.origin[0] + local[0] * self.scale,
                     self.origin[1] + local[1] * self.scale,
                     self.origin[2] - local[2] * self.scale,
                 ]
-                if math.dist(position[:2], node) > 1.0:
-                    raise RuntimeError("拍照时未稳定在目标巡查节点")
+                if math.dist(position[:2], node) > ROUTE_TOLERANCE_M:
+                    self.log("events.json", {
+                        "type": "capture_skipped",
+                        "reason": "passed_sample" if sample is not None else "passed_node",
+                        "position_m": position, "trigger": trigger,
+                        **(sample if sample is not None else {"node_xy_m": list(node)}),
+                    })
+                    return False
                 filename = f"{self.images + 1:06d}.jpg"
                 path = self.capture_directory / filename
                 temporary = path.with_suffix(".part")
@@ -210,8 +230,13 @@ class SearchCapture:
                     "image": filename,
                     "type": trigger,
                     "position_m": position,
-                    "node_xy_m": list(node),
                 }
+                if sample is not None:
+                    frame.update(sample)
+                    frame["timestamp_ns"] = response["time_stamp"]
+                    frame["camera_orientation"] = response["camera_orientation"]
+                else:
+                    frame["node_xy_m"] = list(node)
                 if edge is not None:
                     frame["edge_id"] = edge[0]
                 frames = [*self.records.get("frame.json", []), frame]
@@ -225,16 +250,77 @@ class SearchCapture:
                     {
                         "type": "capture_error",
                         "error_type": type(error).__name__,
-                        "node_xy_m": list(node),
+                        **(sample if sample is not None else {"node_xy_m": list(node)}),
                         "trigger": trigger,
                         "attempt": attempt + 1,
                     },
                 )
                 if attempt == 1:
-                    raise RuntimeError(f"巡查节点拍照失败：{error}") from error
+                    raise RuntimeError(f"巡查拍照失败：{error}") from error
 
     def close(self):
         self.client.close()
+
+
+class _DistanceCapture:
+    """按巡查折线累计里程取图，最多一张在途；每条边结束后再恢复节点拍照。"""
+
+    def __init__(self, pipeline, interval):
+        self.pipeline = pipeline
+        self.interval = _positive(interval, "capture_interval_m")
+        self.distance = 0.0
+        self.next_distance = self.interval
+
+    def fly_route(self, flight, points, edge_id):
+        line = LineString([p[:2] for p in points])
+        pending = None
+        skipped = []
+
+        def skip(reason, first, count):
+            if count:
+                skipped.append({
+                    "type": "capture_skipped", "trigger": "distance", "reason": reason,
+                    "edge_id": edge_id, "count": count,
+                    "first_distance_m": first,
+                    "last_distance_m": first + (count - 1) * self.interval,
+                })
+
+        def report(progress, _position):
+            nonlocal pending
+            if pending is not None and pending.done():
+                pending.result()
+                pending = None
+            distance = self.distance + min(line.length, max(0.0, progress))
+            if distance + 1e-8 < self.next_distance:
+                return
+            count = math.floor((distance - self.next_distance + 1e-8) / self.interval) + 1
+            latest = self.next_distance + (count - 1) * self.interval
+            skip("progress_jump", self.next_distance, count - 1)
+            self.next_distance = latest + self.interval
+            if pending is not None:
+                skip("capture_busy", latest, 1)
+                return
+            edge_distance = max(0.0, latest - self.distance)
+            point = line.interpolate(edge_distance)
+            pending = executor.submit(
+                self.pipeline.capture_distance, (point.x, point.y), edge_id, latest, edge_distance
+            )
+
+        try:
+            # 只由拍照线程使用pipeline的RPC与记录；退出时等待，避免与节点拍照竞争。
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="search-capture") as executor:
+                flight.fly_route(points, on_progress=report)
+                if pending is not None:
+                    pending.result()
+            self.distance += line.length
+            # 飞控允许在端点前约1.5米结束；记录未触达的阈值，不挪到下一条边冒充补拍。
+            if self.next_distance <= self.distance + 1e-8:
+                count = math.floor((self.distance - self.next_distance + 1e-8) / self.interval) + 1
+                skip("end_not_reached", self.next_distance, count)
+                self.next_distance += count * self.interval
+        finally:
+            for event in skipped:
+                self.pipeline.log("events.json", event)
 
 
 def _patrol_chunks(points, node_positions, edge_lookup):
@@ -303,20 +389,27 @@ def search_area(
     drone_id,
     target,
     flight_height,
-    flight_speed=5.0,
+    flight_speed=30.0,
     *,
     max_height=60.0,
+    capture_interval_m=20.0,
     output_dir=DEFAULT_OUTPUT,
+    on_capture_directory=None,
 ) -> None:
     """三维导航接入街区、沿道路巡查拍照，完成后返航降落。
 
     flight_height是相对起飞地面的巡查高度；max_height是导航最大
-    当地离地高度，默认60米。target仅需zone_id。节点和道路边分别只拍一次。
+    当地离地高度，默认60米。target仅需zone_id。节点和道路入口分别只拍一次；
+    巡查途中每累计capture_interval_m米触发下视拍照，默认20米。
+    创建照片目录后通过on_capture_directory(Path)通知调用方，返回值仍为None。
     """
     height, speed = _positive(flight_height, "flight_height"), _positive(
         flight_speed, "flight_speed"
     )
     cap = _positive(max_height, "max_height")
+    interval = _positive(capture_interval_m, "capture_interval_m")
+    if on_capture_directory is not None and not callable(on_capture_directory):
+        raise ValueError("on_capture_directory必须为可调用对象")
     with AirSimClient() as client:
         name = vehicle_name(drone_id, client.call("listVehicles"))
         lock = vehicle_lock(name)
@@ -341,12 +434,16 @@ def search_area(
             plan = make_plan(world)
             directory = new_capture_directory(output_dir)
             pipeline = SearchCapture(directory, name, origin, frame.scale)
+            if on_capture_directory is not None:
+                on_capture_directory(pipeline.capture_directory.resolve())
+            distance_capture = _DistanceCapture(pipeline, interval)
             pipeline.preflight()
             flight = FlightControl(client, frame, name, origin)
             flight.prepare(world, local)
             actual = _world_xyz(client, name, origin, frame.scale)
             if math.dist(actual, plan["segments"][0][0][0][:3]) > 0.1:
                 plan = make_plan(actual)
+            plan["capture_interval_m"] = interval
             route_file = pipeline.capture_directory / "route.json"
             pipeline.write_records(route_file, plan)
             graph = _default_graph()
@@ -364,7 +461,7 @@ def search_area(
                 chunks = list(_patrol_chunks(points, node_positions, edge_lookup))
                 for offset, (chunk, node) in enumerate(chunks):
                     if len(chunk) > 1:
-                        flight.fly_route(chunk)
+                        distance_capture.fly_route(flight, chunk, _patrol_edge(chunk, edge_lookup))
                     upcoming = (
                         chunks[offset + 1][0]
                         if node is not None and offset + 1 < len(chunks)
@@ -376,11 +473,6 @@ def search_area(
                         or edge_id is not None
                         and edge_id not in pipeline.captured_edges
                     ):
-                        flight.stop()
-                        destination = [(node[i] - origin[i]) / frame.scale for i in (0, 1)] + [
-                            (origin[2] - chunk[-1][2]) / frame.scale
-                        ]
-                        settle_at_position(client, name, destination, frame.scale)
                         pipeline.capture_node(node)
                         if edge_id is not None:
                             pipeline.capture_edge([p[:2] for p in upcoming], edge_id)
@@ -394,6 +486,14 @@ def search_area(
                 raise RuntimeError("巡查未保存任何照片，本次搜索未完成")
         except BaseException as error:
             failure = error
+            if pipeline is not None:
+                try:
+                    pipeline.log("events.json", {
+                        "type": "flight_error", "error": str(error),
+                        "diagnostics": flight.diagnostics if flight is not None else {},
+                    })
+                except Exception:
+                    pass
         finally:
             try:
                 if pipeline is not None:
@@ -417,9 +517,13 @@ def search_area(
 if __name__ == "__main__":
     # 在此修改参数后，可直接运行本文件或设置断点调试。
     drone_id = "UAV_01"
-    target = {"zone_id": "F-UAV-BASE"}
-    flight_height = 20.0
-    flight_speed = 5.0
+    target = {"zone_id": "F-SPORTS-2"}
+    flight_height = 15.0
+    flight_speed = 50.0
+    capture_interval_m = 20.0
     output_dir = DEFAULT_OUTPUT
 
-    search_area(drone_id, target, flight_height, flight_speed, output_dir=output_dir)
+    search_area(
+        drone_id, target, flight_height, flight_speed,
+        capture_interval_m=capture_interval_m, output_dir=output_dir,
+    )

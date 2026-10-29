@@ -48,18 +48,29 @@ def _sidewalks():
     return records, STRtree([line for _, line in records])
 
 
-def _patrol_points(line, along):
+def _patrol_legs(line, along):
     low, high = max(0.8, along - 12), min(line.length - 0.8, along + 12)
     if high - low < 4:
         return []
+    legs = []
+    for end in (high, low):
+        count = max(1, int(math.ceil(abs(end - along))))
+        legs.append([list(line.interpolate(along + (end - along) * i / count).coords[0])
+                     for i in range(count + 1)])
+    return legs
+
+
+def _loop_patrol(legs):
     result = []
-    for a, b in zip((along, high, low), (high, low, along)):
-        count = max(1, int(math.ceil(abs(b - a))))
-        for i in range(count + 1):
-            xy = list(line.interpolate(a + (b - a) * i / count).coords[0])
+    for leg in legs:
+        for xy in [*leg, *reversed(leg[:-1])]:
             if not result or math.hypot(xy[0] - result[-1][0], xy[1] - result[-1][1]) > 0.001:
-                result.append(xy)
+                result.append(list(xy))
     return result
+
+
+def _patrol_points(line, along):
+    return _loop_patrol(_patrol_legs(line, along))
 
 
 def _candidates(position, kind):
@@ -81,11 +92,12 @@ def _candidates(position, kind):
                 continue
             a = line.interpolate(max(0, along - 0.1))
             b = line.interpolate(min(line.length, along + 0.1))
-            route = _patrol_points(line, along) if kind == "armed_person" else []
+            legs = _patrol_legs(line, along) if kind == "armed_person" else []
+            route = _loop_patrol(legs)
             if kind == "armed_person" and not route:
                 continue
             choices.append((distance, edge_id, along, {"xy": xy, "yaw": math.atan2(b.y - a.y, b.x - a.x),
-                                                       "route": route}))
+                                                       "route": route, "patrol_legs": legs}))
     choices.sort(key=lambda entry: entry[:3])
     result, seen = [], set()
     for _, _, _, candidate in choices:
@@ -147,6 +159,10 @@ _surface_cache = {}
 _SKELETON = "/Game/Carla/Static/Pedestrian/Male/SK_Male.SK_Male"
 _ANIMATION = "/Game/CityNPC/AbnormalPeople/ABP_CityAbnormalPeople.ABP_CityAbnormalPeople_C"
 _COLLAPSE = "/Game/CityNPC/AbnormalPeople/Animations/AS_PatientCollapse.AS_PatientCollapse"
+_CAPSULE_HALF_HEIGHT_M = 0.88
+# 脚本禁用了 CharacterMovement，必须自己保留正常角色贴地时的胶囊间隙。
+# 胶囊恰好接触 HISM 人行道时，UE sweep 会报告初始穿透，阻止所有横向移动。
+_GROUND_CLEARANCE_M = 0.025
 
 
 def _base():
@@ -235,8 +251,31 @@ def _clear(xy, z, ignored=(), end_xy=None, patient=False, yaw=0.0):
 
 
 def _place(actor, xy, z, yaw, sweep=False):
-    actor.set_actor_location_and_rotation(_context().vector(xy[0], xy[1], z + 0.88),
+    actor.set_actor_location_and_rotation(
+        _context().vector(xy[0], xy[1], z + _CAPSULE_HALF_HEIGHT_M + _GROUND_CLEARANCE_M),
                                          unreal.Rotator(pitch=0, yaw=math.degrees(yaw), roll=0), sweep, True)
+
+
+def _safe_patrol_route(candidate, ground):
+    """从出生点分别向两侧探测，裁去障碍之后的路线，保留至少4米可通行路段。"""
+    safe, total = [], 0.0
+    for leg in candidate.get("patrol_legs", [candidate["route"]]):
+        usable, z = [candidate["xy"]], ground
+        for xy in leg[1:]:
+            previous = usable[-1]
+            length = math.hypot(xy[0] - previous[0], xy[1] - previous[1])
+            if length < 0.001:
+                continue
+            yaw = math.atan2(xy[1] - previous[1], xy[0] - previous[0])
+            next_z = _support(xy, yaw)
+            if (next_z is None or abs(next_z - z) > 0.25
+                    or not _clear(previous, z, end_xy=xy)):
+                break
+            usable.append(xy)
+            total += length
+            z = next_z
+        safe.append(usable)
+    return _loop_patrol(safe) if total >= 4.0 else None
 
 
 class Person:
@@ -261,8 +300,10 @@ class Person:
         self.mesh.set_relative_location(unreal.Vector(0, 0, -85.49), False, True)
         self.mesh.set_relative_rotation(unreal.Rotator(pitch=0, yaw=-90, roll=0), False, True)
         self.mesh.set_editor_property("receives_decals", False)
+        self.mesh.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
         self.mesh.set_editor_property("visibility_based_anim_tick_option",
                                       unreal.VisibilityBasedAnimTickOption.ALWAYS_TICK_POSE_AND_REFRESH_BONES)
+        self.mesh.set_editor_property("enable_update_rate_optimizations", False)
         self.mesh.set_forced_lod(1)
         self.mesh.set_anim_instance_class(animation_class)
         self.animation = self.mesh.get_anim_instance()
@@ -310,7 +351,7 @@ class Person:
         yaw = self.yaw + max(-math.radians(260) * dt, min(math.radians(260) * dt, change))
         z = _support(xy, yaw)
         if z is None or abs(z - self.z) > 0.25 or not _clear(self.xy, self.z, [self.actor], end_xy=xy):
-            self.action, self.phase_remaining = 0, 2.0
+            self.action, self.phase_remaining = 3, self.random.uniform(2.5, 4.5)
             self._animate(0.0)
             return
         _place(self.actor, xy, z, yaw, sweep=True)
@@ -319,8 +360,12 @@ class Person:
         actual_xy = (actual.x / 100 + origin[0], actual.y / 100 + origin[1])
         actual_speed = math.hypot(actual_xy[0] - self.xy[0], actual_xy[1] - self.xy[1]) / dt
         if math.hypot(actual_xy[0] - xy[0], actual_xy[1] - xy[1]) > 0.02:
-            self.action, self.phase_remaining = 0, 2.0
-        self.xy, self.z, self.yaw = actual_xy, actual.z / 100 + origin[2] - 0.88, yaw
+            self.action, self.phase_remaining = 3, self.random.uniform(2.5, 4.5)
+        self.xy, self.z, self.yaw = (
+            actual_xy,
+            actual.z / 100 + origin[2] - _CAPSULE_HALF_HEIGHT_M - _GROUND_CLEARANCE_M,
+            yaw,
+        )
         self._animate(actual_speed)
 
     def update_weapon(self):
@@ -353,7 +398,9 @@ def _new_person(world, name, candidate, kind, z, mesh, animation, collapse):
     if mode is None:
         raise RuntimeError("当前仿真没有可用于创建人物的 GameMode")
     previous = mode.get_editor_property("default_pawn_class")
-    location = _context().vector(candidate["xy"][0], candidate["xy"][1], z + 0.88)
+    location = _context().vector(
+        candidate["xy"][0], candidate["xy"][1], z + _CAPSULE_HALF_HEIGHT_M + _GROUND_CLEARANCE_M
+    )
     transform = unreal.Transform(
         location, unreal.Rotator(pitch=0, yaw=math.degrees(candidate["yaw"]), roll=0), unreal.Vector(1, 1, 1))
     try:
@@ -404,8 +451,11 @@ def _prepare(data):
         z = _support(xy, yaw, patient=kind == "patient")
         if z is None or not _clear(xy, z, patient=kind == "patient", yaw=yaw):
             continue
-        if kind == "armed_person" and any(_surface(point) is None for point in candidate["route"]):
-            continue
+        if kind == "armed_person":
+            route = _safe_patrol_route(candidate, z)
+            if route is None:
+                continue
+            candidate = dict(candidate, route=route)
         person = _new_person(world, name, candidate, kind, z, mesh, animation, collapse.get_play_length())
         _pending[name] = person
         anchors = unreal.GameplayStatics.get_all_actors_of_class(world, unreal.PlayerStart)
@@ -418,7 +468,8 @@ def _prepare(data):
                 raise RuntimeError("UE 世界尺度无效")
             pose = {"position": {"x_val": (xy[0] - a.x / 100 - origin[0]) / scale,
                                  "y_val": (xy[1] - a.y / 100 - origin[1]) / scale,
-                                 "z_val": (a.z / 100 + origin[2] - z - 0.88) / scale},
+                                 "z_val": (a.z / 100 + origin[2] - z
+                                           - _CAPSULE_HALF_HEIGHT_M - _GROUND_CLEARANCE_M) / scale},
                     "orientation": {"w_val": 1.0, "x_val": 0.0, "y_val": 0.0, "z_val": 0.0}}
             return {"person_id": name, "weapon_pose": pose}
         except Exception:

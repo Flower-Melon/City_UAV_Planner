@@ -511,7 +511,7 @@ if __name__ == "__main__":
 
     # 修改这里的参数后，可直接运行本文件；不会连接AirSim或移动无人机。
     current_position = (2120.0, -2297.0, 360.0)
-    target_position = (1727.7, -1940.2, 383.0)
+    target_position = (1835.464, -467.561, 383.0)
     max_height = 60.0
     flight_speed = 8.0
 

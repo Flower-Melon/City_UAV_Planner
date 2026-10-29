@@ -10,13 +10,13 @@ web/
 ├─ js/                        浏览器脚本
 │  ├─ map.js                  地图交互
 │  ├─ airsim.js               无人机实时监控
-│  ├─ llm.js                  自然语言任务交互
+│  ├─ llm.js                  自然语言任务、异常照片和红框展示
 │  └─ abnormal.js             异常场景交互
 ├─ css/                       页面样式
 │  └─ styles.css              页面外观
 ├─ server/                    Node.js 后端
 │  ├─ airsim.cjs              无人机监控接口
-│  ├─ llm.cjs                 任务规划与搜索调度
+│  ├─ llm.cjs                 任务规划、搜索调度、逐帧视觉分析与告警图片接口
 │  ├─ abnormal.cjs            异常场景接口
 │  └─ python-runtime.cjs      启动 Python 进程并收发请求
 ├─ utils/                     Python 桥接工具
@@ -26,8 +26,6 @@ web/
 └─ assets/                    静态素材
    └─ town12.png              地图实景底图
 ```
-
-`js/` 与 `server/` 的同名文件按功能对应。`map.js` 直接读取静态地图数据。
 
 ## 子文件夹分工
 

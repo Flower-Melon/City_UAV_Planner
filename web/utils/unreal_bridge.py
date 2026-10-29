@@ -63,6 +63,32 @@ def current_world():
     return world
 
 
+def _view_positions(item, kind):
+    actor = item.actor
+    p = actor.get_actor_location()
+    yaw = math.radians(actor.get_actor_rotation().yaw)
+    if kind == "armed_person":
+        # UE人物前方为+X，右手侧为+Y；从正面右侧观察，避免躯干挡住刀具。
+        focus = unreal.Vector(p.x, p.y, p.z + 20)
+        weapon = getattr(item, "weapon", None)
+        if valid(weapon):
+            hand = weapon.get_actor_location()
+            focus = unreal.Vector(focus.x * 0.7 + hand.x * 0.3,
+                                  focus.y * 0.7 + hand.y * 0.3,
+                                  focus.z * 0.7 + hand.z * 0.3)
+        positions = [
+            unreal.Vector(p.x + math.cos(yaw) * front - math.sin(yaw) * right,
+                          p.y + math.sin(yaw) * front + math.cos(yaw) * right,
+                          p.z + 55)
+            for front, right in ((300, 170), (330, 0), (300, -170))
+        ]
+        return focus, positions
+    back, height = (900, 470) if kind == "vehicle" else (450, 240)
+    focus = unreal.Vector(p.x, p.y, p.z + (50 if kind == "vehicle" else 0))
+    location = unreal.Vector(p.x - math.cos(yaw) * back, p.y - math.sin(yaw) * back, p.z + height)
+    return focus, [location]
+
+
 def follow():
     if not valid(_camera):
         return
@@ -71,19 +97,21 @@ def follow():
         stop_camera()
         return
     item, kind = entry
-    actor = item.actor
-    p = actor.get_actor_location()
-    yaw = math.radians(actor.get_actor_rotation().yaw)
-    back, height = (900, 470) if kind == "vehicle" else (450, 240)
-    focus = unreal.Vector(p.x, p.y, p.z + (50 if kind == "vehicle" else 0))
-    location = unreal.Vector(p.x - math.cos(yaw) * back, p.y - math.sin(yaw) * back, p.z + height)
-    hit = unreal.SystemLibrary.line_trace_single_for_objects(
-        _world, focus, location, [unreal.ObjectTypeQuery.OBJECT_TYPE_QUERY1],
-        False, [actor, _camera], unreal.DrawDebugTrace.NONE, True)
-    h = hit.to_tuple() if hit else None
-    if h and h[0]:
+    focus, positions = _view_positions(item, kind)
+    location, best_clearance = positions[0], -1.0
+    for candidate in positions:
+        hit = unreal.SystemLibrary.line_trace_single_for_objects(
+            _world, focus, candidate, [unreal.ObjectTypeQuery.OBJECT_TYPE_QUERY1],
+            False, [item.actor, _camera], unreal.DrawDebugTrace.NONE, True)
+        h = hit.to_tuple() if hit else None
+        if not h or not h[0]:
+            location = candidate
+            break
         point = h[5]
-        location = unreal.Vector(point.x + h[7].x * 35, point.y + h[7].y * 35, point.z + h[7].z * 35)
+        clearance = (point.x - focus.x) ** 2 + (point.y - focus.y) ** 2 + (point.z - focus.z) ** 2
+        if clearance > best_clearance:
+            best_clearance = clearance
+            location = unreal.Vector(point.x + h[7].x * 35, point.y + h[7].y * 35, point.z + h[7].z * 35)
     rotation = unreal.MathLibrary.find_look_at_rotation(location, focus)
     _camera.set_actor_location_and_rotation(location, rotation, False, True)
 
@@ -91,7 +119,8 @@ def follow():
 def observe(name):
     global _camera, _capture, _target_id, _lease, _tick_handle, _camera_error
     _lease = time.monotonic() + 5
-    if name not in targets():
+    entry = targets().get(name)
+    if entry is None:
         stop_camera()
         return
     if not valid(_camera):
@@ -108,6 +137,7 @@ def observe(name):
                            ("capture_every_frame", False), ("capture_on_movement", False),
                            ("always_persist_rendering_state", True), ("fov_angle", 70.0)):
             _capture.set_editor_property(key, value)
+    _capture.set_editor_property("fov_angle", 55.0 if entry[1] == "armed_person" else 70.0)
     _target_id = name
     follow()
     _camera_error = None

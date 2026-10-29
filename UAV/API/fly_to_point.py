@@ -61,4 +61,4 @@ def fly_to_point(drone_id, target_position, max_height, flight_speed=25.0) -> No
 
 
 if __name__ == "__main__":
-    fly_to_point("UAV_01", (1802.468, -2467.915, 390.0), max_height=60.0, flight_speed=8.0)
+    fly_to_point("UAV_01", (1835.464, -467.561, 390.0), max_height=60.0, flight_speed=8.0)

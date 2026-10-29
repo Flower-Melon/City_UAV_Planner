@@ -224,7 +224,7 @@ def _required_edges(graph, geometry):
 
 
 def plan_search_path(
-    current_position, target, search_height, max_height, flight_speed=5.0
+    current_position, target, search_height, max_height, flight_speed=30.0
 ):
     """返回[(XYZ速度航点列表, 是否巡查), ...]，不包含返航。
 

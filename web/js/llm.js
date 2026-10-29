@@ -9,6 +9,64 @@
   const status = $('llm-status'), resultPanel = $('llm-result');
   let pending = false, conversation = [], previousTurn = null;
   let checking = true, flying = false, mission = null, pollTimer;
+  let visionMission = null;
+  const shownAnomalies = new Set();
+
+  function annotatedImage(record) {
+    const view = document.createElement('div'); view.className = 'llm-anomaly-image';
+    const image = document.createElement('img');
+    image.src = record.image_url; image.alt = record.description;
+    view.append(image);
+    for (const detection of record.detections) {
+      const [x1, y1, x2, y2] = detection.bbox;
+      const box = document.createElement('div'); box.className = 'llm-anomaly-box';
+      Object.assign(box.style, {left: `${x1 / 10}%`, top: `${y1 / 10}%`,
+        width: `${(x2 - x1) / 10}%`, height: `${(y2 - y1) / 10}%`});
+      const label = document.createElement('span'); label.textContent = detection.label;
+      box.title = detection.label; box.append(label); view.append(box);
+    }
+    return view;
+  }
+
+  function showVision(execution) {
+    const vision = execution?.vision;
+    $('llm-vision').hidden = !vision;
+    if (!vision) return;
+    if (visionMission !== execution.mission_id) {
+      visionMission = execution.mission_id; shownAnomalies.clear();
+      $('llm-anomalies').replaceChildren();
+    }
+    $('llm-anomaly-count').textContent = vision.abnormal;
+    const phase = vision.status === 'running' ? '识别中' : '识别结束';
+    $('llm-vision-status').textContent = `${phase} · 已分析 ${vision.analyzed}/${vision.total} 张 · 异常 ${vision.abnormal} 张 · 无法判断 ${vision.uncertain} 张 · 失败 ${vision.failed} 张`;
+    const error = vision.errors?.[0]?.error;
+    $('llm-vision-error').hidden = !error;
+    $('llm-vision-error').textContent = error ? `部分照片未完成识别：${error}` : '';
+    $('llm-vision-empty').hidden = vision.anomalies.length > 0;
+    $('llm-vision-empty').textContent = vision.status === 'running' ?
+      '正在巡查和分析照片，发现异常后将在此显示。' :
+      vision.failed || error ? '部分照片识别失败，请查看错误提示。' :
+      vision.uncertain ? '尚未发现明确异常，部分照片无法可靠判断。' : '本次照片中未发现目标异常。';
+    for (const record of vision.anomalies) {
+      const key = `${record.task_id}:${record.image}`;
+      if (shownAnomalies.has(key)) continue;
+      shownAnomalies.add(key);
+      const card = document.createElement('article'); card.className = 'llm-anomaly-card';
+      const heading = document.createElement('p'); heading.className = 'llm-anomaly-heading';
+      heading.textContent = `${record.drone_id} · ${record.image} · ${record.zone_id}`;
+      const button = document.createElement('button'); button.type = 'button';
+      button.className = 'llm-anomaly-open'; button.setAttribute('aria-label', `放大异常照片 ${record.image}`);
+      button.append(annotatedImage(record));
+      const description = document.createElement('p'); description.textContent = record.description;
+      button.onclick = () => {
+        $('llm-image-detail').replaceChildren(annotatedImage(record));
+        const caption = document.createElement('p'); caption.textContent = record.description;
+        $('llm-image-detail').append(caption); $('llm-image-dialog').showModal();
+      };
+      card.append(heading, button, description); $('llm-anomalies').append(card);
+    }
+  }
+  $('llm-image-close').onclick = () => $('llm-image-dialog').close();
 
   // 根据规划与飞行状态锁定输入，防止刷新或重复点击再次派发。
   function controls() {
@@ -32,10 +90,12 @@
   // 展示真实巡查任务状态。
   function showMission(data) {
     mission = data.execution;
+    showVision(mission);
     flying = !!data.starting || !!data.uncertain || !!mission && !['completed', 'failed'].includes(mission.status);
     if (mission) {
-      const messages = {running: '搜索执行中 · 到达巡查节点拍照，结束后返航降落。',
-        completed: '搜索已完成 · 已返航降落，照片和飞行记录已保存。',
+      const messages = {running: mission.tasks.some(task => task.status === 'analyzing') ?
+        '无人机已返航降落，正在分析剩余巡查照片。' : '搜索执行中 · 沿路拍照并识别异常，结束后返航降落。',
+        completed: '搜索已完成 · 已返航降落，照片与识别结果已保存。',
         failed: '搜索任务失败。' + (mission.tasks.find(task => task.error)?.error || '')};
       setStatus(mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready', messages[mission.status] || '正在确认执行状态…');
       newTask.hidden = false;
@@ -86,9 +146,10 @@
   }
 
   function setStatus(state, message) {
+    const changed = status.textContent !== message;
     status.dataset.state = state;
     status.textContent = message;
-    if (!$('llm-panel').hidden) status.scrollIntoView({block: 'nearest'});
+    if (changed && state === 'error' && !$('llm-panel').hidden) status.scrollIntoView({block: 'nearest'});
   }
 
   async function plan(source, button) {
@@ -186,6 +247,8 @@
     $('llm-messages').replaceChildren(); $('llm-history').hidden = true;
     $('llm-history').open = false; resultPanel.hidden = true;
     $('llm-commands').textContent = ''; $('llm-answer').textContent = ''; $('llm-queue').textContent = '';
+    $('llm-vision').hidden = true; $('llm-anomalies').replaceChildren();
+    shownAnomalies.clear(); visionMission = null;
     input.value = ''; followupInput.value = ''; form.hidden = false; newTask.hidden = true;
     setStatus('idle', '输入任务后自动规划并开始搜索。'); input.focus();
   };

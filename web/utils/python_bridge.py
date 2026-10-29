@@ -14,8 +14,9 @@ class PythonBridge:
     def __init__(self):
         self.client = None
         self.planner = None
+        self.vision = None
 
-    def handle(self, request):
+    def handle(self, request, *, on_event=None):
         if not isinstance(request, dict):
             raise ValueError("请求必须是 JSON 对象")
         operation = request.get("operation")
@@ -41,8 +42,30 @@ class PythonBridge:
             flight = request.get("flight")
             if not isinstance(flight, dict):
                 raise ValueError("搜索需要飞行参数")
-            search_area(request.get("drone_id"), request.get("target"), **flight)
-            return {"completed": True}
+            capture_directory = None
+
+            def directory_ready(directory):
+                nonlocal capture_directory
+                root = Path(__file__).resolve().parents[2]
+                capture_directory = str(Path(directory).resolve().relative_to(root))
+                if on_event is not None:
+                    on_event({"type": "capture_directory", "capture_directory": capture_directory})
+
+            search_area(request.get("drone_id"), request.get("target"), **flight,
+                        on_capture_directory=directory_ready)
+            return {"completed": True, "capture_directory": capture_directory}
+        if operation == "vision":
+            from llm.vision import VisionAnalyzer
+            image_path = request.get("image_path")
+            if not isinstance(image_path, str) or not image_path:
+                raise ValueError("视觉分析需要本次任务的图片路径")
+            root = Path(__file__).resolve().parents[2]
+            path = (root / image_path).resolve(strict=True)
+            if not path.is_relative_to((root / "output").resolve()) or not path.is_file():
+                raise ValueError("仅允许分析output目录内的巡查图片")
+            if self.vision is None:
+                self.vision = VisionAnalyzer()
+            return self.vision(path)
         if operation == "abnormal_spawn":
             from Abnormal import spawn_vehicle, spawn_armed_person, spawn_patient, set_vehicle_behavior
             factories = {"vehicle": spawn_vehicle, "armed_person": spawn_armed_person, "patient": spawn_patient}
@@ -92,7 +115,7 @@ class PythonBridge:
                         source.convert("RGB").save(output, format="JPEG", quality=80)
                     return {"data": base64.b64encode(output.getvalue()).decode("ascii"), "session": result["session"]}
                 return result
-        raise ValueError("operation 仅支持 plan、fleet、search")
+        raise ValueError("不支持的operation")
 
     def serve(self, stream, output):
         try:
@@ -103,13 +126,16 @@ class PythonBridge:
                     if not isinstance(request, dict):
                         raise ValueError("请求必须是 JSON 对象")
                     request_id, operation = request.get("id"), request.get("operation")
+                    def publish(event):
+                        print(json.dumps({"id": request_id, "event": event}, ensure_ascii=False,
+                                         allow_nan=False), file=output, flush=True)
                     # 能力内部的普通输出不进入 JSON 通信通道。
                     with redirect_stdout(sys.stderr):
-                        result = self.handle(request)
+                        result = self.handle(request, on_event=publish)
                     response = {"id": request_id, "result": result}
                 except Exception as error:
                     message = str(error) if isinstance(error, (ValueError, RuntimeError, OSError)) else type(error).__name__
-                    if operation == "plan":
+                    if operation in ("plan", "vision"):
                         from llm.utils.client import error_message
                         message = error_message(error)
                     response = {"id": request_id, "error": message, "error_type": type(error).__name__}
@@ -118,6 +144,9 @@ class PythonBridge:
             self.close()
 
     def close(self):
+        if self.vision is not None:
+            self.vision.close()
+            self.vision = None
         if self.client is not None:
             self.client.close()
             self.client = self.planner = None

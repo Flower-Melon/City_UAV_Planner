@@ -1,10 +1,13 @@
-"""分析本地巡查图片，返回异常状态和中文说明，不控制飞行。"""
+"""分析本地巡查图片，返回异常状态、中文说明和异常目标框，不控制飞行。"""
 
 import base64
 import json
+import math
 import os
 from pathlib import Path
 import sys
+
+from PIL import Image
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -15,14 +18,28 @@ from .utils.client import create_client, error_message
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "search_vision.txt"
 
 
-# 检查视觉结果是否仅包含合法的 status 和非空 description。
+# 检查视觉结果与归一化目标框，拒绝把缺失定位的异常结果当成有效告警。
 # 输入为模型结果对象；合法时原样返回，否则抛出 ValueError。
 def validate_analysis(value):
-    if (not isinstance(value, dict) or set(value) != {"status", "description"}
+    if (not isinstance(value, dict) or set(value) != {"status", "description", "detections"}
             or value["status"] not in ("normal", "abnormal", "uncertain")
             or not isinstance(value["description"], str) or not value["description"].strip()
             or len(value["description"]) > 2000):
-        raise ValueError("视觉结果需要status(normal/abnormal/uncertain)和非空description")
+        raise ValueError("视觉结果需要status、非空description和detections数组")
+    detections = value["detections"]
+    if (not isinstance(detections, list) or len(detections) > 20
+            or (value["status"] == "abnormal") != bool(detections)):
+        raise ValueError("abnormal必须包含异常目标框，normal/uncertain的detections必须为空")
+    for detection in detections:
+        if (not isinstance(detection, dict) or set(detection) != {"label", "bbox"}
+                or not isinstance(detection["label"], str) or not detection["label"].strip()
+                or len(detection["label"]) > 120):
+            raise ValueError("异常目标需要非空label和bbox")
+        box = detection["bbox"]
+        if (not isinstance(box, list) or len(box) != 4
+                or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1000 for v in box)
+                or box[0] >= box[2] or box[1] >= box[3]):
+            raise ValueError("bbox必须为0到1000的[x_min,y_min,x_max,y_max]，且具有正面积")
     return value
 
 
@@ -41,18 +58,21 @@ class VisionAnalyzer:
         self.client, self.model = client, model
 
     # 将本地 JPEG/PNG 编码后发送给视觉模型，校验其 JSON 结果。
-    # 输入为图片路径；同步等待并返回 status、description。
+    # 输入为图片路径；同步等待并返回 status、description、detections。
     def __call__(self, image_path):
         path = Path(image_path)
         suffix = path.suffix.lower()
         if suffix not in (".jpg", ".jpeg", ".png"):
             raise ValueError("视觉分析仅接收JPEG/PNG")
         mime = "image/png" if suffix == ".png" else "image/jpeg"
+        with Image.open(path) as image:
+            width, height = image.size
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
         response = self.client.responses.create(
             model=self.model, store=False, instructions=self.prompt, temperature=0,
             reasoning={"effort": "minimal"}, text={"format": {"type": "json_object"}},
             input=[{"role": "user", "content": [
+                {"type": "input_text", "text": f"图片原始尺寸{width}×{height}像素。请判断并用0–1000坐标定位可见异常。"},
                 {"type": "input_image", "image_url": f"data:{mime};base64,{encoded}", "detail": "high"}]}])
         if response.status != "completed":
             raise RuntimeError("视觉模型响应未完成")

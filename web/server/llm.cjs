@@ -1,12 +1,12 @@
 'use strict';
-// 网页任务流程统一入口：状态读取、模型规划、任务队列和进度查询。
+// 网页任务流程统一入口：模型规划、飞行调度、巡查视觉分析及告警图片。
 const {spawn} = require('node:child_process');
 const {randomUUID} = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const PythonRuntime = require('./python-runtime.cjs');
 const TERMINAL = new Set(['completed', 'failed']);
-const DEFAULT_FLIGHT = Object.freeze({flight_height: 40, flight_speed: 5});
+const DEFAULT_FLIGHT = Object.freeze({flight_height: 15, flight_speed: 30});
 
 function requestError(message, statusCode) {
   return Object.assign(new Error(message), {statusCode});
@@ -34,7 +34,7 @@ function planningFleet(state, now = Date.now()) {
 
 // 管理一批搜索任务；同机按序执行，不同机并行。
 class MissionExecutor {
-  constructor({root, runtime, timeoutMs = 15000}) {
+  constructor({root, runtime, timeoutMs = 15000, visionPollMs = 500}) {
     this.root = root;
     this.runtime = runtime;
     this.timeoutMs = timeoutMs;
@@ -43,6 +43,8 @@ class MissionExecutor {
     this.uncertain = false;
     this.closed = false;
     this.runPromise = null;
+    this.visionPollMs = visionPollMs;
+    this.imageFiles = new Map();
   }
 
   assertIdle() {
@@ -95,6 +97,13 @@ class MissionExecutor {
         throw requestError('规划中的无人机已离线或不可用，请重新规划。', 409);
       if (this.closed) throw requestError('执行服务已停止。', 503);
       this.mission = {mission_id: randomUUID().replaceAll('-', ''), status: 'running', executed: false, settings, tasks};
+      this.imageFiles.clear();
+      tasks.forEach((task, index) => {
+        task.task_id = `task_${index + 1}`;
+        task.capture_directory = null;
+        task.vision = {status: 'queued', total: 0, analyzed: 0, normal: 0, abnormal: 0,
+          uncertain: 0, failed: 0, anomalies: [], errors: []};
+      });
       this.runPromise = this.run();
       return this.status();
     } finally { this.starting = false; }
@@ -111,7 +120,9 @@ class MissionExecutor {
     } catch (error) {
       this.mission.error_type = error.errorType || error.name;
     } finally {
-      for (const task of this.mission.tasks) if (task.status === 'queued') task.status = 'skipped';
+      for (const task of this.mission.tasks) if (task.status === 'queued') {
+        task.status = 'skipped'; task.vision.status = 'skipped';
+      }
       this.mission.status = this.mission.error_type || this.mission.tasks.some(task => task.status !== 'completed') ? 'failed' : 'completed';
     }
   }
@@ -119,23 +130,119 @@ class MissionExecutor {
   async fly(queue) {
     let failed = false;
     for (const task of queue) {
-      if (failed || this.closed) { task.status = 'skipped'; continue; }
+      if (failed || this.closed) { task.status = 'skipped'; task.vision.status = 'skipped'; continue; }
       task.status = 'running'; this.mission.executed = true;
+      let finished = false;
+      const analysis = this.analyzeTask(task, () => finished).catch(error => {
+        task.vision.status = 'failed'; task.vision.error = error.message;
+      });
       try {
         const result = await this.runtime.request('search', {
-          drone_id: task.drone_id, target: structuredClone(task.target), flight: {...this.mission.settings}
-        }, {channel: `drone:${task.drone_id}`, timeoutMs: 0});
+          drone_id: task.drone_id, target: structuredClone(task.target),
+          flight: {...this.mission.settings}
+        }, {channel: `drone:${task.drone_id}`, timeoutMs: 0, onEvent: event => {
+          if (event?.type === 'capture_directory') this.setCaptureDirectory(task, event.capture_directory);
+        }});
         if (result?.completed !== true) throw Object.assign(Error('搜索进程未确认任务完成。'), {uncertain: true});
-        task.status = 'completed';
+        this.setCaptureDirectory(task, result.capture_directory);
+        task.status = 'analyzing';
       } catch (error) {
         Object.assign(task, {status: 'failed', error_type: error.errorType || error.name, error: error.message});
         this.uncertain ||= !!error.uncertain;
         failed = true;
+      } finally {
+        finished = true;
+        await analysis;
+        if (task.status === 'analyzing') task.status = 'completed';
       }
     }
   }
 
-  status() { return this.mission && structuredClone(this.mission); }
+  setCaptureDirectory(task, directory) {
+    if (typeof directory !== 'string' || !directory) throw Error('搜索进程未返回照片目录。');
+    const actual = fs.realpathSync(path.resolve(this.root, directory));
+    const relative = path.relative(fs.realpathSync(path.join(this.root, 'output')), actual);
+    if (!/^\d{6,}[\\/]capture$/.test(relative)) throw Error('搜索照片目录必须为output/编号/capture。');
+    const normalized = path.relative(this.root, actual);
+    if (task.capture_directory && task.capture_directory !== normalized ||
+        this.mission.tasks.some(other => other !== task && other.capture_directory === normalized))
+      throw Error('搜索任务照片目录重复或发生变更。');
+    task.capture_directory = normalized;
+  }
+
+  readFrames(task) {
+    if (!task.capture_directory) return {directory: null, frames: []};
+    const directory = path.join(this.root, task.capture_directory);
+    const manifest = path.join(directory, 'frame.json');
+    if (!fs.existsSync(manifest)) return {directory, frames: []};
+    const frames = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+    if (!Array.isArray(frames) || frames.some(frame => !frame || !/^\d{6}\.jpg$/.test(frame.image)))
+      throw Error('巡查照片记录无效，视觉分析已停止。');
+    return {directory, frames};
+  }
+
+  async analyzeTask(task, finished) {
+    const seen = new Set(), records = [];
+    const summary = task.vision;
+    summary.status = 'running';
+    while (!this.closed) {
+      const {directory, frames} = this.readFrames(task);
+      summary.total = frames.length;
+      for (const frame of frames) {
+        if (this.closed) break;
+        if (seen.has(frame.image)) continue;
+        seen.add(frame.image);
+        const record = {image: frame.image, drone_id: task.drone_id, task_id: task.task_id,
+          zone_id: task.target.zone_id, frame_type: frame.type, position_m: frame.position_m};
+        try {
+          const result = await this.runtime.request('vision', {
+            image_path: path.relative(this.root, path.join(directory, frame.image))
+          }, {channel: `vision:${task.drone_id}`, timeoutMs: 120000});
+          if (!result || !['normal', 'abnormal', 'uncertain'].includes(result.status) ||
+              typeof result.description !== 'string' || !Array.isArray(result.detections) ||
+              (result.status === 'abnormal') !== (result.detections.length > 0) ||
+              result.detections.some(detection => typeof detection.label !== 'string' ||
+                !Array.isArray(detection.bbox) || detection.bbox.length !== 4 ||
+                detection.bbox.some(v => !Number.isFinite(v) || v < 0 || v > 1000) ||
+                detection.bbox[0] >= detection.bbox[2] || detection.bbox[1] >= detection.bbox[3]))
+            throw Error('视觉模型返回无效判断或异常框。');
+          Object.assign(record, result);
+          summary.analyzed++; summary[result.status]++;
+          if (result.status === 'abnormal') {
+            const id = `${task.task_id}:${frame.image}`;
+            this.imageFiles.set(id, path.join(directory, frame.image));
+            record.image_url = `/api/llm/image?mission_id=${this.mission.mission_id}&id=${encodeURIComponent(id)}`;
+            summary.anomalies.push(record);
+          }
+        } catch (error) {
+          Object.assign(record, {status: 'error', error: error.message});
+          summary.failed++;
+          summary.errors.push({image: frame.image, error: error.message});
+        }
+        records.push(record);
+        const file = path.join(directory, 'analysis.json');
+        fs.writeFileSync(file + '.part', JSON.stringify(records, null, 2) + '\n');
+        fs.renameSync(file + '.part', file);
+      }
+      // 完成标记可能在等待模型期间改变，重新读取清单后才能确认没有尾帧。
+      if (finished() && this.readFrames(task).frames.every(frame => seen.has(frame.image))) break;
+      await new Promise(resolve => setTimeout(resolve, this.visionPollMs));
+    }
+    summary.status = this.closed ? 'stopped' : summary.failed ? 'completed_with_errors' : 'completed';
+  }
+
+  status() {
+    if (!this.mission) return null;
+    const mission = structuredClone(this.mission);
+    const summaries = mission.tasks.map(task => task.vision);
+    mission.vision = Object.fromEntries(['total', 'analyzed', 'normal', 'abnormal', 'uncertain', 'failed']
+      .map(key => [key, summaries.reduce((sum, item) => sum + item[key], 0)]));
+    mission.vision.status = summaries.some(item => ['queued', 'running'].includes(item.status)) ? 'running' :
+      summaries.some(item => item.status === 'failed' || item.failed) ? 'completed_with_errors' : 'completed';
+    mission.vision.anomalies = summaries.flatMap(item => item.anomalies);
+    mission.vision.errors = summaries.flatMap(item => item.error ? [{error: item.error}] : item.errors);
+    return mission;
+  }
   close() { this.closed = true; }
 }
 
@@ -177,6 +284,7 @@ class LlmController {
   handle(request, response, url) {
     if (url.pathname === '/api/llm/plan') return this.handlePlan(request, response);
     if (url.pathname === '/api/llm/mission') return this.handleMission(request, response);
+    if (url.pathname === '/api/llm/image') return this.handleImage(request, response, url);
     send(response, 404, {error: '接口不存在'});
   }
 
@@ -247,6 +355,27 @@ class LlmController {
       send(response, 403, {error: '请从本地地图页面操作任务。'}); return;
     }
     send(response, this.closed ? 503 : 200, {...this.snapshot(), ...(this.closed ? {error: '执行服务已停止。'} : {})});
+  }
+
+  handleImage(request, response, url) {
+    if (!['GET', 'HEAD'].includes(request.method)) {
+      response.setHeader('Allow', 'GET, HEAD'); send(response, 405, {error: '请求方法错误。'}); return;
+    }
+    const mission = this.executor.mission;
+    const filename = mission?.mission_id === url.searchParams.get('mission_id') &&
+      this.executor.imageFiles.get(url.searchParams.get('id'));
+    if (!filename) { send(response, 404, {error: '本次任务不存在该异常图片。'}); return; }
+    try {
+      const actual = fs.realpathSync(filename);
+      const base = fs.realpathSync(path.join(this.executor.root, 'output'));
+      const relative = path.relative(base, actual);
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw Error('Invalid path');
+      const stat = fs.statSync(actual);
+      response.writeHead(200, {'Content-Type': 'image/jpeg', 'Content-Length': stat.size,
+        'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'});
+      if (request.method === 'HEAD') response.end();
+      else fs.createReadStream(actual).on('error', () => response.destroy()).pipe(response);
+    } catch { send(response, 404, {error: '异常图片无法读取。'}); }
   }
 
   close() {

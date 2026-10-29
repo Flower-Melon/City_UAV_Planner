@@ -127,3 +127,16 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .llm-command-panel summary { padding: 8px 10px; cursor: pointer; font-size: 12px; font-weight: 650; }
 #llm-commands { margin: 0; padding: 0 10px 12px; max-height: 240px; overflow: auto; font: 11px/1.65 Consolas, monospace; color: #274b60; tab-size: 2; }
 #llm-stop { padding: 4px 9px; border-color: #ddbbb5; color: #a53831; font-size: 12px; }
+.llm-anomaly-count { margin-left: 5px; padding: 1px 7px; border-radius: 10px; background: #fff0ef; color: #c53131; font-size: 12px; }
+.llm-vision-error { color: #b43b35; font-size: 12px; overflow-wrap: anywhere; }
+.llm-anomalies { display: grid; gap: 12px; }
+.llm-anomaly-card { border: 1px solid #e7bbbb; border-radius: 8px; overflow: hidden; background: #fffafa; }
+.llm-anomaly-card p { margin: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }
+.llm-anomaly-heading { color: #97504b; }
+.llm-anomaly-open { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; cursor: zoom-in; }
+.llm-anomaly-image { position: relative; width: 100%; background: #132a39; }
+.llm-anomaly-image img { display: block; width: 100%; height: auto; }
+.llm-anomaly-box { position: absolute; border: 2px solid #ff2929; box-shadow: 0 0 0 1px #0005; pointer-events: none; }
+.llm-anomaly-box span { position: absolute; left: -2px; bottom: calc(100% + 2px); padding: 1px 4px; background: #d51c1c; color: white; font-size: 10px; line-height: 1.5; white-space: nowrap; }
+.llm-image-dialog { width: min(94vw, 1400px); max-height: 94dvh; padding: 16px; border: 1px solid #adc3d0; border-radius: 10px; color: #18334a; overflow: auto; }
+.llm-image-dialog::backdrop { background: #061521bb; }

@@ -9,9 +9,10 @@ function requestError(message, statusCode) {
 
 // 管理 Python 通信通道；规划、状态读取和每架无人机使用独立进程。
 class PythonRuntime {
-  constructor({root, spawnProcess = spawn}) {
+  constructor({root, spawnProcess = spawn, pythonExecutable = process.env.CITY_UAV_PYTHON || 'python'}) {
     this.root = root;
     this.spawnProcess = spawnProcess;
+    this.pythonExecutable = pythonExecutable;
     this.workers = new Map();
     this.nextId = 0;
     this.closed = false;
@@ -20,20 +21,20 @@ class PythonRuntime {
   start(channel = 'planning') {
     if (this.closed) throw Error('执行服务已停止，请重启网页服务。');
     let fingerprint = '';
-    if (channel === 'planning') {
+    if (channel === 'planning' || channel.startsWith('vision:')) {
       try {
         const stat = fs.statSync(path.join(this.root, 'llm', '.env'));
         fingerprint = `${stat.mtimeMs}:${stat.size}`;
       } catch { /* 模型也可以直接读取环境变量。 */ }
     }
     let worker = this.workers.get(channel);
-    if (worker && channel === 'planning' && worker.fingerprint !== fingerprint) {
+    if (worker && (channel === 'planning' || channel.startsWith('vision:')) && worker.fingerprint !== fingerprint) {
       if (worker.pending.size) throw requestError('已有任务正在规划，请等待完成。', 409);
       this.cancel(channel);
       worker = null;
     }
     if (worker) return worker;
-    const child = this.spawnProcess('python', ['-B', '-u', '-X', 'utf8',
+    const child = this.spawnProcess(this.pythonExecutable, ['-B', '-u', '-X', 'utf8',
       path.join(this.root, 'web', 'utils', 'python_bridge.py')], {
       cwd: this.root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
       env: {...process.env, PYTHONIOENCODING: 'utf-8'}
@@ -50,7 +51,7 @@ class PythonRuntime {
     return worker;
   }
 
-  request(operation, data = {}, {channel = 'planning', timeoutMs = 15000} = {}) {
+  request(operation, data = {}, {channel = 'planning', timeoutMs = 15000, onEvent = null} = {}) {
     let worker;
     try { worker = this.start(channel); }
     catch (error) { return Promise.reject(error); }
@@ -59,7 +60,7 @@ class PythonRuntime {
       const timer = timeoutMs > 0 ? setTimeout(() => {
         this.fail(worker, requestError('Python 请求超时，请稍后重试。', 504), {terminate: true});
       }, timeoutMs) : null;
-      worker.pending.set(id, {operation, resolve, reject, timer});
+      worker.pending.set(id, {operation, resolve, reject, timer, onEvent});
       try {
         worker.child.stdin.write(JSON.stringify({id, operation, ...data}) + '\n', error => {
           if (error) this.fail(worker, Error('无法向 Python 发送请求，请核实无人机状态。'));
@@ -81,8 +82,13 @@ class PythonRuntime {
       try { message = JSON.parse(line); }
       catch { this.fail(worker, Error('Python 返回格式无效。'), {terminate: true}); return; }
       const call = message && worker.pending.get(message.id);
-      if (!call || (!Object.hasOwn(message, 'result') && typeof message.error !== 'string')) {
+      if (!call || (!Object.hasOwn(message, 'result') && !Object.hasOwn(message, 'event') && typeof message.error !== 'string')) {
         this.fail(worker, Error('Python 返回了无法匹配的结果。'), {terminate: true}); return;
+      }
+      if (Object.hasOwn(message, 'event')) {
+        try { call.onEvent?.(message.event); }
+        catch (error) { this.fail(worker, error, {terminate: true}); return; }
+        continue;
       }
       clearTimeout(call.timer); worker.pending.delete(message.id);
       if (Object.hasOwn(message, 'error')) {

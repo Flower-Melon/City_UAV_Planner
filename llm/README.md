@@ -114,6 +114,9 @@ with client:
 | 返回值 | `dict` | 单张图片的判断结果 |
 | `status` | `str` | `normal` 正常、`abnormal` 发现异常、`uncertain` 无法确定 |
 | `description` | `str` | 中文判断说明 |
+| `detections` | `list[dict]` | 异常目标列表；`abnormal` 必须非空，`normal` / `uncertain` 必须为空 |
+| `detections[i].label` | `str` | 可见异常目标的简短中文说明 |
+| `detections[i].bbox` | `[x_min,y_min,x_max,y_max]` | 相对于完整图片归一化到0–1000的目标框；左上角为原点，X向右、Y向下 |
 
 入参样例与调用：
 
@@ -130,8 +133,10 @@ finally:
 出参样例：
 
 ```python
-{"status": "uncertain", "description": "图片较模糊，无法确认人员是否持有刀具。"}
+{"status": "uncertain", "description": "图片较模糊，无法确认人员是否持有刀具。", "detections": []}
 ```
+
+网页在“规划并开始搜索”后通过独立视觉进程逐张调用本接口，不阻塞无人机飞行。LLM助手仅展示判为 `abnormal` 的照片，并按模型返回的目标框绘制红框；点击照片可放大复核。`uncertain` 和接口失败分别统计，不视为正常。红框为模型估计位置，不代表精确检测或已确认病情、犯罪、超速。
 
 ## 2 utils
 
