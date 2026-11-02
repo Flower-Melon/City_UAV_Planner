@@ -13,6 +13,11 @@ const airsimAPI = new AirsimController({root});
 const llmAPI = new LlmController({root, getState: () => airsimAPI.getState()});
 const abnormalAPI = new AbnormalController({root});
 const identity = createHash('sha256').update('town12-live-viewer-v9-abnormal:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
+const revisionHash = createHash('sha256');
+for (const relative of ['web/serve.cjs', 'web/server/llm.cjs', 'web/server/python-runtime.cjs',
+  'web/utils/python_bridge.py', 'UAV/API/reset_uav.py'])
+  revisionHash.update(relative).update(fs.readFileSync(path.join(root, relative)));
+const revision = revisionHash.digest('hex');
 const preferredPort = 8765;
 const types = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -20,6 +25,7 @@ const types = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 
 const server = http.createServer((request, response) => {
   response.setHeader('X-Town12-Viewer', identity);
+  response.setHeader('X-Town12-Revision', revision);
   try {
     const url = new URL(request.url, 'http://127.0.0.1');
     const pathname = decodeURIComponent(url.pathname);
@@ -57,7 +63,8 @@ function open(url) {
 function isExistingViewer(port) {
   return new Promise(resolve => {
     const request = http.request({host: '127.0.0.1', port, path: '/web/index.html', method: 'HEAD', agent: false}, response => {
-      resolve(response.statusCode === 200 && response.headers['x-town12-viewer'] === identity);
+      resolve(response.statusCode === 200 && response.headers['x-town12-viewer'] === identity ?
+        response.headers['x-town12-revision'] === revision ? 'current' : 'outdated' : false);
       response.resume();
     });
     const timer = setTimeout(() => { request.destroy(); resolve(false); }, 750);
@@ -78,7 +85,12 @@ function listen(port) {
     try { await listen(port); }
     catch (error) {
       if (error.code !== 'EADDRINUSE') throw error;
-      if (await isExistingViewer(port)) { console.log(`已在运行：${url}`); open(url); return; }
+      const existing = await isExistingViewer(port);
+      if (existing === 'outdated') {
+        console.error(`旧版网页服务仍在运行：${url}\n请先停止旧服务，再重新运行 node web/serve.cjs；直接重复启动不会加载后端代码修改。`);
+        process.exitCode = 1; return;
+      }
+      if (existing === 'current') { console.log(`已在运行：${url}`); open(url); return; }
       continue;
     }
     llmAPI.start();

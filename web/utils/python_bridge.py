@@ -2,6 +2,7 @@
 
 from contextlib import redirect_stdout
 import json
+import logging
 from pathlib import Path
 import sys
 
@@ -37,6 +38,10 @@ class PythonBridge:
         if operation == "fleet":
             from UAV.runtime.airsim_state import AirSimFleet
             return AirSimFleet().read()
+        if operation == "reset":
+            from UAV.API.reset_uav import reset_uav
+            reset_uav()
+            return {"reset": True}
         if operation == "search":
             from UAV.API.search_area import search_area
             flight = request.get("flight")
@@ -44,18 +49,32 @@ class PythonBridge:
                 raise ValueError("搜索需要飞行参数")
             capture_directory = None
 
-            def directory_ready(directory):
-                nonlocal capture_directory
-                root = Path(__file__).resolve().parents[2]
-                capture_directory = str(Path(directory).resolve().relative_to(root))
-                if on_event is not None:
-                    on_event({"type": "capture_directory", "capture_directory": capture_directory})
+            class CaptureDirectoryHandler(logging.Handler):
+                def emit(self, record):
+                    nonlocal capture_directory
+                    directory = getattr(record, "capture_directory", None)
+                    if directory is None:
+                        return
+                    root = Path(__file__).resolve().parents[2]
+                    capture_directory = str(Path(directory).resolve().relative_to(root))
+                    if on_event is not None:
+                        on_event({"type": "capture_directory", "capture_directory": capture_directory})
 
-            search_area(request.get("drone_id"), request.get("target"), **flight,
-                        on_capture_directory=directory_ready)
+            # 仅在本次搜索期间订阅目录事件，不向飞行API传入网页回调。
+            logger = logging.getLogger(search_area.__module__)
+            handler = CaptureDirectoryHandler()
+            previous_level = logger.level
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            try:
+                search_area(request.get("drone_id"), request.get("target"), **flight)
+            finally:
+                logger.removeHandler(handler)
+                logger.setLevel(previous_level)
+                handler.close()
             return {"completed": True, "capture_directory": capture_directory}
         if operation == "vision":
-            from llm.vision import VisionAnalyzer
+            from llm.vision import VisionAnalyzer, save_annotated_image
             image_path = request.get("image_path")
             if not isinstance(image_path, str) or not image_path:
                 raise ValueError("视觉分析需要本次任务的图片路径")
@@ -63,9 +82,21 @@ class PythonBridge:
             path = (root / image_path).resolve(strict=True)
             if not path.is_relative_to((root / "output").resolve()) or not path.is_file():
                 raise ValueError("仅允许分析output目录内的巡查图片")
+            annotation_path = request.get("annotation_path")
+            output = None
+            if annotation_path is not None:
+                if not isinstance(annotation_path, str) or not annotation_path:
+                    raise ValueError("异常图片输出路径无效")
+                output = (root / annotation_path).resolve()
+                expected = (path.parent.parent / "analysis" / "abnormal" / path.name).resolve()
+                if path.parent.name != "capture" or output != expected or not output.is_relative_to((root / "output").resolve()):
+                    raise ValueError("异常图片只能保存到本次任务的analysis/abnormal目录")
             if self.vision is None:
                 self.vision = VisionAnalyzer()
-            return self.vision(path)
+            result = self.vision(path)
+            if result["status"] == "abnormal" and output is not None:
+                save_annotated_image(path, result["detections"], output)
+            return result
         if operation == "abnormal_spawn":
             from Abnormal import spawn_vehicle, spawn_armed_person, spawn_patient, set_vehicle_behavior
             factories = {"vehicle": spawn_vehicle, "armed_person": spawn_armed_person, "patient": spawn_patient}

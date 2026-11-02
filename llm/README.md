@@ -136,7 +136,14 @@ finally:
 {"status": "uncertain", "description": "图片较模糊，无法确认人员是否持有刀具。", "detections": []}
 ```
 
-网页在“规划并开始搜索”后通过独立视觉进程逐张调用本接口，不阻塞无人机飞行。LLM助手仅展示判为 `abnormal` 的照片，并按模型返回的目标框绘制红框；点击照片可放大复核。`uncertain` 和接口失败分别统计，不视为正常。红框为模型估计位置，不代表精确检测或已确认病情、犯罪、超速。
+单独运行 `python vision.py` 时，输出到项目根目录下的 `output/temp/`：
+
+```text
+output/temp/
+├─ analysis.json       本次识别结果，再次运行时覆盖
+└─ abnormal/           异常红框图片（仅异常时生成）
+   └─ 巡查照片.jpg      使用输入图片的名称，格式为JPEG
+```
 
 ## 2 utils
 

@@ -14,12 +14,15 @@ class PythonRuntime {
     this.spawnProcess = spawnProcess;
     this.pythonExecutable = pythonExecutable;
     this.workers = new Map();
+    this.processes = new Set();
+    this.stopping = false;
     this.nextId = 0;
     this.closed = false;
   }
 
   start(channel = 'planning') {
     if (this.closed) throw Error('执行服务已停止，请重启网页服务。');
+    if (this.stopping) throw Error('正在终止后台进程，请等待无人机复位。');
     let fingerprint = '';
     if (channel === 'planning' || channel.startsWith('vision:')) {
       try {
@@ -39,15 +42,20 @@ class PythonRuntime {
       cwd: this.root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
       env: {...process.env, PYTHONIOENCODING: 'utf-8'}
     });
-    worker = {channel, child, fingerprint, pending: new Map(), buffer: '', failed: false};
+    worker = {channel, child, fingerprint, pending: new Map(), buffer: '', failed: false, exited: false};
     this.workers.set(channel, worker);
+    this.processes.add(worker);
     child.stdout.setEncoding('utf8');
     child.stderr.resume();
     child.stdout.on('data', chunk => this.receive(worker, chunk));
     child.stdin.on('error', () => this.fail(worker, Error('Python 通信中断，请核实无人机状态。')));
     child.stdout.on('error', () => this.fail(worker, Error('Python 结果读取失败，请核实无人机状态。')));
     child.once('error', () => this.fail(worker, Error('无法启动 Python，请检查本地环境。'), {spawnFailure: true}));
-    child.once('close', () => this.fail(worker, Error('Python 进程已退出，请核实无人机状态。'), {exited: true}));
+    child.once('close', () => {
+      worker.exited = true;
+      this.processes.delete(worker);
+      this.fail(worker, Error('Python 进程已退出，请核实无人机状态。'), {exited: true});
+    });
     return worker;
   }
 
@@ -119,6 +127,42 @@ class PythonRuntime {
   cancel(channel) {
     const worker = this.workers.get(channel);
     if (worker) this.fail(worker, Error('请求已取消。'), {terminate: true});
+  }
+
+  // “新任务”强制停止全部任务进程，等待退出后才允许复位，不能沿用飞行的优雅收尾。
+  async terminateAll() {
+    this.stopping = true;
+    try {
+      const results = await Promise.allSettled([...this.processes].map(worker => new Promise((resolve, reject) => {
+        if (worker.exited) { resolve(); return; }
+        const child = worker.child;
+        let settled = false;
+        const finish = error => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          child.removeListener('close', closed);
+          if (error) reject(error); else resolve();
+        };
+        const closed = () => finish();
+        const timer = setTimeout(() => finish(Error('后台进程未能退出，请点击新任务重试复位。')), 10000);
+        child.once('close', closed);
+        this.fail(worker, Error('任务已被新任务操作终止。'), {exited: true});
+        const kill = () => {
+          try { if (!worker.exited) child.kill('SIGKILL'); }
+          catch { finish(Error('无法终止后台进程，请重试复位。')); }
+        };
+        if (process.platform === 'win32' && Number.isInteger(child.pid)) {
+          // 同时终止该Python进程启动的辅助子进程；只按本服务登记的PID操作。
+          const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'],
+            {windowsHide: true, stdio: 'ignore'});
+          killer.once('error', kill);
+          killer.once('close', code => { if (code !== 0) kill(); });
+        } else kill();
+      })));
+      const failure = results.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
+    } finally { this.stopping = false; }
   }
 
   close() {

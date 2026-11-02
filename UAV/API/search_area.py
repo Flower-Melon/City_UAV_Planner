@@ -2,6 +2,7 @@
 
 import io
 import json
+import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
 from numbers import Real
@@ -22,6 +23,7 @@ from ..utils.plan_flight_path import _default_graph, plan_flight_path
 from ..utils.plan_search_path import check_building_clearance, plan_search_path
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "output"
+logger = logging.getLogger(__name__)
 
 
 def _quaternion(value):
@@ -228,17 +230,16 @@ class SearchCapture:
                 temporary.replace(path)
                 frame = {
                     "image": filename,
-                    "type": trigger,
+                    "type": "road" if edge is not None or sample is not None else "node",
                     "position_m": position,
                 }
-                if sample is not None:
-                    frame.update(sample)
-                    frame["timestamp_ns"] = response["time_stamp"]
-                    frame["camera_orientation"] = response["camera_orientation"]
-                else:
-                    frame["node_xy_m"] = list(node)
                 if edge is not None:
                     frame["edge_id"] = edge[0]
+                elif sample is not None:
+                    # 清单仅保留照片定位信息，计划采样详情用于异常事件诊断。
+                    frame["edge_id"] = sample["edge_id"]
+                else:
+                    frame["node_xy_m"] = list(node)
                 frames = [*self.records.get("frame.json", []), frame]
                 self.write_records(self.capture_directory / "frame.json", frames)
                 self.records["frame.json"] = frames
@@ -394,22 +395,19 @@ def search_area(
     max_height=60.0,
     capture_interval_m=20.0,
     output_dir=DEFAULT_OUTPUT,
-    on_capture_directory=None,
 ) -> None:
     """三维导航接入街区、沿道路巡查拍照，完成后返航降落。
 
     flight_height是相对起飞地面的巡查高度；max_height是导航最大
     当地离地高度，默认60米。target仅需zone_id。节点和道路入口分别只拍一次；
     巡查途中每累计capture_interval_m米触发下视拍照，默认20米。
-    创建照片目录后通过on_capture_directory(Path)通知调用方，返回值仍为None。
+    创建照片目录后发布包含capture_directory的日志事件，返回值为None。
     """
     height, speed = _positive(flight_height, "flight_height"), _positive(
         flight_speed, "flight_speed"
     )
     cap = _positive(max_height, "max_height")
     interval = _positive(capture_interval_m, "capture_interval_m")
-    if on_capture_directory is not None and not callable(on_capture_directory):
-        raise ValueError("on_capture_directory必须为可调用对象")
     with AirSimClient() as client:
         name = vehicle_name(drone_id, client.call("listVehicles"))
         lock = vehicle_lock(name)
@@ -434,8 +432,9 @@ def search_area(
             plan = make_plan(world)
             directory = new_capture_directory(output_dir)
             pipeline = SearchCapture(directory, name, origin, frame.scale)
-            if on_capture_directory is not None:
-                on_capture_directory(pipeline.capture_directory.resolve())
+            logger.info("搜索照片目录已创建", extra={
+                "capture_directory": pipeline.capture_directory.resolve(),
+            })
             distance_capture = _DistanceCapture(pipeline, interval)
             pipeline.preflight()
             flight = FlightControl(client, frame, name, origin)
@@ -521,7 +520,7 @@ if __name__ == "__main__":
     flight_height = 15.0
     flight_speed = 50.0
     capture_interval_m = 20.0
-    output_dir = DEFAULT_OUTPUT
+    output_dir = DEFAULT_OUTPUT / "temp"
 
     search_area(
         drone_id, target, flight_height, flight_speed,

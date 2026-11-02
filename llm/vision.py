@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import sys
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -41,6 +41,36 @@ def validate_analysis(value):
                 or box[0] >= box[2] or box[1] >= box[3]):
             raise ValueError("bbox必须为0到1000的[x_min,y_min,x_max,y_max]，且具有正面积")
     return value
+
+
+def save_annotated_image(image_path, detections, output_path):
+    """按0–1000归一化坐标导出红框照片，保留原始巡查图片。"""
+    validate_analysis({"status": "abnormal", "description": "异常图片导出", "detections": detections})
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(image_path) as source:
+        image = source.convert("RGB")
+    width, height = image.size
+    draw = ImageDraw.Draw(image)
+    line_width = max(2, min(width, height) // 300)
+    try:
+        font = ImageFont.truetype("msyh.ttc", max(14, min(width, height) // 45))
+    except OSError:
+        font = ImageFont.load_default()
+    for detection in detections:
+        x1, y1, x2, y2 = detection["bbox"]
+        box = (x1 * width / 1000, y1 * height / 1000, x2 * width / 1000, y2 * height / 1000)
+        draw.rectangle(box, outline="red", width=line_width)
+        label = detection["label"][:40]
+        bounds = draw.textbbox((0, 0), label, font=font)
+        label_width, label_height = bounds[2] - bounds[0] + 8, bounds[3] - bounds[1] + 6
+        left = max(0, min(box[0], width - label_width))
+        top = max(0, box[1] - label_height)
+        draw.rectangle((left, top, left + label_width, top + label_height), fill="red")
+        draw.text((left + 4 - bounds[0], top + 3 - bounds[1]), label, font=font, fill="white")
+    temporary = output.with_suffix(".part")
+    image.save(temporary, format="JPEG", quality=95)
+    temporary.replace(output)
 
 
 class VisionAnalyzer:
@@ -91,6 +121,7 @@ class VisionAnalyzer:
 if __name__ == "__main__":
     # 修改下面的图片路径即可调试。
     image_path = Path(__file__).resolve().parents[1] / "巡查照片.jpg"
+    output_dir = Path(__file__).resolve().parents[1] / "output" / "temp"
     try:
         if not image_path.is_file():
             raise ValueError(f"图片文件不存在：{image_path}")
@@ -101,6 +132,17 @@ if __name__ == "__main__":
             result = analyzer(image_path)
         finally:
             analyzer.close()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        if result["status"] == "abnormal":
+            save_annotated_image(
+                image_path, result["detections"], output_dir / "abnormal" / f"{image_path.stem}.jpg"
+            )
+        output_file = output_dir / "analysis.json"
+        temporary = output_file.with_suffix(".part")
+        temporary.write_text(
+            json.dumps(result, ensure_ascii=False, allow_nan=False, indent=2) + "\n", encoding="utf-8"
+        )
+        temporary.replace(output_file)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as error:
         print(error_message(error), file=sys.stderr)

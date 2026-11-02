@@ -36,3 +36,21 @@ web/
 | `server/` | 后端部分，处理网页请求。 |
 | `utils/` | 脚本工具，连接 Python 功能与仿真环境。 |
 | `assets/` | 存放页面素材。 |
+
+## 输出目录
+
+网页搜索结构如下：
+
+```text
+output/000001/
+├─ events.json         异常与漏拍记录（发生时生成）
+├─ capture/
+│  ├─ 000001.jpg       全部巡查原图，按拍摄顺序编号
+│  ├─ 000002.jpg
+│  ├─ route.json       巡查航线及返航路径
+│  └─ frame.json       照片类型与拍摄位置
+└─ analysis/           网页识别结果
+   ├─ analysis.json    逐张判断、异常说明及目标框
+   └─ abnormal/        判为异常的红框图片（发现异常时生成）
+      └─ 000029.jpg    与capture中的原图同名
+```

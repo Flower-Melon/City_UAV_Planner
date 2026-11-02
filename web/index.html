@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>城市无人机巡查平台</title>
-  <link rel="stylesheet" href="./css/styles.css?v=20261029-vision">
+  <link rel="stylesheet" href="./css/styles.css?v=20261102-flight-settings">
   <script src="./js/map.js?v=20261028-roads" defer></script>
   <script src="./js/airsim.js" defer></script>
-  <script src="./js/llm.js?v=20261029-vision" defer></script>
+  <script src="./js/llm.js?v=20261102-flight-settings" defer></script>
   <script src="./js/abnormal.js" defer></script>
 </head>
 <body>
@@ -79,8 +79,14 @@
       </section>
       </div>
       <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab" hidden>
-        <div class="section-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" hidden>新任务</button></div>
+        <div class="section-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" title="终止当前任务并复位全部无人机">新任务</button></div>
         <p class="muted llm-intro">输入任务后自动规划并开始 AirSim 搜索，沿路拍照并识别异常。</p>
+        <div class="llm-flight-settings" role="group" aria-label="飞行参数设置">
+          <button type="button" data-flight-setting="max_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>最大飞行高度</span><strong><span id="llm-max-height-value">60</span> <small>米</small></strong></button>
+          <button type="button" data-flight-setting="flight_speed" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>飞行速度</span><strong><span id="llm-flight-speed-value">30</span> <small>米/秒</small></strong></button>
+          <button type="button" data-flight-setting="flight_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>巡查高度</span><strong><span id="llm-flight-height-value">15</span> <small>米</small></strong></button>
+        </div>
+        <p class="muted llm-flight-hint">点击数值设置，应用于本批全部任务；执行期间不可修改。</p>
         <form id="llm-form">
           <label class="field" for="llm-instruction">任务描述</label>
           <textarea id="llm-instruction" rows="4" maxlength="4000" required placeholder="例如：让 UAV_01 搜索地图东边的学校"></textarea>
@@ -154,6 +160,15 @@
       </section>
     </aside>
   </main>
+  <dialog id="llm-flight-dialog" class="llm-flight-dialog" aria-labelledby="llm-flight-title" aria-describedby="llm-flight-help">
+    <form id="llm-flight-form">
+      <h2 id="llm-flight-title">设置飞行参数</h2>
+      <label id="llm-flight-label" class="field" for="llm-flight-value">数值</label>
+      <input id="llm-flight-value" type="number" step="any" required aria-describedby="llm-flight-help">
+      <p id="llm-flight-help" class="muted"></p>
+      <div class="llm-flight-actions"><button id="llm-flight-cancel" type="button">取消</button><button type="submit">保存</button></div>
+    </form>
+  </dialog>
   <dialog id="llm-image-dialog" class="llm-image-dialog">
     <div class="section-heading"><h2>异常照片</h2><button id="llm-image-close" type="button">关闭</button></div>
     <div id="llm-image-detail"></div>

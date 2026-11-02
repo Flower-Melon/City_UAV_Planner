@@ -102,6 +102,17 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 #abnormal-action { font-size: 12px; }
 .llm-badge { border: 1px solid #bed8e2; border-radius: 4px; padding: 1px 6px; font-size: 10px; color: #23647b; background: #f1f8fa; }
 .llm-intro { margin: 0 0 16px; }
+.llm-flight-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.llm-flight-settings button { padding: 9px 6px; text-align: left; background: #f5f9fc; border-color: #c7d8e2; }
+.llm-flight-settings button > span { display: block; font-size: 11px; color: #617887; }
+.llm-flight-settings strong { display: block; margin-top: 3px; font-size: 19px; font-weight: 600; overflow-wrap: anywhere; }
+.llm-flight-settings small { font-size: 11px; font-weight: 400; color: #617887; }
+.llm-flight-hint { margin: 6px 0 14px; }
+.llm-flight-dialog { width: min(90vw, 360px); padding: 20px; border: 1px solid #adc3d0; border-radius: 10px; color: #18334a; }
+.llm-flight-dialog::backdrop { background: #06152199; }
+.llm-flight-dialog input { width: 100%; padding: 9px 10px; border: 1px solid #c7d8e2; border-radius: 7px; color: #18334a; }
+.llm-flight-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.llm-flight-actions button[type="submit"] { background: #176080; border-color: #176080; color: white; }
 .llm-panel textarea { display: block; width: 100%; min-height: 74px; resize: vertical; border: 1px solid #c7d8e2; border-radius: 7px; padding: 10px 12px; font: inherit; line-height: 1.7; color: #18334a; background: #fbfdfe; }
 .llm-panel textarea::placeholder { color: #7c909e; }
 .llm-panel textarea:focus-visible { outline: 2px solid #147ba4; outline-offset: 2px; }

@@ -7,10 +7,57 @@
   const followupForm = $('llm-followup-form'), followupInput = $('llm-followup-input');
   const followupSubmit = $('llm-followup-submit'), newTask = $('llm-new-task');
   const status = $('llm-status'), resultPanel = $('llm-result');
+  const flightButtons = [...document.querySelectorAll('[data-flight-setting]')];
+  const flightDialog = $('llm-flight-dialog'), flightValue = $('llm-flight-value');
+  const flightFields = {
+    max_height: {label: '最大飞行高度', unit: '米', min: 15, valueId: 'llm-max-height-value',
+      help: '去程和返航相对沿途地面的最大高度，至少 15 米。'},
+    flight_speed: {label: '飞行速度', unit: '米/秒', min: 0, valueId: 'llm-flight-speed-value',
+      help: '巡航速度上限，必须大于 0；转弯和短路段会自动降速。'},
+    flight_height: {label: '巡查高度', unit: '米', min: 0, valueId: 'llm-flight-height-value',
+      help: '相对起飞地面的固定巡查高度（flight_height），必须大于 0。'}
+  };
+  const flightSettings = {max_height: 60, flight_speed: 30, flight_height: 15};
+  let editingFlight = null;
   let pending = false, conversation = [], previousTurn = null;
   let checking = true, flying = false, mission = null, pollTimer;
+  let resetting = false, resetFailed = false, generation = 0, planningController = null;
   let visionMission = null;
   const shownAnomalies = new Set();
+
+  function showFlight(settings) {
+    for (const [key, field] of Object.entries(flightFields)) {
+      if (typeof settings[key] !== 'number' || !Number.isFinite(settings[key])) continue;
+      flightSettings[key] = settings[key];
+      $(field.valueId).textContent = String(settings[key]);
+    }
+  }
+  for (const button of flightButtons) button.onclick = () => {
+    if (button.disabled) return;
+    editingFlight = button.dataset.flightSetting;
+    const field = flightFields[editingFlight];
+    $('llm-flight-title').textContent = `设置${field.label}`;
+    $('llm-flight-label').textContent = `${field.label}（${field.unit}）`;
+    $('llm-flight-help').textContent = field.help;
+    flightValue.min = String(field.min);
+    flightValue.value = String(flightSettings[editingFlight]);
+    flightValue.setCustomValidity('');
+    flightDialog.showModal();
+    flightValue.focus(); flightValue.select();
+  };
+  flightValue.oninput = () => flightValue.setCustomValidity('');
+  $('llm-flight-form').onsubmit = event => {
+    event.preventDefault();
+    if (!editingFlight || flightButtons.some(button => button.disabled)) return;
+    const value = flightValue.valueAsNumber, field = flightFields[editingFlight];
+    if (!Number.isFinite(value) || value <= 0 || value < field.min) {
+      flightValue.setCustomValidity(field.min ? `${field.label}不得低于 ${field.min} ${field.unit}。` : '请输入大于 0 的有限数值。');
+      flightValue.reportValidity(); return;
+    }
+    showFlight({[editingFlight]: value});
+    flightDialog.close();
+  };
+  $('llm-flight-cancel').onclick = () => flightDialog.close();
 
   function annotatedImage(record) {
     const view = document.createElement('div'); view.className = 'llm-anomaly-image';
@@ -70,9 +117,13 @@
 
   // 根据规划与飞行状态锁定输入，防止刷新或重复点击再次派发。
   function controls() {
-    for (const element of [submit, input, followupSubmit, followupInput, newTask])
-      element.disabled = pending || checking || flying;
-    followupForm.hidden = flying;
+    for (const element of [submit, input, followupSubmit, followupInput, ...flightButtons])
+      element.disabled = pending || checking || flying || resetting || resetFailed;
+    if (flightDialog.open && flightButtons.some(button => button.disabled)) flightDialog.close();
+    newTask.hidden = false;
+    newTask.disabled = resetting;
+    newTask.textContent = resetting ? '正在复位…' : '新任务';
+    followupForm.hidden = flying || resetting;
   }
 
   // 读取任务使用短请求；超时只停止等待，不终止无人机控制进程。
@@ -82,14 +133,29 @@
     try {
       const response = await fetch(url, {...options, cache: 'no-store', signal: controller.signal});
       const data = await response.json();
-      if (!response.ok) throw Error(data.error || '无法读取执行进度。');
+      if (!response.ok) throw Object.assign(Error(data.error || '无法读取执行进度。'), {statusCode: response.status});
       return data;
     } finally { clearTimeout(timer); }
   }
 
   // 展示真实巡查任务状态。
   function showMission(data) {
+    const wasResetting = resetting;
+    resetting = !!data.resetting;
+    resetFailed = !!data.reset_error;
+    if (resetting) {
+      setStatus('busy', '正在终止后台任务并复位全部无人机，请稍候…'); controls(); return;
+    }
+    if (resetFailed) {
+      flying = false;
+      setStatus('error', `复位失败：${data.reset_error} 请点击「新任务」重试。`); controls(); return;
+    }
+    if (wasResetting && data.reset_completed && !data.execution) {
+      clearTask();
+      setStatus('idle', '后台任务已终止，无人机已复位，可以输入新任务。'); controls(); return;
+    }
     mission = data.execution;
+    if (mission?.settings) showFlight(mission.settings);
     showVision(mission);
     flying = !!data.starting || !!data.uncertain || !!mission && !['completed', 'failed'].includes(mission.status);
     if (mission) {
@@ -114,14 +180,21 @@
   // 页面打开或刷新时恢复任务，运行期间每秒轮询；查询失败保持锁定并重试。
   async function pollMission(resetIdle = true) {
     clearTimeout(pollTimer);
+    const current = generation;
+    let snapshot = null;
     try {
       const data = await missionRequest('/api/llm/mission');
+      if (current !== generation) return;
+      snapshot = data;
       checking = false; showMission(data);
-      if (resetIdle && !mission && !flying && !pending) setStatus('idle', '输入任务后自动规划并开始搜索。');
+      if (resetIdle && !mission && !flying && !pending && !resetting && !resetFailed)
+        setStatus('idle', data.reset_completed ? '后台任务已终止，无人机已复位，可以输入新任务。' : '输入任务后自动规划并开始搜索。');
     } catch (error) {
+      if (current !== generation) return;
       checking = true; controls(); setStatus('error', `无法确认执行状态：${error.message} 正在重试。`);
     }
-    if (checking || flying) pollTimer = setTimeout(pollMission, 1000);
+    if (checking || flying || resetting) pollTimer = setTimeout(pollMission, 1000);
+    return snapshot;
   }
 
   function selectTab(selected) {
@@ -153,7 +226,8 @@
   }
 
   async function plan(source, button) {
-    if (pending || checking || flying) return;
+    if (pending || checking || flying || resetting || resetFailed) return;
+    const current = generation;
     const instruction = source.value.trim();
     if (!instruction) { setStatus('error', '请先输入任务描述。'); source.focus(); return; }
     if (conversation.length > 12 || instruction.length + conversation.reduce((n, m) => n + m.content.length, 0) > 16000) {
@@ -166,21 +240,24 @@
     button.textContent = '正在规划…'; $('llm-panel').setAttribute('aria-busy', 'true');
     setStatus('busy', '正在读取无人机状态并查询地图，请稍候…');
     const controller = new AbortController();
+    planningController = controller;
     const started = performance.now();
     const elapsed = () => ((performance.now() - started) / 1000).toFixed(1);
     const ticker = setInterval(() => {
+      if (current !== generation || resetting) return;
       status.textContent = `正在查询地图并等待模型判断 · 已用 ${Math.floor((performance.now() - started) / 1000)} 秒`;
     }, 1000);
     const timeout = setTimeout(() => controller.abort(), 675000);
     try {
       const response = await fetch('/api/llm/plan', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({instruction, conversation}), signal: controller.signal
+        body: JSON.stringify({instruction, conversation, flight: {...flightSettings}}), signal: controller.signal
       });
       if (!response.headers.get('Content-Type')?.includes('application/json')) {
         throw new Error('网页服务未返回有效数据，请重启 node web/serve.cjs 后刷新页面。');
       }
       const result = await response.json();
+      if (current !== generation) return;
       if (!response.ok) throw new Error(result.error || '规划请求失败，请重试。');
       if (!['ready', 'needs_clarification'].includes(result.status) ||
           typeof result.message !== 'string' || !result.message.trim() || !Array.isArray(result.commands)) {
@@ -227,30 +304,69 @@
       }
       if (!$('llm-panel').hidden) resultPanel.scrollIntoView({block: 'nearest'});
     } catch (error) {
+      if (current !== generation) return;
       const message = error.name === 'AbortError' ? '规划请求超时，正在核实是否已开始执行。' : error.message;
       setStatus('error', message);
       // 派发可能已成功但 HTTP 响应丢失；先查后台，避免盲目再次提交。
       checking = true; await pollMission(false);
       if (!checking && !flying) setStatus('error', message);
     } finally {
-      clearTimeout(timeout); clearInterval(ticker); pending = false;
-      controls();
-      button.textContent = buttonText;
-      $('llm-panel').removeAttribute('aria-busy');
+      clearTimeout(timeout); clearInterval(ticker);
+      if (current === generation) {
+        pending = false; planningController = null;
+        controls(); button.textContent = buttonText;
+        $('llm-panel').removeAttribute('aria-busy');
+      }
     }
   };
   form.onsubmit = event => { event.preventDefault(); void plan(input, submit); };
   followupForm.onsubmit = event => { event.preventDefault(); void plan(followupInput, followupSubmit); };
-  newTask.onclick = () => {
-    if (pending || checking || flying) return;
+  function clearTask() {
+    mission = null; flying = false; pending = false; checking = false;
     conversation = []; previousTurn = null;
     $('llm-messages').replaceChildren(); $('llm-history').hidden = true;
     $('llm-history').open = false; resultPanel.hidden = true;
     $('llm-commands').textContent = ''; $('llm-answer').textContent = ''; $('llm-queue').textContent = '';
+    $('llm-submitted').textContent = ''; $('llm-elapsed').textContent = '';
+    $('llm-answer-heading').textContent = '模型回答';
     $('llm-vision').hidden = true; $('llm-anomalies').replaceChildren();
     shownAnomalies.clear(); visionMission = null;
-    input.value = ''; followupInput.value = ''; form.hidden = false; newTask.hidden = true;
-    setStatus('idle', '输入任务后自动规划并开始搜索。'); input.focus();
+    input.value = ''; followupInput.value = ''; form.hidden = false;
+    if ($('llm-image-dialog').open) $('llm-image-dialog').close();
+    input.focus();
+  }
+
+  newTask.onclick = async () => {
+    if (resetting) return;
+    generation++;
+    const current = generation;
+    planningController?.abort(); planningController = null;
+    clearTimeout(pollTimer);
+    pending = false; checking = false; resetting = true; resetFailed = false;
+    submit.textContent = '规划并开始搜索 →'; followupSubmit.textContent = '发送补充 →';
+    $('llm-panel').removeAttribute('aria-busy');
+    controls(); setStatus('busy', '正在终止后台任务并复位全部无人机，请稍候…');
+    try {
+      const data = await missionRequest('/api/llm/reset', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
+      });
+      if (current !== generation) return;
+      showMission(data);
+      if (resetting) pollTimer = setTimeout(pollMission, 500);
+    } catch (error) {
+      if (current !== generation) return;
+      if (error.statusCode === 404) {
+        resetting = false; resetFailed = true;
+        setStatus('error', '当前后台仍是旧版本，没有复位接口。请停止旧网页服务，重新运行 node web/serve.cjs 后刷新页面。');
+        return;
+      }
+      setStatus('error', `无法确认复位请求：${error.message} 正在查询后台状态。`);
+      const data = await pollMission(false);
+      if (data && !data.resetting && !data.reset_error && !data.reset_completed) {
+        resetting = false; resetFailed = true;
+        setStatus('error', '未收到复位完成确认，请点击「新任务」重试。');
+      }
+    } finally { controls(); }
   };
   controls(); void pollMission();
 })();

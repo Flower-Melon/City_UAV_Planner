@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const PythonRuntime = require('./python-runtime.cjs');
 const TERMINAL = new Set(['completed', 'failed']);
-const DEFAULT_FLIGHT = Object.freeze({flight_height: 15, flight_speed: 30});
+const DEFAULT_FLIGHT = Object.freeze({max_height: 60, flight_speed: 30, flight_height: 15});
 
 function requestError(message, statusCode) {
   return Object.assign(new Error(message), {statusCode});
@@ -16,6 +16,16 @@ function positive(value, name) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
     throw requestError(`${name}必须为正的有限数值`, 400);
   return value;
+}
+
+function flightSettings(flight = {}) {
+  if (!flight || typeof flight !== 'object' || Array.isArray(flight))
+    throw requestError('飞行参数必须为对象。', 400);
+  const labels = {max_height: '最大飞行高度', flight_speed: '飞行速度', flight_height: '巡查高度'};
+  const settings = Object.fromEntries(Object.entries(DEFAULT_FLIGHT)
+    .map(([key, fallback]) => [key, positive(flight[key] ?? fallback, labels[key])]));
+  if (settings.max_height < 15) throw requestError('最大飞行高度不得低于 15 米。', 400);
+  return settings;
 }
 
 function send(response, code, result) {
@@ -89,7 +99,7 @@ class MissionExecutor {
   async start(plan, flight) {
     this.assertIdle(); this.starting = true;
     try {
-      const settings = Object.fromEntries(Object.keys(DEFAULT_FLIGHT).map(key => [key, positive(flight[key], key)]));
+      const settings = flightSettings(flight);
       const tasks = this.validate(plan);
       const fleet = await this.runtime.request('fleet', {}, {channel: 'fleet', timeoutMs: this.timeoutMs});
       const available = new Set(Array.isArray(fleet) ? fleet.filter(drone => drone.available === true).map(drone => drone.name) : []);
@@ -187,17 +197,22 @@ class MissionExecutor {
     summary.status = 'running';
     while (!this.closed) {
       const {directory, frames} = this.readFrames(task);
+      const analysisDirectory = directory && path.join(path.dirname(directory), 'analysis');
       summary.total = frames.length;
       for (const frame of frames) {
         if (this.closed) break;
         if (seen.has(frame.image)) continue;
         seen.add(frame.image);
-        const record = {image: frame.image, drone_id: task.drone_id, task_id: task.task_id,
+        const record = {image: frame.image, source_image: `../capture/${frame.image}`,
+          drone_id: task.drone_id, task_id: task.task_id,
           zone_id: task.target.zone_id, frame_type: frame.type, position_m: frame.position_m};
+        if (frame.type === 'road') record.edge_id = frame.edge_id;
         try {
           const result = await this.runtime.request('vision', {
-            image_path: path.relative(this.root, path.join(directory, frame.image))
+            image_path: path.relative(this.root, path.join(directory, frame.image)),
+            annotation_path: path.relative(this.root, path.join(analysisDirectory, 'abnormal', frame.image))
           }, {channel: `vision:${task.drone_id}`, timeoutMs: 120000});
+          if (this.closed) break;
           if (!result || !['normal', 'abnormal', 'uncertain'].includes(result.status) ||
               typeof result.description !== 'string' || !Array.isArray(result.detections) ||
               (result.status === 'abnormal') !== (result.detections.length > 0) ||
@@ -209,18 +224,21 @@ class MissionExecutor {
           Object.assign(record, result);
           summary.analyzed++; summary[result.status]++;
           if (result.status === 'abnormal') {
+            record.annotated_image = `abnormal/${frame.image}`;
             const id = `${task.task_id}:${frame.image}`;
             this.imageFiles.set(id, path.join(directory, frame.image));
             record.image_url = `/api/llm/image?mission_id=${this.mission.mission_id}&id=${encodeURIComponent(id)}`;
             summary.anomalies.push(record);
           }
         } catch (error) {
+          if (this.closed) break;
           Object.assign(record, {status: 'error', error: error.message});
           summary.failed++;
           summary.errors.push({image: frame.image, error: error.message});
         }
         records.push(record);
-        const file = path.join(directory, 'analysis.json');
+        fs.mkdirSync(analysisDirectory, {recursive: true});
+        const file = path.join(analysisDirectory, 'analysis.json');
         fs.writeFileSync(file + '.part', JSON.stringify(records, null, 2) + '\n');
         fs.renameSync(file + '.part', file);
       }
@@ -257,6 +275,11 @@ class LlmController {
     this.executionTimeoutMs = executionTimeoutMs;
     this.plan = null;
     this.planning = false;
+    this.generation = 0;
+    this.resetting = false;
+    this.resetError = null;
+    this.resetCompleted = false;
+    this.resetPromise = null;
     this.closed = false;
   }
 
@@ -264,7 +287,39 @@ class LlmController {
 
   snapshot() {
     return {execution: this.executor.status(), plan: this.plan && structuredClone(this.plan),
-      starting: this.executor.starting, uncertain: this.executor.uncertain};
+      starting: this.executor.starting, uncertain: this.executor.uncertain,
+      resetting: this.resetting, reset_error: this.resetError, reset_completed: this.resetCompleted};
+  }
+
+  beginReset() {
+    if (this.resetPromise) return this.resetPromise;
+    this.resetting = true;
+    this.resetError = null;
+    this.resetCompleted = false;
+    this.generation++;
+    this.planning = false;
+    const previous = this.executor;
+    previous.close();
+    this.resetPromise = (async () => {
+      try {
+        await this.runtime.terminateAll();
+        if (previous.runPromise) await previous.runPromise;
+        if (this.closed) return;
+        const result = await this.runtime.request('reset', {}, {channel: 'reset', timeoutMs: 120000});
+        if (result?.reset !== true) throw Error('无人机复位未确认，请重试。');
+        await this.runtime.terminateAll();
+        if (this.closed) return;
+        this.executor = new MissionExecutor({root: previous.root, runtime: this.runtime, timeoutMs: this.executionTimeoutMs});
+        this.plan = null;
+        this.resetCompleted = true;
+      } catch (error) {
+        this.resetError = error.message;
+      } finally {
+        this.resetting = false;
+        this.resetPromise = null;
+      }
+    })();
+    return this.resetPromise;
   }
 
   validate(data) {
@@ -277,7 +332,7 @@ class LlmController {
           typeof message.content !== 'string' || !message.content.trim() || message.content.includes('\0')) ||
         instruction.length + conversation.reduce((n, message) => n + message.content.length, 0) > 16000)
       throw requestError('对话记录无效或过长，请开始新任务。', 400);
-    const flight = {...DEFAULT_FLIGHT, flight_height: positive(data.flight?.flight_height ?? DEFAULT_FLIGHT.flight_height, '飞行高度')};
+    const flight = flightSettings(data.flight);
     return {instruction: instruction.trim(), conversation, flight};
   }
 
@@ -285,6 +340,7 @@ class LlmController {
     if (url.pathname === '/api/llm/plan') return this.handlePlan(request, response);
     if (url.pathname === '/api/llm/mission') return this.handleMission(request, response);
     if (url.pathname === '/api/llm/image') return this.handleImage(request, response, url);
+    if (url.pathname === '/api/llm/reset') return this.handleReset(request, response);
     send(response, 404, {error: '接口不存在'});
   }
 
@@ -299,13 +355,17 @@ class LlmController {
       send(response, 415, {error: '任务必须使用 JSON 格式提交。'}); return;
     }
     try {
+      if (this.resetting || this.resetError) throw requestError('请先等待无人机复位完成；复位失败时点击新任务重试。', 409);
       if (this.planning) throw requestError('已有任务正在规划，请等待完成。', 409);
       this.executor.assertIdle();
     } catch (error) { send(response, error.statusCode || 409, {error: error.message}); return; }
     this.planning = true;
+    this.resetCompleted = false;
+    const generation = this.generation;
+    const obsolete = () => generation !== this.generation;
     let cancelled = false, dispatching = false, phase = 'input';
     const disconnected = () => {
-      if (!response.writableEnded && !dispatching) {
+      if (!obsolete() && !response.writableEnded && !dispatching) {
         cancelled = true; this.runtime.cancel('planning'); this.runtime.cancel('fleet');
       }
     };
@@ -321,14 +381,17 @@ class LlmController {
       try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
       catch { throw requestError('无法读取任务，请提交有效 JSON。', 400); }
       const {instruction, conversation, flight} = this.validate(data);
+      if (obsolete()) throw requestError('任务已取消。', 409);
       if (cancelled || response.destroyed || this.closed) return;
       phase = 'fleet';
       const fleet = planningFleet(this.getState()) || await this.runtime.request('fleet', {},
         {channel: 'fleet', timeoutMs: this.executionTimeoutMs});
+      if (obsolete()) throw requestError('任务已取消。', 409);
       if (cancelled || this.closed) return;
       phase = 'plan';
       const result = await this.runtime.request('plan', {instruction, conversation, fleet},
         {channel: 'planning', timeoutMs: this.timeoutMs});
+      if (obsolete()) throw requestError('任务已取消。', 409);
       if (cancelled || this.closed) return;
       if (!result || !['ready', 'needs_clarification'].includes(result.status) ||
           typeof result.message !== 'string' || !result.message.trim() ||
@@ -337,12 +400,13 @@ class LlmController {
       if (result.status === 'ready') {
         phase = 'dispatch'; dispatching = true; this.plan = structuredClone(result);
         const execution = await this.executor.start(result, flight);
+        if (obsolete()) throw requestError('任务已取消。', 409);
         send(response, 200, {...result, execution});
       } else send(response, 200, result);
     } catch (error) {
       send(response, error.statusCode || (phase === 'plan' ? 502 : 503), {error: error.message});
     } finally {
-      this.planning = false;
+      if (!obsolete()) this.planning = false;
       response.removeListener('close', disconnected);
     }
   }
@@ -355,6 +419,22 @@ class LlmController {
       send(response, 403, {error: '请从本地地图页面操作任务。'}); return;
     }
     send(response, this.closed ? 503 : 200, {...this.snapshot(), ...(this.closed ? {error: '执行服务已停止。'} : {})});
+  }
+
+  handleReset(request, response) {
+    if (request.method !== 'POST') {
+      response.setHeader('Allow', 'POST'); send(response, 405, {error: '请使用 POST 创建新任务。'}); return;
+    }
+    if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}`) {
+      send(response, 403, {error: '请从本地地图页面操作。'}); return;
+    }
+    if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+      send(response, 415, {error: '请使用 JSON 请求。'}); return;
+    }
+    request.resume();
+    if (this.closed) { send(response, 503, {error: '执行服务已停止。'}); return; }
+    void this.beginReset();
+    send(response, 202, this.snapshot());
   }
 
   handleImage(request, response, url) {
