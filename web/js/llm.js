@@ -20,6 +20,7 @@
   const flightSettings = {max_height: 60, flight_speed: 30, flight_height: 15};
   let editingFlight = null;
   let pending = false, conversation = [], previousTurn = null;
+  let needsClarification = false;
   let checking = true, flying = false, mission = null, pollTimer;
   let resetting = false, resetFailed = false, generation = 0, planningController = null;
   let visionMission = null;
@@ -84,16 +85,9 @@
       $('llm-anomalies').replaceChildren();
     }
     $('llm-anomaly-count').textContent = vision.abnormal;
-    const phase = vision.status === 'running' ? '识别中' : '识别结束';
-    $('llm-vision-status').textContent = `${phase} · 已分析 ${vision.analyzed}/${vision.total} 张 · 异常 ${vision.abnormal} 张 · 无法判断 ${vision.uncertain} 张 · 失败 ${vision.failed} 张`;
     const error = vision.errors?.[0]?.error;
     $('llm-vision-error').hidden = !error;
     $('llm-vision-error').textContent = error ? `部分照片未完成识别：${error}` : '';
-    $('llm-vision-empty').hidden = vision.anomalies.length > 0;
-    $('llm-vision-empty').textContent = vision.status === 'running' ?
-      '正在巡查和分析照片，发现异常后将在此显示。' :
-      vision.failed || error ? '部分照片识别失败，请查看错误提示。' :
-      vision.uncertain ? '尚未发现明确异常，部分照片无法可靠判断。' : '本次照片中未发现目标异常。';
     for (const record of vision.anomalies) {
       const key = `${record.task_id}:${record.image}`;
       if (shownAnomalies.has(key)) continue;
@@ -123,7 +117,7 @@
     newTask.hidden = false;
     newTask.disabled = resetting;
     newTask.textContent = resetting ? '正在复位…' : '新任务';
-    followupForm.hidden = flying || resetting;
+    followupForm.hidden = !needsClarification || flying || resetting || resetFailed;
   }
 
   // 读取任务使用短请求；超时只停止等待，不终止无人机控制进程。
@@ -158,6 +152,7 @@
     if (mission?.settings) showFlight(mission.settings);
     showVision(mission);
     flying = !!data.starting || !!data.uncertain || !!mission && !['completed', 'failed'].includes(mission.status);
+    if (mission || flying) needsClarification = false;
     if (mission) {
       const messages = {running: mission.tasks.some(task => task.status === 'analyzing') ?
         '无人机已返航降落，正在分析剩余巡查照片。' : '搜索执行中 · 沿路拍照并识别异常，结束后返航降落。',
@@ -264,6 +259,7 @@
         throw new Error('服务返回格式异常，请重试。');
       }
       const ready = result.status === 'ready';
+      needsClarification = result.status === 'needs_clarification';
       const answer = result.message;
       if (previousTurn) {
         for (const [label, text] of [['你', previousTurn.instruction], ['助手', previousTurn.answer]]) {
@@ -320,10 +316,14 @@
     }
   };
   form.onsubmit = event => { event.preventDefault(); void plan(input, submit); };
-  followupForm.onsubmit = event => { event.preventDefault(); void plan(followupInput, followupSubmit); };
+  followupForm.onsubmit = event => {
+    event.preventDefault();
+    if (needsClarification) void plan(followupInput, followupSubmit);
+  };
   function clearTask() {
     mission = null; flying = false; pending = false; checking = false;
     conversation = []; previousTurn = null;
+    needsClarification = false;
     $('llm-messages').replaceChildren(); $('llm-history').hidden = true;
     $('llm-history').open = false; resultPanel.hidden = true;
     $('llm-commands').textContent = ''; $('llm-answer').textContent = ''; $('llm-queue').textContent = '';

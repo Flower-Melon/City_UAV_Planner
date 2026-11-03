@@ -67,7 +67,7 @@ None
 
 ### 1.3 search_area
 
-巡查目标所在完整街区的道路边界和内部道路，具体算法实现见 `utils.plan_search_path`。在真实拓扑节点附近（5米内）短暂制动后，用 `bottom_center` 拍摄节点下视照片；进入下一条巡查边前，用 `front_center` 沿该边的进入方向斜下45度拍摄街道照片。不要求精确到点或满足极低的停稳速度。
+巡查目标所在完整街区的道路边界和内部道路，具体算法实现见 `utils.plan_search_path`。
 
 巡查途中按道路折线的累计前进里程，用 `bottom_center` 触发下视拍照，默认每20米一次，可通过 `capture_interval_m` 调整。
 
@@ -123,7 +123,7 @@ output/000001/
    ├─ 000001.jpg
    ├─ 000002.jpg
    ├─ route.json         导航/巡查航段、返航路径、起飞基点及拍照间距
-   └─ frame.json         节点/街道入口/路中照片及拍摄位置
+   └─ frame.json         道路巡查照片及拍摄位置
 ```
 
 单独运行 `python UAV/API/search_area.py` 时，输出到 `output/temp/编号/capture/`，如 `output/temp/000001/capture/`。
@@ -133,10 +133,41 @@ output/000001/
 | 字段 | 含义 |
 |---|---|
 | `image` | 与 `frame.json` 同目录的图片文件名，如 `"000001.jpg"` |
-| `type` | `"node"` 为节点下视照，`"road"` 为道路巡查照 |
 | `position_m` | UE 世界坐标 `[X, Y, Z]`，单位米 |
-| `node_xy_m` | 仅节点照包含，对应真实拓扑节点坐标 |
-| `edge_id` | 道路巡查照包含，对应 `Map/roads/uav_road_network.json` 的边 ID |
+| `edge_id` | 拍摄位置所在道路，对应 `Map/roads/uav_road_network.json` 的边 ID |
+
+### 1.4 deliver_medicine
+
+在当前位置上方挂载药箱，调用 `utils.plan_flight_path` 按分层飞行路网规划最短代价路线，飞至地面投递点上方15米。低速对位并悬停后，下放药箱、着地脱钩并收绳，全部完成后返回，无人机留在落点上空悬停。
+
+| 入参 | 类型 | 含义 |
+|---|---|---|
+| `drone_id` | `int` 或 `str` | 无人机编号，`1` 或 `"UAV_01"` |
+| `target_position` | `(x, y, z)` 或 `[x, y, z]` | 药箱落点的UE世界坐标，单位米；**Z为地面世界高度**，脚本自动加15米作为无人机悬停高度；落点应选择开阔地面 |
+| `max_height` | `float` | 导航最大离地高度，单位米，至少15米；相对沿途当地地面 |
+| `flight_speed` | `float` | 巡航速度上限，单位米/秒，大于 `0`，默认 `25.0`；拐弯及接近终点时自动降速 |
+
+| 出参 | 类型 | 含义 |
+|---|---|---|
+| 返回值 | `None` | 同步完成投递及收绳后返回，保留API控制权，不自动返航或降落 |
+
+入参样例与调用：
+
+```python
+from UAV.API import deliver_medicine
+
+drone_id = "UAV_01"
+target_position = (2270.4, 121.3, 368.0)
+max_height = 60.0
+flight_speed = 8.0
+result = deliver_medicine(drone_id, target_position, max_height, flight_speed)
+```
+
+出参样例：
+
+```python
+None  # result；药箱已着地并收绳，无人机在落点上空悬停
+```
 
 ## 2 utils
 
@@ -193,7 +224,7 @@ route = plan_flight_path(
 |---|---|---|
 | `segments` | `list[tuple[list[tuple[float, float, float, float]], bool]]` | 按执行顺序排列的 `(航点列表, 是否巡查)` |
 | `segments[i][0]` | `list` | 世界XYZ和到达速度；巡查段保留完整原道路和真实节点 |
-| `segments[i][1]` | `bool` | `True`按真实节点、道路入口及累计巡查里程拍照；`False`表示导航或转场，不拍照 |
+| `segments[i][1]` | `bool` | `True`按累计巡查里程拍照；`False`表示导航或转场，不拍照 |
 
 ```python
 from UAV.utils.plan_search_path import plan_search_path
@@ -225,5 +256,3 @@ segments = plan_search_path(
 | `airsim_client.py` | 连接 AirSim，发送请求并接收结果 |
 | `airsim_state.py` | 读取机队状态、解析无人机名称，完成坐标标定与地面测量 |
 | `flight_control.py` | 按航点速度执行三维路径，原地升降到高后继续飞行，核对位置和碰撞，管理任务锁与降落 |
-
-水平飞行使用短时速度指令连续跟踪前方路径，并检查建筑净空、API控制权和碰撞。原地升降仍使用高度接口；即使接口返回 `False`，也只在水平漂移不超过5米、高度误差不超过0.75米、控制权有效且没有新碰撞时继续，否则终止并报告实测误差。巡查和拍照不再执行精确位置回拉或严格停稳校验。

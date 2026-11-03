@@ -95,11 +95,8 @@
         <p id="llm-status" class="llm-status" role="status" aria-live="polite">正在检查执行状态…</p>
         <section id="llm-vision" class="llm-vision" hidden aria-label="巡查异常识别">
           <div class="section-heading"><h2>异常识别 <span id="llm-anomaly-count" class="llm-anomaly-count">0</span></h2></div>
-          <p id="llm-vision-status" class="muted" role="status" aria-live="polite"></p>
           <p id="llm-vision-error" class="llm-vision-error" hidden></p>
-          <p id="llm-vision-empty" class="muted">等待巡查照片，发现异常后将在此显示。</p>
           <div id="llm-anomalies" class="llm-anomalies"></div>
-          <p class="muted">红框为模型估计的异常位置，需结合原图人工复核。</p>
         </section>
         <details id="llm-history" class="llm-history" hidden>
           <summary>前面的对话</summary><div id="llm-messages"></div>
@@ -113,11 +110,10 @@
             <summary>最终指令</summary>
             <pre id="llm-commands" tabindex="0" aria-label="通过校验的搜索指令"></pre>
           </details>
-          <form id="llm-followup-form" class="llm-followup">
+          <form id="llm-followup-form" class="llm-followup" hidden>
             <label class="field" for="llm-followup-input">继续补充</label>
-            <textarea id="llm-followup-input" rows="2" maxlength="4000" required placeholder="直接回复，例如：200米 / 只用 UAV_01"></textarea>
+            <textarea id="llm-followup-input" rows="2" maxlength="4000" required></textarea>
             <button id="llm-followup-submit" type="submit">发送补充 <span aria-hidden="true">→</span></button>
-            <p class="muted">会结合前面的任务重新规划；更换目标可点击「新任务」。</p>
           </form>
         </section>
       </div>

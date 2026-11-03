@@ -16,11 +16,12 @@ web/
 │  └─ styles.css              页面外观
 ├─ server/                    Node.js 后端
 │  ├─ airsim.cjs              无人机监控接口
-│  ├─ llm.cjs                 任务规划、搜索调度、逐帧视觉分析与告警图片接口
+│  ├─ llm.cjs                 任务规划、搜索调度、图像处理进度与告警图片接口
 │  ├─ abnormal.cjs            异常场景接口
 │  └─ python-runtime.cjs      启动 Python 进程并收发请求
 ├─ utils/                     Python 桥接工具
 │  ├─ python_bridge.py        Python 功能调用入口
+│  ├─ vision_pipeline.py      串联YOLO与大模型，汇总意图结果并绘制异常框
 │  ├─ airsim_bridge.py        从 AirSim 采集无人机状态和画面
 │  └─ unreal_bridge.py        UE 内的异常目标观测与跟随取景
 └─ assets/                    静态素材
@@ -48,9 +49,13 @@ output/000001/
 │  ├─ 000001.jpg       全部巡查原图，按拍摄顺序编号
 │  ├─ 000002.jpg
 │  ├─ route.json       巡查航线及返航路径
-│  └─ frame.json       照片类型与拍摄位置
-└─ analysis/           网页识别结果
-   ├─ analysis.json    逐张判断、异常说明及目标框
-   └─ abnormal/        判为异常的红框图片（发现异常时生成）
+│  └─ frame.json       照片文件名、拍摄位置与道路编号
+├─ yolo_detection/     仅保存检出人车的图片、检测记录和目标裁剪图
+│  ├─ 000001.json      原图像素框、置信度及裁剪路径
+│  ├─ 000001.annotated.jpg   YOLO标注图
+│  └─ crops/           人车目标裁剪放大图，每个目标单独保存
+└─ llm_analysis/       大模型意图分析结果
+   ├─ 000001.json      单张原图的各目标判断与YOLO框
+   └─ abnormal/        使用YOLO框生成的异常红框图片（发现异常时生成）
       └─ 000029.jpg    与capture中的原图同名
 ```

@@ -286,12 +286,9 @@ def plan_search_path(
         else:
             phases.append((list(points), patrol))
     check_building_clearance([points for points, _ in phases], altitude)
-    nodes = frozenset(graph.node_points)
     result = [(navigation, False)]
     for points, patrol in phases:
-        route = flight_route(
-            [(*p, altitude) for p in points], speed, stop_points=nodes if patrol else ()
-        )
+        route = flight_route([(*p, altitude) for p in points], speed)
         result.append((route, patrol))
     return result
 

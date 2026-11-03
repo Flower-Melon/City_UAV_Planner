@@ -74,29 +74,21 @@ class PythonBridge:
                 handler.close()
             return {"completed": True, "capture_directory": capture_directory}
         if operation == "vision":
-            from llm.vision import VisionAnalyzer, save_annotated_image
+            from web.utils.vision_pipeline import SearchVisionPipeline
             image_path = request.get("image_path")
             if not isinstance(image_path, str) or not image_path:
                 raise ValueError("视觉分析需要本次任务的图片路径")
             root = Path(__file__).resolve().parents[2]
             path = (root / image_path).resolve(strict=True)
-            if not path.is_relative_to((root / "output").resolve()) or not path.is_file():
-                raise ValueError("仅允许分析output目录内的巡查图片")
-            annotation_path = request.get("annotation_path")
-            output = None
-            if annotation_path is not None:
-                if not isinstance(annotation_path, str) or not annotation_path:
-                    raise ValueError("异常图片输出路径无效")
-                output = (root / annotation_path).resolve()
-                expected = (path.parent.parent / "analysis" / "abnormal" / path.name).resolve()
-                if path.parent.name != "capture" or output != expected or not output.is_relative_to((root / "output").resolve()):
-                    raise ValueError("异常图片只能保存到本次任务的analysis/abnormal目录")
+            output_root = (root / "output").resolve()
+            if (not path.is_file() or path.parent.name != "capture"
+                    or path.parent.parent.parent != output_root
+                    or not path.parent.parent.name.isdigit() or len(path.parent.parent.name) < 6
+                    or path.suffix.lower() not in (".jpg", ".jpeg", ".png")):
+                raise ValueError("仅允许分析output/编号/capture目录内的巡查图片")
             if self.vision is None:
-                self.vision = VisionAnalyzer()
-            result = self.vision(path)
-            if result["status"] == "abnormal" and output is not None:
-                save_annotated_image(path, result["detections"], output)
-            return result
+                self.vision = SearchVisionPipeline()
+            return self.vision(path)
         if operation == "abnormal_spawn":
             from Abnormal import spawn_vehicle, spawn_armed_person, spawn_patient, set_vehicle_behavior
             factories = {"vehicle": spawn_vehicle, "armed_person": spawn_armed_person, "patient": spawn_patient}

@@ -111,7 +111,7 @@ class MissionExecutor {
       tasks.forEach((task, index) => {
         task.task_id = `task_${index + 1}`;
         task.capture_directory = null;
-        task.vision = {status: 'queued', total: 0, analyzed: 0, normal: 0, abnormal: 0,
+        task.vision = {status: 'queued', total: 0, analyzed: 0, filtered: 0, llm_analyzed: 0, normal: 0, abnormal: 0,
           uncertain: 0, failed: 0, anomalies: [], errors: []};
       });
       this.runPromise = this.run();
@@ -192,12 +192,11 @@ class MissionExecutor {
   }
 
   async analyzeTask(task, finished) {
-    const seen = new Set(), records = [];
+    const seen = new Set();
     const summary = task.vision;
     summary.status = 'running';
     while (!this.closed) {
       const {directory, frames} = this.readFrames(task);
-      const analysisDirectory = directory && path.join(path.dirname(directory), 'analysis');
       summary.total = frames.length;
       for (const frame of frames) {
         if (this.closed) break;
@@ -205,16 +204,18 @@ class MissionExecutor {
         seen.add(frame.image);
         const record = {image: frame.image, source_image: `../capture/${frame.image}`,
           drone_id: task.drone_id, task_id: task.task_id,
-          zone_id: task.target.zone_id, frame_type: frame.type, position_m: frame.position_m};
-        if (frame.type === 'road') record.edge_id = frame.edge_id;
+          zone_id: task.target.zone_id, position_m: frame.position_m, edge_id: frame.edge_id};
         try {
+          // 每个目标请求由模型客户端单独限制超时，整帧不再共用固定的两分钟额度。
           const result = await this.runtime.request('vision', {
-            image_path: path.relative(this.root, path.join(directory, frame.image)),
-            annotation_path: path.relative(this.root, path.join(analysisDirectory, 'abnormal', frame.image))
-          }, {channel: `vision:${task.drone_id}`, timeoutMs: 120000});
+            image_path: path.relative(this.root, path.join(directory, frame.image))
+          }, {channel: `vision:${task.drone_id}`, timeoutMs: 0});
           if (this.closed) break;
           if (!result || !['normal', 'abnormal', 'uncertain'].includes(result.status) ||
               typeof result.description !== 'string' || !Array.isArray(result.detections) ||
+              typeof result.llm_skipped !== 'boolean' || !Number.isSafeInteger(result.yolo_detection_count) ||
+              typeof result.llm_requested !== 'boolean' || typeof result.analysis_failed !== 'boolean' ||
+              result.yolo_detection_count < 0 || result.llm_skipped !== (result.yolo_detection_count === 0) ||
               (result.status === 'abnormal') !== (result.detections.length > 0) ||
               result.detections.some(detection => typeof detection.label !== 'string' ||
                 !Array.isArray(detection.bbox) || detection.bbox.length !== 4 ||
@@ -222,7 +223,19 @@ class MissionExecutor {
                 detection.bbox[0] >= detection.bbox[2] || detection.bbox[1] >= detection.bbox[3]))
             throw Error('视觉模型返回无效判断或异常框。');
           Object.assign(record, result);
+          if (result.llm_skipped) {
+            summary.analyzed++; summary.filtered++; summary.normal++;
+            continue;
+          }
+          record.yolo_report = `../yolo_detection/${path.parse(frame.image).name}.json`;
+          record.analysis_file = `${path.parse(frame.image).name}.json`;
+          if (result.analysis_failed)
+            throw Error('本图所有目标的意图识别失败：' + (result.target_errors?.[0]?.error || result.description));
           summary.analyzed++; summary[result.status]++;
+          summary.llm_analyzed++;
+          for (const error of result.target_errors || []) {
+            summary.errors.push({image: frame.image, error: `目标${error.target_index}：${error.error}`});
+          }
           if (result.status === 'abnormal') {
             record.annotated_image = `abnormal/${frame.image}`;
             const id = `${task.task_id}:${frame.image}`;
@@ -232,31 +245,25 @@ class MissionExecutor {
           }
         } catch (error) {
           if (this.closed) break;
-          Object.assign(record, {status: 'error', error: error.message});
           summary.failed++;
           summary.errors.push({image: frame.image, error: error.message});
         }
-        records.push(record);
-        fs.mkdirSync(analysisDirectory, {recursive: true});
-        const file = path.join(analysisDirectory, 'analysis.json');
-        fs.writeFileSync(file + '.part', JSON.stringify(records, null, 2) + '\n');
-        fs.renameSync(file + '.part', file);
       }
       // 完成标记可能在等待模型期间改变，重新读取清单后才能确认没有尾帧。
       if (finished() && this.readFrames(task).frames.every(frame => seen.has(frame.image))) break;
       await new Promise(resolve => setTimeout(resolve, this.visionPollMs));
     }
-    summary.status = this.closed ? 'stopped' : summary.failed ? 'completed_with_errors' : 'completed';
+    summary.status = this.closed ? 'stopped' : summary.failed || summary.errors.length ? 'completed_with_errors' : 'completed';
   }
 
   status() {
     if (!this.mission) return null;
     const mission = structuredClone(this.mission);
     const summaries = mission.tasks.map(task => task.vision);
-    mission.vision = Object.fromEntries(['total', 'analyzed', 'normal', 'abnormal', 'uncertain', 'failed']
+    mission.vision = Object.fromEntries(['total', 'analyzed', 'filtered', 'llm_analyzed', 'normal', 'abnormal', 'uncertain', 'failed']
       .map(key => [key, summaries.reduce((sum, item) => sum + item[key], 0)]));
     mission.vision.status = summaries.some(item => ['queued', 'running'].includes(item.status)) ? 'running' :
-      summaries.some(item => item.status === 'failed' || item.failed) ? 'completed_with_errors' : 'completed';
+      summaries.some(item => item.status === 'failed' || item.failed || item.errors.length) ? 'completed_with_errors' : 'completed';
     mission.vision.anomalies = summaries.flatMap(item => item.anomalies);
     mission.vision.errors = summaries.flatMap(item => item.error ? [{error: item.error}] : item.errors);
     return mission;

@@ -36,30 +36,23 @@ class Task(StrictModel):
 
 
 class Intent(StrictModel):
-    tasks: list[Task] = Field(default_factory=list)
-    question: str | None = Field(default=None, min_length=1)
+    tasks: list[Task] = Field(min_length=1)
     reply: str | None = Field(default=None, min_length=1)
 
-    # 把模型直接返回的单任务对象转换成统一的 tasks 列表结构。
-    # 输入为待校验数据；返回转换后的数据，保留可选的回复文字。
-    @model_validator(mode="before")
-    @classmethod
-    def single_task(cls, data):
-        if isinstance(data, dict) and "action" in data:
-            return {"tasks": [{k: v for k, v in data.items() if k != "reply"}],
-                    **({"reply": data["reply"]} if "reply" in data else {})}
-        return data
-
-    # 保证结果在任务和澄清问题之间二选一，并拒绝空白回答。
-    # 由 Pydantic 自动调用；合法时返回当前意图对象。
     @model_validator(mode="after")
     def check_content(self):
-        if bool(self.tasks) == (self.question is not None):
-            raise ValueError("请返回任务或澄清问题，不能同时返回或同时为空")
-        if self.question is not None and not self.question.strip():
-            raise ValueError("澄清问题不能为空")
         if self.reply is not None and not self.reply.strip():
             raise ValueError("回答不能为空白")
+        return self
+
+
+class QueryQuestion(StrictModel):
+    question: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def check_question(self):
+        if not self.question.strip():
+            raise ValueError("澄清问题不能为空")
         return self
 
 
@@ -68,7 +61,9 @@ TOOLS = [{"type": "function", "name": "query_map",
           "parameters": Target.model_json_schema(), "strict": False}]
 
 
-PROMPT = (Path(__file__).resolve().parent / "prompts" / "search_area.txt").read_text(encoding="utf-8")
+PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
+QUERY_PROMPT = (PROMPT_DIR / "query_map.txt").read_text(encoding="utf-8")
+TASK_PROMPT = (PROMPT_DIR / "search_area.txt").read_text(encoding="utf-8")
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "Map" / "zones" / "zone_catalog.json"
 MAX_ITERATIONS = 5
 
@@ -82,19 +77,20 @@ class Planner:
         self._facility_ids = set(self._directory["facility_ids"])
 
     def plan(self, instruction, fleet, conversation=None):
-        """最多进行五轮模型判断，返回搜索计划或需要补充的信息。"""
+        """先查询并解决歧义，再生成任务；两个阶段合计最多调用模型五次。"""
         fleet = self._normalize_fleet(fleet)
         base = self._build_model_input(instruction, fleet, conversation)
         if not any(d["available"] for d in fleet):
             return self._clarification("当前没有可用无人机，请更新无人机快照。")
-        history, confirmed, coverage = list(base["input"]), set(), {}
-        latest_query = None
+        context = json.loads(base["input"][0]["content"])
+        history, confirmed, coverage, queries = list(base["input"]), set(), {}, []
+        stage = "query"
         for iteration in range(1, MAX_ITERATIONS + 1):
-            # 每轮带回完整对话：模型查询、工具结果和校验反馈都不会丢失。
+            # 查询阶段保留工具上下文；任务阶段只携带整理后的成功查询。
+            if stage == "query" and iteration == MAX_ITERATIONS:
+                break  # 为任务生成保留一次调用。
             request = {**base, "model": self.model, "store": False, "input": list(history),
-                       "instructions": PROMPT + f"\n当前第 {iteration}/{MAX_ITERATIONS} 轮。" +
-                           ("这是最后一轮，必须返回最终 JSON 或 question，不能再查询。" if iteration == MAX_ITERATIONS else ""),
-                       "tool_choice": "none" if iteration == MAX_ITERATIONS else "auto"}
+                       "instructions": base["instructions"] + f"\n当前第 {iteration}/{MAX_ITERATIONS} 次模型调用。"}
             response = self.client.responses.create(**request)
             if response.status != "completed" or any(
                 item.type == "message" and any(part.type == "refusal" for part in item.content)
@@ -103,12 +99,14 @@ class Planner:
                 raise RuntimeError("模型拒绝或响应未完成，未生成指令")
             history.extend(item.model_dump(exclude_none=True) for item in response.output)
             calls = [item for item in response.output if item.type == "function_call"]
-            if calls:
-                if iteration == MAX_ITERATIONS:
-                    break
+            if stage == "query" and calls:
+                succeeded = True
                 for call in calls:
                     output = self._query_map(call, fleet, confirmed)
-                    latest_query = output if output.get("status") == "ok" else None
+                    if output.get("status") == "ok":
+                        queries.append(output)
+                    else:
+                        succeeded = False
                     if output.get("status") == "ok" and output["query"].get("selection") == "all":
                         # all 是完整搜索范围，不能只在文字中承诺覆盖、指令却漏掉目标。
                         for category in {z["category"] for z in output["zones"]}:
@@ -117,15 +115,29 @@ class Planner:
                     message = {"type": "function_call_output", "call_id": call.call_id,
                                "output": json.dumps(output, ensure_ascii=False)}
                     history.append(message)
+                if succeeded:
+                    base = self._build_task_input(context, queries, set().union(*coverage.values()))
+                    history, stage = list(base["input"]), "tasks"
                 continue
-            result = self._check_final(response.output_text, fleet, confirmed,
-                                 required=set().union(*coverage.values()), latest_query=latest_query)
-            if result["status"] == "ready" or result.get("stop_reason") == "needs_clarification":
-                return {key: result[key] for key in ("status", "message", "commands")}
-            # 指令校验失败交回模型修正，不直接输出未经确认的指令。
-            history.append({"role": "user", "content": json.dumps({"validation_error": result["message"],
-                            "instruction": "请修正、继续查询，或提出澄清问题；不能擅自更改原任务。"}, ensure_ascii=False)})
-        raise RuntimeError(f"已达到{MAX_ITERATIONS}轮上限，模型仍未生成通过校验的完整指令，可重试本次规划。")
+            if stage == "query":
+                try:
+                    question = QueryQuestion.model_validate_json(response.output_text)
+                except (ValidationError, ValueError, TypeError):
+                    message = "查询阶段只能调用query_map或返回非空question；请在一次响应中提交全部必要查询。"
+                else:
+                    return self._clarification(question.question)
+            else:
+                if calls:
+                    raise RuntimeError("任务生成阶段返回了工具调用，未生成指令")
+                result = self._check_final(response.output_text, fleet, confirmed,
+                                           required=set().union(*coverage.values()))
+                if result["status"] == "ready":
+                    return result
+                message = result["message"]
+            # 各阶段只修正自身输出；任务生成阶段不再查询或向用户提问。
+            history.append({"role": "user", "content": json.dumps({"validation_error": message,
+                            "instruction": "请按当前阶段的输出约定修正，不能擅自更改原任务。"}, ensure_ascii=False)})
+        raise RuntimeError(f"在最多{MAX_ITERATIONS}次模型调用的预算内仍未完成查询和任务校验，可重试本次规划。")
 
     def _build_model_input(self, instruction, fleet, conversation=None):
         instruction, conversation = self._validate_request(instruction, conversation)
@@ -144,8 +156,17 @@ class Planner:
             context["conversation"] = conversation
         # 最新输入放在地图和历史之后，避免简短补充被长目录淹没。
         context["instruction"] = instruction
-        return {"instructions": PROMPT, "tools": TOOLS, "parallel_tool_calls": False,
+        return {"instructions": QUERY_PROMPT, "tools": TOOLS, "parallel_tool_calls": True,
                 "reasoning": {"effort": "minimal"}, "temperature": 0,
+                "text": {"format": {"type": "json_object"}},
+                "input": [{"role": "user", "content": json.dumps(context, ensure_ascii=False, separators=(",", ":"))}]}
+
+    @staticmethod
+    def _build_task_input(context, queries, required):
+        """不携带查询提示词、目录、工具定义或完整工具历史。"""
+        context = {key: context[key] for key in ("instruction", "conversation", "fleet") if key in context}
+        context.update(queries=queries, required_zone_ids=sorted(required))
+        return {"instructions": TASK_PROMPT, "reasoning": {"effort": "minimal"}, "temperature": 0,
                 "text": {"format": {"type": "json_object"}},
                 "input": [{"role": "user", "content": json.dumps(context, ensure_ascii=False, separators=(",", ":"))}]}
 
@@ -216,8 +237,6 @@ class Planner:
         if not isinstance(intent, Intent):
             intent = Intent.model_validate(intent)
         fleet = self._normalize_fleet(fleet)
-        if intent.question is not None:
-            return self._clarification(intent.question)
         available = {d["name"]: d for d in fleet if d["available"]}
         if not available:
             return self._clarification("当前没有可用无人机，请更新无人机快照。")
@@ -256,7 +275,7 @@ class Planner:
         except Clarification as error:
             return self._clarification(str(error))
 
-    def _check_final(self, text, fleet, confirmed, required=(), latest_query=None):
+    def _check_final(self, text, fleet, confirmed, required=()):
         """模型作最终选择；本地只核实来源、资源和指令格式。"""
         # 兼容网关在 JSON 模式下仍包裹一个 Markdown 代码块的情况。
         # 仅移除完整外壳，内容仍经过相同的结构、来源、覆盖和资源校验。
@@ -265,21 +284,6 @@ class Planner:
             text = "\n".join(lines[1:-1])
         try:
             data = json.loads(text)
-            if isinstance(data, dict) and "use_query_result" in data:
-                if (data.get("use_query_result") is not True or
-                        set(data) - {"use_query_result", "reply", "drone_id", "drone_ids"} or
-                        ("drone_id" in data and "drone_ids" in data)):
-                    return self._clarification("确认查询结果时仅填 use_query_result:true、reply 和可选 drone_id 或 drone_ids。")
-                if not latest_query or latest_query.get("status") != "ok" or not latest_query.get("zones"):
-                    return self._clarification("本轮尚无可确认的最新成功查询，请先成功调用 query_map。")
-                drones = data.get("drone_ids", [data.get("drone_id")])
-                if (not isinstance(drones, list) or not drones or
-                        ("drone_ids" in data and any(not isinstance(d, str) or not d.strip() for d in drones))):
-                    return self._clarification("drone_ids 必须是非空无人机 ID 列表。")
-                data = {"tasks": [{"action": "SearchArea", "drone_id": drones[i % len(drones)],
-                                   "target": {"zone_id": z["zone_id"]}}
-                                  for i, z in enumerate(latest_query["zones"])],
-                        **({"reply": data["reply"]} if "reply" in data else {})}
             # sequence 完全由本地重算；修复历史指令回拷，其他未知字段仍严格拒绝。
             if isinstance(data, dict):
                 tasks = data.get("tasks", [data] if "action" in data else [])
@@ -290,9 +294,7 @@ class Planner:
             intent = Intent.model_validate(data)
         except (ValidationError, ValueError, TypeError):
             return self._clarification("最终 JSON 格式无效；任务仅允许 action、drone_id、target，target 仅填已查询的 zone_id；"
-                                 "不要输出 sequence 等本地字段，也不要只给 reply。或用 question 提问。")
-        if intent.question is not None:
-            return {**self._clarification(intent.question), "stop_reason": "needs_clarification"}
+                                 "不要输出sequence、question等字段，也不要只给reply；请返回非空tasks。")
         for task in intent.tasks:
             if not task.target.zone_id or set(task.target.model_dump(exclude_defaults=True)) - {"zone_id"}:
                 return self._clarification("最终 target 只填写 zone_id；筛选条件请通过 query_map 查询。")
@@ -300,7 +302,7 @@ class Planner:
                 return self._clarification(f"区域 {task.target.zone_id} 及其搜索范围尚未通过 query_map 成功确认，请先查询。")
         missing = set(required) - {task.target.search_key() for task in intent.tasks}
         if missing:
-            return self._clarification("完整搜索范围仍缺少这些区域，请完整确认查询结果，无需逐个重查：" + ", ".join(
+            return self._clarification("完整搜索范围仍缺少这些区域，请在tasks中逐项补全，无需逐个重查：" + ", ".join(
                 sorted(missing)))
         return self._resolve_intent(intent, fleet)
 

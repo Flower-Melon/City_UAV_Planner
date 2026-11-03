@@ -1,6 +1,6 @@
 # llm 功能说明
 
-`planner.py` 将自然语言任务转换为区域搜索计划，`vision.py` 分析本地图片。`utils/` 提供模型连接和地图查询，`prompts/` 保存两类模型的判断规则。
+`planner.py` 通过 `Planner` 生成区域搜索计划，`vision.py` 通过 `VisionAnalyzer` 判断图片中的异常意图。`utils/` 提供模型连接和地图查询，`prompts/` 保存判断规则。网页流程编排和图片标注由 `web/` 负责。
 
 ## 1 主要接口
 
@@ -16,7 +16,10 @@
 | `model` | `str` | 模型名称，由 `create_client()` 返回 |
 | `catalog` | `ZoneCatalog` | 地图查询对象，通常使用 `ZoneCatalog()` |
 
-提示词固定读取 `llm/prompts/search_area.txt`。
+规划分为两个阶段，合计最多调用模型 5 次：
+
+- 查询阶段使用 `llm/prompts/query_map.txt`，发送任务、地图目录摘要、无人机状态和查询工具定义。一次响应可提交多个必要查询；信息不足时返回 `question`，查询失败时仍在本阶段修正或澄清。
+- 全部查询成功后，任务阶段使用 `llm/prompts/search_area.txt`，只发送任务、历史条件、成功查询结果、必需目标 ID 和无人机状态。
 
 区域目录固定读取 `Map/zones/zone_catalog.json`，按当前任务筛选后发送给模型；区域确认和空间查询由 `ZoneCatalog` 完成。
 
@@ -36,7 +39,7 @@
 | `available` | `bool` | 当前是否可接受任务；只有 `True` 的无人机会被分配 |
 | `position_m` | `[x, y, z]` 或 `None` | UE 世界坐标，单位米；未知时填 `None` |
 
-历史问答与本次任务的总长度不超过 16000 字。以无人机位置作为选区参照时，需提供有效的 `position_m`。
+历史问答与本次任务的总长度不超过 16000 字。
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
@@ -54,7 +57,7 @@
 | `target` | `dict` | 搜索目标，仅包含区域 ID |
 | `target.zone_id` | `str` | 地图中的真实区域 ID |
 
-`target` 可直接传给 `UAV.API.search_area()`。实际搜索按目标所在完整街区的道路覆盖执行，不设置缓冲宽度；查询中的 `radius_m` 仍仅用于筛选目标区域，不用于裁剪巡查道路。
+`target` 可直接传给 `UAV.API.search_area()`。
 
 入参样例与调用：
 
@@ -103,20 +106,18 @@ with client:
 
 提示词固定读取 `llm/prompts/search_vision.txt`。
 
-再调用 `analyzer(image_path)`：
+再调用 `analyzer(image_path, context=None)`：
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
 | `image_path` | `str` 或 `Path` | 本地 JPEG 或 PNG 图片路径 |
+| `context` | `str` 或 `None` | 可选，通过参数名传入，说明本次需要判断的主要目标 |
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
 | 返回值 | `dict` | 单张图片的判断结果 |
 | `status` | `str` | `normal` 正常、`abnormal` 发现异常、`uncertain` 无法确定 |
 | `description` | `str` | 中文判断说明 |
-| `detections` | `list[dict]` | 异常目标列表；`abnormal` 必须非空，`normal` / `uncertain` 必须为空 |
-| `detections[i].label` | `str` | 可见异常目标的简短中文说明 |
-| `detections[i].bbox` | `[x_min,y_min,x_max,y_max]` | 相对于完整图片归一化到0–1000的目标框；左上角为原点，X向右、Y向下 |
 
 入参样例与调用：
 
@@ -133,17 +134,10 @@ finally:
 出参样例：
 
 ```python
-{"status": "uncertain", "description": "图片较模糊，无法确认人员是否持有刀具。", "detections": []}
+{"status": "uncertain", "description": "图片较模糊，无法确认人员是否持有刀具。"}
 ```
 
-单独运行 `python vision.py` 时，输出到项目根目录下的 `output/temp/`：
-
-```text
-output/temp/
-├─ analysis.json       本次识别结果，再次运行时覆盖
-└─ abnormal/           异常红框图片（仅异常时生成）
-   └─ 巡查照片.jpg      使用输入图片的名称，格式为JPEG
-```
+单独运行 `python llm/vision.py` 时，只将意图识别结果保存到项目根目录下的 `output/temp/analysis.json`。
 
 ## 2 utils
 
