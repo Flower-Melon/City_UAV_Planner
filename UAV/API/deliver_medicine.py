@@ -1,6 +1,7 @@
 """挂载药箱，按分层飞行图飞至指定地面投递点，完成绞盘投递后悬停。"""
 
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -16,11 +17,13 @@ from .fly_to_point import _world_position
 from ..runtime.airsim_client import AirSimClient
 from ..runtime.airsim_state import WorldFrame, editor_log, vehicle_name
 from ..runtime.flight_control import FlightControl, hold_position, vehicle_lock
-from ..utils.plan_flight_path import _clear_path, _positive, _xyz, plan_flight_path
+from ..utils.plan_flight_path import NoPathError, _clear_path, _flight_graph, _positive, _xyz, plan_flight_path
+from ..utils.select_UAV import _reserve_UAV
 
 _DELIVERY_LOCK = threading.Lock()  # UE 插件只有一个 medkit_01。
 _HOVER_HEIGHT = 15.0
 _POSITION_TOLERANCE = 0.75
+logger = logging.getLogger(__name__)
 
 
 class _Delivery:
@@ -77,7 +80,7 @@ def _position(flight):
 
 def _hold(flight, anchor):
     # 动画期间持续维持高度，避免沿用先前的移动指令。
-    hold_position(flight.client, flight.name, flight._ned(anchor)[2], 0.25)
+    hold_position(flight.client, flight.name, flight._ned(anchor)[2], 0.25, scale=flight.frame.scale)
     if flight.client.call("isApiControlEnabled", flight.name) is not True:
         raise RuntimeError("投递中断：无人机API控制权已释放")
     flight._collision()
@@ -108,10 +111,52 @@ def _align(flight, target, approach):
     _hold(flight, target)
 
 
-def deliver_medicine(drone_id, target_position, max_height, flight_speed=25.0) -> None:
+def _delivery_site(frame, start, requested, cap, speed, radius):
+    """优先精确落点，再由近到远寻找同一地面附近可达的开阔投递点。"""
+    rules = _flight_graph().rules
+    horizontal = rules["gap_margin_m"] + rules["drone_radius_m"]
+    vertical = rules["vertical_margin_m"]
+    offsets = [(0.0, 0.0)]
+    if radius > 0:
+        # 半米起步，避免病人仅因靠墙而被迫大幅偏移；所有点仍受原净空约束。
+        distances = sorted({min(radius, distance) for distance in (0.5, 1.0, 2.0, 3.0, radius)})
+        for distance in distances:
+            offsets.extend((distance * math.cos(i * math.pi / 8), distance * math.sin(i * math.pi / 8))
+                           for i in range(16))
+    for dx, dy in offsets:
+        x, y = requested[0] + dx, requested[1] + dy
+        estimate = (x, y, requested[2])
+        # 先用已有地面高度剔除明显贴墙的候选，减少UE地面查询。
+        if not _clear_path([estimate, (x, y, requested[2] + _HOVER_HEIGHT)], horizontal, vertical):
+            continue
+        try:
+            ground = requested[2] if dx == dy == 0 else frame.ground_z(estimate)
+        except RuntimeError:
+            # 单个候选没有可测地面时，继续检查同一半径内的其他落点。
+            continue
+        # 相邻楼顶或低处道路不能当作病人附近的同一投递地面。
+        if abs(ground - requested[2]) > 1.0:
+            continue
+        target, hover = (x, y, ground), (x, y, ground + _HOVER_HEIGHT)
+        if not _clear_path([target, hover], horizontal, vertical):
+            continue
+        try:
+            plan_flight_path(start, hover, cap, speed)
+        except NoPathError:
+            continue
+        return target, hover
+    scope = "精确落点" if radius == 0 else f"病人周围{radius:g}米内"
+    raise NoPathError(f"{scope}没有满足建筑净空、地面高差及最大高度{cap:g}米限制的可达投递点")
+
+
+def deliver_medicine(drone_id, target_position, max_height, flight_speed=25.0, *, zone_id=None,
+                     delivery_radius_m=0.0) -> None:
     """向 UE 世界地面 XYZ（米）投递药箱；在离地15米处完成动画后悬停。
 
     与 fly_to_point 使用相同的四个入参，但目标 Z 表示落点地面高度。
+    drone_id为None时，按zone_id自动选择并占用一架落地空闲机。
+    delivery_radius_m默认0，精确投递；大于0时允许在指定水平半径内
+    选择同一地面附近的开阔落点，实际地面高度与指定点相差不超过1米。
     不推进病人事件、不切换镜头、不返航；失败时制动并抛出异常。
     """
     target = _xyz(target_position, "地面投递点")
@@ -119,32 +164,41 @@ def deliver_medicine(drone_id, target_position, max_height, flight_speed=25.0) -
     speed = _positive(flight_speed, "飞行速度")
     if cap < _HOVER_HEIGHT:
         raise ValueError("最大离地高度不得低于15米")
-    hover = (*target[:2], target[2] + _HOVER_HEIGHT)
+    if (isinstance(delivery_radius_m, bool) or not isinstance(delivery_radius_m, (int, float))
+            or not math.isfinite(delivery_radius_m) or delivery_radius_m < 0):
+        raise ValueError("投递点搜索半径必须为非负有限数值")
+    requested = target
     if not _DELIVERY_LOCK.acquire(blocking=False):
         raise RuntimeError("已有药品投递任务，当前插件仅支持一个药箱")
     try:
         with AirSimClient() as client:
-            name = vehicle_name(drone_id, client.call("listVehicles"))
-            if not re.fullmatch(r"[\w.-]+", name):
-                raise ValueError("投递机名称只能包含字母、数字、下划线、点和连字符")
-            lock = vehicle_lock(name)
-            if not lock.acquire(blocking=False):
-                raise RuntimeError(f"{name}已有任务正在执行")
+            if drone_id is None:
+                name, lock = _reserve_UAV(zone_id)
+            else:
+                name = vehicle_name(drone_id, client.call("listVehicles"))
+                lock = vehicle_lock(name)
+                if not lock.acquire(blocking=False):
+                    raise RuntimeError(f"{name}已有任务正在执行")
             flight, delivery, attached = None, None, False
             try:
+                if not re.fullmatch(r"[\w.-]+", name):
+                    raise ValueError("投递机名称只能包含字母、数字、下划线、点和连字符")
+                logger.info("救援无人机已选定", extra={"selected_drone_id": name})
                 frame = WorldFrame(client)
                 world, local, origin = frame.vehicle(name)
-                # 先验证目标可达，插件可用且没有正在执行的动画，再接管无人机。
-                plan_flight_path(world, hover, cap, speed)
-                delivery = _Delivery(client)
-                state = delivery.command("status")
-                if state.get("state") not in ("idle", "delivered"):
-                    raise RuntimeError("药箱正在使用，请先完成原投递或执行 citypeople medkit reset")
+                # 先确认挂箱升空段及投递点可达，再接管无人机。
                 ground = frame.ground_z(world)
                 pickup = (*world[:2], max(world[2], ground + 3.0))
                 if not _clear_path([world, pickup], 1.0, 1.0):
                     raise RuntimeError("挂箱升空路径与建筑净空冲突")
-                plan_flight_path(pickup, hover, cap, speed)
+                target, hover = _delivery_site(frame, pickup, requested, cap, speed, delivery_radius_m)
+                logger.info("药品投递落点已确定", extra={
+                    "delivery_position_m": list(target), "requested_position_m": list(requested),
+                })
+                delivery = _Delivery(client)
+                state = delivery.command("status")
+                if state.get("state") not in ("idle", "delivered"):
+                    raise RuntimeError("药箱正在使用，请先完成原投递或执行 citypeople medkit reset")
                 flight = FlightControl(client, frame, name, origin)
                 flight.prepare(world, local)
                 flight._vertical(flight._ned(pickup)[2], min(speed, 2.0))

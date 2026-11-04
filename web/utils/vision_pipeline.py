@@ -29,10 +29,11 @@ def validate_detections(detections):
     if not isinstance(detections, list) or not detections:
         raise ValueError("异常图片需要非空目标列表")
     for detection in detections:
-        if (not isinstance(detection, dict) or set(detection) != {"label", "bbox"}
+        if (not isinstance(detection, dict) or set(detection) != {"status", "label", "bbox"}
+                or detection["status"] not in ("patient", "armed_person")
                 or not isinstance(detection["label"], str) or not detection["label"].strip()
                 or len(detection["label"]) > 120):
-            raise ValueError("异常目标需要非空label和bbox")
+            raise ValueError("异常目标需要status（patient或armed_person）、非空label和bbox")
         box = detection["bbox"]
         if (not isinstance(box, list) or len(box) != 4
                 or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1000 for v in box)
@@ -59,7 +60,8 @@ def save_annotated_image(image_path, detections, output_path):
         x1, y1, x2, y2 = detection["bbox"]
         box = (x1 * width / 1000, y1 * height / 1000, x2 * width / 1000, y2 * height / 1000)
         draw.rectangle(box, outline="red", width=line_width)
-        label = detection["label"][:40]
+        category = {"patient": "病人", "armed_person": "持刀人员"}[detection["status"]]
+        label = f"{category}：{detection['label']}"[:40]
         bounds = draw.textbbox((0, 0), label, font=font)
         label_width, label_height = bounds[2] - bounds[0] + 8, bounds[3] - bounds[1] + 6
         left = max(0, min(box[0], width - label_width))
@@ -101,10 +103,11 @@ class SearchVisionPipeline:
                 llm_requested = True
                 analysis = self.analyzer(yolo_dir / target["crop_image"], context=target_context(target))
                 record.update(analysis)
-                if analysis["status"] == "abnormal":
+                if analysis["status"] in ("patient", "armed_person"):
                     x1, y1, x2, y2 = target["bbox_xyxy"]
                     # 只转换 YOLO 原图像素框，大模型不生成或修正定位信息。
                     detections.append({
+                        "status": analysis["status"],
                         "label": analysis["description"][:120],
                         "bbox": [x1 / width * 1000, y1 / height * 1000,
                                  x2 / width * 1000, y2 / height * 1000],
@@ -117,7 +120,7 @@ class SearchVisionPipeline:
 
         if detections:
             status = "abnormal"
-        elif errors or any(target["status"] == "uncertain" for target in targets):
+        elif errors:
             status = "uncertain"
         else:
             status = "normal"

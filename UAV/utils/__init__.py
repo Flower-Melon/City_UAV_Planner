@@ -1,4 +1,4 @@
-"""不连接仿真的无人机路径规划。"""
+"""无人机路径规划与基于实时仿真状态的任务选机。"""
 
 from .plan_flight_path import NoPathError, plan_flight_path
 

@@ -1,4 +1,4 @@
-"""分析本地目标图片的异常意图，只返回状态和中文说明，不负责定位。"""
+"""将本地目标图片分为正常、病人、持刀人员，返回类别和中文说明。"""
 
 import base64
 import json
@@ -20,12 +20,12 @@ PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "search_vision.txt"
 class VisionAnalyzer:
     @staticmethod
     def _validate_analysis(value):
-        """校验大模型返回的意图状态和中文说明。"""
+        """校验大模型返回的三类目标标识和中文说明。"""
         if (not isinstance(value, dict) or set(value) != {"status", "description"}
-                or value["status"] not in ("normal", "abnormal", "uncertain")
+                or value["status"] not in ("normal", "patient", "armed_person")
                 or not isinstance(value["description"], str) or not value["description"].strip()
                 or len(value["description"]) > 2000):
-            raise ValueError("视觉结果只需要status和非空description")
+            raise ValueError("视觉结果需要status（normal、patient或armed_person）和非空description")
         return value
 
     # 加载视觉提示词并准备可复用的模型连接，可注入已有客户端和模型。
@@ -57,7 +57,7 @@ class VisionAnalyzer:
             reasoning={"effort": "minimal"}, text={"format": {"type": "json_object"}},
             input=[{"role": "user", "content": [
                 {"type": "input_text", "text": (
-                    f"图片尺寸{width}×{height}像素。请只判断可见目标的异常意图，返回status和description，不返回坐标。"
+                    f"图片尺寸{width}×{height}像素。请将主要目标标识为normal、patient或armed_person，返回status和description，不返回坐标。"
                     + (f"\n{context}" if context else ""))},
                 {"type": "input_image", "image_url": f"data:{mime};base64,{encoded}", "detail": "high"}]}])
         if response.status != "completed":

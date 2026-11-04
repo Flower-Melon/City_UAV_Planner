@@ -1,5 +1,5 @@
 'use strict';
-// 网页任务流程统一入口：模型规划、飞行调度、巡查视觉分析及告警图片。
+// 网页任务流程统一入口：模型规划、巡查监控、视觉分析及病人药品投递。
 const {spawn} = require('node:child_process');
 const {randomUUID} = require('node:crypto');
 const fs = require('node:fs');
@@ -7,6 +7,18 @@ const path = require('node:path');
 const PythonRuntime = require('./python-runtime.cjs');
 const TERMINAL = new Set(['completed', 'failed']);
 const DEFAULT_FLIGHT = Object.freeze({max_height: 60, flight_speed: 30, flight_height: 15});
+const TARGET_MERGE_DISTANCE_M = 5;
+const TARGET_MERGE_HEIGHT_M = 2;
+
+// 相同任务按照片编号排序；跨任务优先比较曝光时间，不依赖模型响应顺序。
+function observedBefore(left, right) {
+  if (left.task_id === right.task_id) return left.image < right.image;
+  if (/^[1-9]\d*$/.test(left.capture_time_ns) && /^[1-9]\d*$/.test(right.capture_time_ns)) {
+    const a = BigInt(left.capture_time_ns), b = BigInt(right.capture_time_ns);
+    if (a !== b) return a < b;
+  }
+  return left.sequence < right.sequence || left.sequence === right.sequence && left.image < right.image;
+}
 
 function requestError(message, statusCode) {
   return Object.assign(new Error(message), {statusCode});
@@ -42,7 +54,7 @@ function planningFleet(state, now = Date.now()) {
   return state.drones.map(({name, position_m, available}) => ({name, position_m: [...position_m], available}));
 }
 
-// 管理一批搜索任务；同机按序执行，不同机并行。
+// 按区域排队；每组配备巡查机与高空监控机，监控机可在组内转场复用。
 class MissionExecutor {
   constructor({root, runtime, timeoutMs = 15000, visionPollMs = 500}) {
     this.root = root;
@@ -55,6 +67,8 @@ class MissionExecutor {
     this.runPromise = null;
     this.visionPollMs = visionPollMs;
     this.imageFiles = new Map();
+    this.rescuePromises = [];
+    this.targets = [];
   }
 
   assertIdle() {
@@ -69,17 +83,16 @@ class MissionExecutor {
       throw requestError('只接受通过校验的 ready 搜索规划。', 400);
     const map = JSON.parse(fs.readFileSync(path.join(this.root, 'Map', 'zones', 'functional_zones.json'), 'utf8').replace(/^\uFEFF/, ''));
     const zoneIds = new Set(map.features.map(feature => feature.id));
-    const sequences = new Map(), targets = new Set();
+    const sequences = new Set(), targets = new Set();
     const tasks = plan.commands.map(command => {
       if (!command || typeof command !== 'object') throw requestError('搜索任务必须是对象。', 400);
-      const name = command.drone_id, sequence = command.sequence, raw = command.target;
-      if (typeof name !== 'string' || !name.trim() || name !== name.trim())
-        throw requestError('drone_id 必须是实际无人机名称。', 400);
+      const sequence = command.sequence, raw = command.target;
+      if (Object.hasOwn(command, 'drone_id'))
+        throw requestError('搜索任务不接受 drone_id，无人机由执行端自动选择。', 400);
       if (!Number.isSafeInteger(sequence) || sequence < 1)
         throw requestError('sequence 必须为正整数。', 400);
-      const numbers = sequences.get(name) || new Set();
-      if (numbers.has(sequence)) throw requestError('同一无人机的 sequence 不能重复。', 400);
-      numbers.add(sequence); sequences.set(name, numbers);
+      if (sequences.has(sequence)) throw requestError('sequence 不能重复。', 400);
+      sequences.add(sequence);
       if (!raw || typeof raw.zone_id !== 'string' || !zoneIds.has(raw.zone_id))
         throw requestError('target 必须包含真实的 zone_id。', 400);
       if (Object.keys(raw).some(key => key !== 'zone_id'))
@@ -87,13 +100,11 @@ class MissionExecutor {
       const key = raw.zone_id;
       if (targets.has(key)) throw requestError('同一搜索范围不能重复派发。', 400);
       targets.add(key);
-      return {drone_id: name, sequence, target: {zone_id: raw.zone_id}, status: 'queued'};
+      return {drone_id: null, sequence, target: {zone_id: raw.zone_id}, status: 'queued'};
     });
-    for (const numbers of sequences.values()) {
-      if ([...numbers].some(number => number > numbers.size))
-        throw requestError('同一无人机的 sequence 必须从 1 开始连续编号。', 400);
-    }
-    return tasks.sort((a, b) => a.drone_id < b.drone_id ? -1 : a.drone_id > b.drone_id ? 1 : a.sequence - b.sequence);
+    if ([...sequences].some(number => number > sequences.size))
+      throw requestError('sequence 必须从 1 开始连续编号。', 400);
+    return tasks.sort((a, b) => a.sequence - b.sequence);
   }
 
   async start(plan, flight) {
@@ -103,15 +114,21 @@ class MissionExecutor {
       const tasks = this.validate(plan);
       const fleet = await this.runtime.request('fleet', {}, {channel: 'fleet', timeoutMs: this.timeoutMs});
       const available = new Set(Array.isArray(fleet) ? fleet.filter(drone => drone.available === true).map(drone => drone.name) : []);
-      if (tasks.some(task => !available.has(task.drone_id)))
-        throw requestError('规划中的无人机已离线或不可用，请重新规划。', 409);
+      if (available.size < 2)
+        throw requestError('区域搜索和高空监控至少需要两架可用无人机，请稍后重试。', 409);
+      this.parallelism = Math.min(Math.floor(available.size / 2), tasks.length);
       if (this.closed) throw requestError('执行服务已停止。', 503);
-      this.mission = {mission_id: randomUUID().replaceAll('-', ''), status: 'running', executed: false, settings, tasks};
+      this.mission = {mission_id: randomUUID().replaceAll('-', ''), status: 'running', executed: false,
+        settings, tasks, rescues: []};
       this.imageFiles.clear();
+      this.rescuePromises = [];
+      this.targets = [];
       tasks.forEach((task, index) => {
         task.task_id = `task_${index + 1}`;
         task.capture_directory = null;
+        task.monitor = {status: 'queued', drone_id: null, position_m: null, flight_height: null};
         task.vision = {status: 'queued', total: 0, analyzed: 0, filtered: 0, llm_analyzed: 0, normal: 0, abnormal: 0,
+          patient: 0, armed_person: 0,
           uncertain: 0, failed: 0, anomalies: [], errors: []};
       });
       this.runPromise = this.run();
@@ -121,39 +138,54 @@ class MissionExecutor {
 
   async run() {
     try {
-      const queues = new Map();
-      for (const task of this.mission.tasks) {
-        if (!queues.has(task.drone_id)) queues.set(task.drone_id, []);
-        queues.get(task.drone_id).push(task);
-      }
-      await Promise.all([...queues.values()].map(queue => this.fly(queue)));
+      const queue = [...this.mission.tasks];
+      // 等待全部工作组结束，确保不会在收尾后继续新增救援任务。
+      const workers = await Promise.allSettled(Array.from({length: this.parallelism}, (_, index) => this.fly(queue, index)));
+      const failure = workers.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
     } catch (error) {
       this.mission.error_type = error.errorType || error.name;
     } finally {
+      // 投递独立于视觉分析并行执行；全部已派发投递返回后才结束全流程。
+      const rescues = await Promise.allSettled(this.rescuePromises);
+      const rescueFailure = rescues.find(result => result.status === 'rejected');
+      if (rescueFailure) this.mission.error_type = rescueFailure.reason.errorType || rescueFailure.reason.name;
       for (const task of this.mission.tasks) if (task.status === 'queued') {
-        task.status = 'skipped'; task.vision.status = 'skipped';
+        task.status = 'skipped'; task.vision.status = 'skipped'; task.monitor.status = 'skipped';
       }
-      this.mission.status = this.mission.error_type || this.mission.tasks.some(task => task.status !== 'completed') ? 'failed' : 'completed';
+      this.mission.status = this.mission.error_type || this.mission.tasks.some(task => task.status !== 'completed') ||
+        this.mission.rescues.some(rescue => rescue.status !== 'delivered') ? 'failed' : 'completed';
     }
   }
 
-  async fly(queue) {
+  async fly(queue, workerId) {
     let failed = false;
-    for (const task of queue) {
-      if (failed || this.closed) { task.status = 'skipped'; task.vision.status = 'skipped'; continue; }
+    let monitorDroneId = null, previousMonitor = null;
+    while (queue.length) {
+      if (failed || this.closed || this.uncertain) return;
+      const task = queue.shift();
       task.status = 'running'; this.mission.executed = true;
       let finished = false;
-      const analysis = this.analyzeTask(task, () => finished).catch(error => {
+      const analysis = this.analyzeTask(task, () => finished, workerId).catch(error => {
         task.vision.status = 'failed'; task.vision.error = error.message;
       });
+      const monitoring = this.startMonitor(task, workerId, monitorDroneId);
       try {
+        // 先确认监控机已占用，再启动巡查选机；两条航线仍并行飞行。
+        await monitoring.selected;
+        monitorDroneId = task.monitor.drone_id;
+        if (previousMonitor) previousMonitor.status = 'relocated';
+        previousMonitor = task.monitor;
+        if (this.closed || this.uncertain) throw Error('任务已停止，未启动区域巡查。');
         const result = await this.runtime.request('search', {
-          drone_id: task.drone_id, target: structuredClone(task.target),
+          target: structuredClone(task.target),
           flight: {...this.mission.settings}
-        }, {channel: `drone:${task.drone_id}`, timeoutMs: 0, onEvent: event => {
+        }, {channel: `search:${workerId}`, timeoutMs: 0, onEvent: event => {
+          if (event?.type === 'drone_selected') this.setSelectedDrone(task, event.drone_id);
           if (event?.type === 'capture_directory') this.setCaptureDirectory(task, event.capture_directory);
         }});
         if (result?.completed !== true) throw Object.assign(Error('搜索进程未确认任务完成。'), {uncertain: true});
+        this.setSelectedDrone(task, result.drone_id);
         this.setCaptureDirectory(task, result.capture_directory);
         task.status = 'analyzing';
       } catch (error) {
@@ -162,10 +194,55 @@ class MissionExecutor {
         failed = true;
       } finally {
         finished = true;
-        await analysis;
+        const [monitorError] = await Promise.all([monitoring.completed, analysis]);
+        if (monitorError) {
+          Object.assign(task, {status: 'failed', error_type: monitorError.errorType || monitorError.name,
+            error: `高空监控失败：${monitorError.message}`});
+          failed = true;
+        }
         if (task.status === 'analyzing') task.status = 'completed';
       }
     }
+  }
+
+  startMonitor(task, workerId, droneId) {
+    const monitor = task.monitor;
+    monitor.status = 'flying';
+    let selected, selectionFailed;
+    const selection = new Promise((resolve, reject) => { selected = resolve; selectionFailed = reject; });
+    const assign = name => {
+      if (typeof name !== 'string' || !name.trim() || name !== name.trim() ||
+          monitor.drone_id && monitor.drone_id !== name || droneId && droneId !== name)
+        throw Error('执行端返回的监控无人机ID无效或发生变更。');
+      monitor.drone_id = name;
+      selected();
+    };
+    // 始终将失败转换为结果，避免等待巡查完成期间出现未处理的Promise拒绝。
+    const completed = this.runtime.request('monitor', {
+      zone_id: task.target.zone_id, drone_id: droneId
+    }, {channel: `monitor:${workerId}`, timeoutMs: 0, onEvent: event => {
+      if (event?.type === 'drone_selected') assign(event.drone_id);
+    }}).then(result => {
+      if (result?.hovering !== true || !Array.isArray(result.position_m) || result.position_m.length !== 3 ||
+          !result.position_m.every(Number.isFinite) || !Number.isFinite(result.flight_height) || result.flight_height <= 0)
+        throw Object.assign(Error('监控进程未确认到位悬停。'), {uncertain: true});
+      assign(result.drone_id);
+      Object.assign(monitor, {status: 'hovering', position_m: result.position_m, flight_height: result.flight_height});
+      return null;
+    }).catch(error => {
+      Object.assign(monitor, {status: 'failed', error_type: error.errorType || error.name, error: error.message});
+      this.uncertain ||= !!error.uncertain;
+      selectionFailed(error);
+      return error;
+    });
+    return {selected: selection, completed};
+  }
+
+  setSelectedDrone(task, name) {
+    if (typeof name !== 'string' || !name.trim() || name !== name.trim() ||
+        task.drone_id && task.drone_id !== name || task.monitor.drone_id === name)
+      throw Error('执行端返回的无人机ID无效或发生变更。');
+    task.drone_id = name;
   }
 
   setCaptureDirectory(task, directory) {
@@ -191,7 +268,7 @@ class MissionExecutor {
     return {directory, frames};
   }
 
-  async analyzeTask(task, finished) {
+  async analyzeTask(task, finished, workerId) {
     const seen = new Set();
     const summary = task.vision;
     summary.status = 'running';
@@ -204,12 +281,13 @@ class MissionExecutor {
         seen.add(frame.image);
         const record = {image: frame.image, source_image: `../capture/${frame.image}`,
           drone_id: task.drone_id, task_id: task.task_id,
+          sequence: task.sequence, capture_time_ns: frame.capture_time_ns || null,
           zone_id: task.target.zone_id, position_m: frame.position_m, edge_id: frame.edge_id};
         try {
           // 每个目标请求由模型客户端单独限制超时，整帧不再共用固定的两分钟额度。
           const result = await this.runtime.request('vision', {
             image_path: path.relative(this.root, path.join(directory, frame.image))
-          }, {channel: `vision:${task.drone_id}`, timeoutMs: 0});
+          }, {channel: `vision:${workerId}`, timeoutMs: 0});
           if (this.closed) break;
           if (!result || !['normal', 'abnormal', 'uncertain'].includes(result.status) ||
               typeof result.description !== 'string' || !Array.isArray(result.detections) ||
@@ -217,7 +295,8 @@ class MissionExecutor {
               typeof result.llm_requested !== 'boolean' || typeof result.analysis_failed !== 'boolean' ||
               result.yolo_detection_count < 0 || result.llm_skipped !== (result.yolo_detection_count === 0) ||
               (result.status === 'abnormal') !== (result.detections.length > 0) ||
-              result.detections.some(detection => typeof detection.label !== 'string' ||
+              result.detections.some(detection => !detection || !['patient', 'armed_person'].includes(detection.status) ||
+                typeof detection.label !== 'string' || !detection.label.trim() ||
                 !Array.isArray(detection.bbox) || detection.bbox.length !== 4 ||
                 detection.bbox.some(v => !Number.isFinite(v) || v < 0 || v > 1000) ||
                 detection.bbox[0] >= detection.bbox[2] || detection.bbox[1] >= detection.bbox[3]))
@@ -233,6 +312,8 @@ class MissionExecutor {
             throw Error('本图所有目标的意图识别失败：' + (result.target_errors?.[0]?.error || result.description));
           summary.analyzed++; summary[result.status]++;
           summary.llm_analyzed++;
+          // 图片可能同时包含病人和持刀人员，按目标分别计数并保留每个框的类别。
+          for (const detection of result.detections) summary[detection.status]++;
           for (const error of result.target_errors || []) {
             summary.errors.push({image: frame.image, error: `目标${error.target_index}：${error.error}`});
           }
@@ -242,6 +323,11 @@ class MissionExecutor {
             this.imageFiles.set(id, path.join(directory, frame.image));
             record.image_url = `/api/llm/image?mission_id=${this.mission.mission_id}&id=${encodeURIComponent(id)}`;
             summary.anomalies.push(record);
+            const matched = new Set();
+            for (const detection of record.detections) {
+              if (this.closed) break;
+              await this.registerTarget(task, record, detection, directory, workerId, matched);
+            }
           }
         } catch (error) {
           if (this.closed) break;
@@ -256,15 +342,130 @@ class MissionExecutor {
     summary.status = this.closed ? 'stopped' : summary.failed || summary.errors.length ? 'completed_with_errors' : 'completed';
   }
 
+  async registerTarget(task, record, detection, directory, workerId, matched) {
+    let position = null, locationError = null;
+    try {
+      const result = await this.runtime.request('locate_target', {
+        image_path: path.relative(this.root, path.join(directory, record.image)), bbox: [...detection.bbox]
+      }, {channel: `location:${workerId}`, timeoutMs: this.timeoutMs});
+      if (this.closed) return;
+      position = result?.target_position;
+      if (!Array.isArray(position) || position.length !== 3 || !position.every(Number.isFinite))
+        throw Error('未返回有效目标地面坐标。');
+    } catch (error) {
+      if (this.closed) return;
+      position = null;
+      locationError = `目标地面定位失败：${error.message}`;
+      task.vision.errors.push({image: record.image, error: locationError});
+    }
+    // 匹配与登记间没有await，多个视觉工作组也不会为同一位置重复建立目标。
+    // 同一照片内一对一匹配，避免把并排出现的不同人员合并。
+    let target = null, nearest = Infinity;
+    if (position) for (const candidate of this.targets) {
+      if (candidate.status !== detection.status || !candidate.position_m || matched.has(candidate.target_id)) continue;
+      const distance = Math.hypot(candidate.position_m[0] - position[0], candidate.position_m[1] - position[1]);
+      if (distance <= TARGET_MERGE_DISTANCE_M && distance < nearest &&
+          Math.abs(candidate.position_m[2] - position[2]) <= TARGET_MERGE_HEIGHT_M) {
+        target = candidate; nearest = distance;
+      }
+    }
+    const observation = {...record, description: detection.label, detections: [structuredClone(detection)]};
+    if (!target) {
+      target = {target_id: `target_${this.targets.length + 1}`, status: detection.status,
+        position_m: position && [...position], sightings: 0, rescue_id: null,
+        first_observation: observation, last_observation: observation, location_error: locationError};
+      this.targets.push(target);
+    } else {
+      if (observedBefore(observation, target.first_observation)) target.first_observation = observation;
+      if (observedBefore(target.last_observation, observation)) {
+        target.last_observation = observation;
+        target.position_m = [...position];
+      }
+    }
+    target.sightings++;
+    matched.add(target.target_id);
+    detection.target_id = target.target_id;
+    detection.position_m = position && [...position];
+    // 只有首次登记的病人才创建救援；失败、执行中及已完成均不会被重复帧再次派发。
+    if (target.status === 'patient' && !target.rescue_id) this.rescuePatient(target);
+    detection.rescue_id = target.rescue_id;
+  }
+
+  rescuePatient(target) {
+    const record = target.first_observation;
+    const rescue = {rescue_id: `rescue_${this.mission.rescues.length + 1}`, target_id: target.target_id,
+      task_id: record.task_id, zone_id: record.zone_id, image: record.image,
+      bbox: [...record.detections[0].bbox], drone_id: null,
+      requested_position: target.position_m && [...target.position_m],
+      target_position: target.position_m && [...target.position_m],
+      status: target.position_m ? 'dispatching' : 'failed'};
+    if (target.location_error) rescue.error = target.location_error;
+    target.rescue_id = rescue.rescue_id;
+    this.mission.rescues.push(rescue);
+    if (rescue.status === 'dispatching') {
+      // 每个病人使用独立进程立即派发，不排队、不等待药箱、不复用此前的救援机。
+      this.rescuePromises.push(this.deliverRescue(rescue));
+    }
+  }
+
+  async deliverRescue(rescue) {
+    const channel = `delivery:${rescue.rescue_id}`;
+    const setTarget = position => {
+      const requested = rescue.requested_position;
+      if (!Array.isArray(position) || position.length !== 3 || !position.every(Number.isFinite) ||
+          Math.hypot(position[0] - requested[0], position[1] - requested[1]) > 5.01 ||
+          Math.abs(position[2] - requested[2]) > 1.01)
+        throw Error('执行端返回的药品落点无效或超出病人附近的投递范围。');
+      rescue.target_position = [...position];
+    };
+    const assign = name => {
+      if (typeof name !== 'string' || !name.trim() || name !== name.trim() ||
+          rescue.drone_id && rescue.drone_id !== name ||
+          this.mission.rescues.some(other => other !== rescue && other.drone_id === name) ||
+          this.mission.tasks.some(task => task.monitor.drone_id === name))
+        throw Error('执行端返回的救援无人机ID无效或重复。');
+      rescue.drone_id = name;
+      rescue.status = 'delivering';
+    };
+    try {
+      if (this.closed || this.uncertain) throw Error('任务已停止或执行状态未确认，未派出救援机。');
+      const {max_height, flight_speed} = this.mission.settings;
+      const result = await this.runtime.request('deliver_medicine', {
+        zone_id: rescue.zone_id, target_position: [...rescue.target_position], flight: {max_height, flight_speed}
+      }, {channel, timeoutMs: 0, onEvent: event => {
+        if (event?.type === 'drone_selected') assign(event.drone_id);
+        if (event?.type === 'delivery_target_selected') setTarget(event.target_position);
+      }});
+      if (result?.delivered !== true)
+        throw Object.assign(Error('救援进程未确认药品投递完成。'), {uncertain: true});
+      assign(result.drone_id);
+      setTarget(result.target_position);
+      rescue.status = 'delivered';
+    } catch (error) {
+      this.uncertain ||= !!error.uncertain;
+      Object.assign(rescue, {status: this.closed ? 'stopped' : error.uncertain ? 'uncertain' : 'failed',
+        error_type: error.errorType || error.name, error: error.message});
+    } finally {
+      this.runtime.cancel(channel);
+    }
+  }
+
   status() {
     if (!this.mission) return null;
     const mission = structuredClone(this.mission);
     const summaries = mission.tasks.map(task => task.vision);
-    mission.vision = Object.fromEntries(['total', 'analyzed', 'filtered', 'llm_analyzed', 'normal', 'abnormal', 'uncertain', 'failed']
+    mission.vision = Object.fromEntries(['total', 'analyzed', 'filtered', 'llm_analyzed', 'normal', 'abnormal',
+      'patient', 'armed_person', 'uncertain', 'failed']
       .map(key => [key, summaries.reduce((sum, item) => sum + item[key], 0)]));
     mission.vision.status = summaries.some(item => ['queued', 'running'].includes(item.status)) ? 'running' :
       summaries.some(item => item.status === 'failed' || item.failed || item.errors.length) ? 'completed_with_errors' : 'completed';
     mission.vision.anomalies = summaries.flatMap(item => item.anomalies);
+    mission.vision.targets = structuredClone(this.targets).sort((a, b) =>
+      observedBefore(a.first_observation, b.first_observation) ? -1 :
+        observedBefore(b.first_observation, a.first_observation) ? 1 : 0);
+    mission.vision.unique_targets = this.targets.length;
+    mission.vision.unique_patient = this.targets.filter(target => target.status === 'patient').length;
+    mission.vision.unique_armed_person = this.targets.filter(target => target.status === 'armed_person').length;
     mission.vision.errors = summaries.flatMap(item => item.error ? [{error: item.error}] : item.errors);
     return mission;
   }
@@ -273,11 +474,12 @@ class MissionExecutor {
 
 // 网页接口只在此组织“取状态 → 规划 → 派发”，进度直接来自任务对象。
 class LlmController {
-  constructor({root, getState = () => null, spawnProcess = spawn,
+  constructor({root, getState = () => null, clearTrails = () => {}, spawnProcess = spawn,
     timeoutMs = 660000, executionTimeoutMs = 15000, runtime = null}) {
     this.runtime = runtime || new PythonRuntime({root, spawnProcess});
     this.executor = new MissionExecutor({root, runtime: this.runtime, timeoutMs: executionTimeoutMs});
     this.getState = getState;
+    this.clearTrails = clearTrails;
     this.timeoutMs = timeoutMs;
     this.executionTimeoutMs = executionTimeoutMs;
     this.plan = null;
@@ -312,10 +514,13 @@ class LlmController {
         await this.runtime.terminateAll();
         if (previous.runPromise) await previous.runPromise;
         if (this.closed) return;
-        const result = await this.runtime.request('reset', {}, {channel: 'reset', timeoutMs: 120000});
+        const result = await this.runtime.request('reset', {
+          reset_delivery: !!previous.mission?.rescues.some(rescue => rescue.drone_id)
+        }, {channel: 'reset', timeoutMs: 120000});
         if (result?.reset !== true) throw Error('无人机复位未确认，请重试。');
         await this.runtime.terminateAll();
         if (this.closed) return;
+        await this.clearTrails();
         this.executor = new MissionExecutor({root: previous.root, runtime: this.runtime, timeoutMs: this.executionTimeoutMs});
         this.plan = null;
         this.resetCompleted = true;

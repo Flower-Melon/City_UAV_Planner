@@ -10,11 +10,13 @@ const LlmController = require('./server/llm.cjs');
 const AbnormalController = require('./server/abnormal.cjs');
 const root = fs.realpathSync(path.resolve(__dirname, '..'));
 const airsimAPI = new AirsimController({root});
-const llmAPI = new LlmController({root, getState: () => airsimAPI.getState()});
+const llmAPI = new LlmController({root, getState: () => airsimAPI.getState(),
+  clearTrails: () => airsimAPI.clearTrails()});
 const abnormalAPI = new AbnormalController({root});
 const identity = createHash('sha256').update('town12-live-viewer-v9-abnormal:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
 const revisionHash = createHash('sha256');
 for (const relative of ['web/serve.cjs', 'web/server/llm.cjs', 'web/server/python-runtime.cjs',
+  'web/server/airsim.cjs',
   'web/utils/python_bridge.py', 'UAV/API/reset_uav.py'])
   revisionHash.update(relative).update(fs.readFileSync(path.join(root, relative)));
 const revision = revisionHash.digest('hex');

@@ -31,7 +31,6 @@ class Target(ZoneQuery):
 
 class Task(StrictModel):
     action: Literal["SearchArea"]
-    drone_id: str | None = None
     target: Target
 
 
@@ -241,12 +240,9 @@ class Planner:
         if not available:
             return self._clarification("当前没有可用无人机，请更新无人机快照。")
         try:
-            # 先校验全部目标与显式资源，再分配，避免生成部分有效的任务。
+            # 先校验全部目标；执行时由UAV层根据实时状态分配无人机。
             resolved, zone_ids = [], set()
             for task in intent.tasks:
-                if task.drone_id is not None:
-                    if task.drone_id not in available:
-                        raise Clarification(f"无人机 {task.drone_id} 不存在或不可用。")
                 zones = self.catalog.query(task.target.to_query(),
                                            [{"name": d["name"], "position_m": d["position_m"]} for d in fleet])
                 for zone in zones:
@@ -255,22 +251,12 @@ class Planner:
                         raise Clarification("多个任务指向同一区域，请明确是否需要重复搜索。", [zone])
                     zone_ids.add(key)
                 resolved.append((task, zones))
-            # 先计入显式任务，再把其余区域分给任务数最少的无人机，同数按 ID。
-            loads = dict.fromkeys(sorted(available), 0)
-            for task, zones in resolved:
-                if task.drone_id:
-                    loads[task.drone_id] += len(zones)
-            sequences = dict.fromkeys(loads, 0)
             commands = []
             for task, zones in resolved:
                 for zone in zones:
-                    drone_id = task.drone_id or min(loads, key=lambda name: (loads[name], name))
-                    if task.drone_id is None:
-                        loads[drone_id] += 1
-                    sequences[drone_id] += 1
-                    commands.append({"drone_id": drone_id, "sequence": sequences[drone_id],
+                    commands.append({"sequence": len(commands) + 1,
                                      "target": {"zone_id": zone["zone_id"]}})
-            return {"status": "ready", "message": intent.reply or "已生成搜索计划，同一无人机按顺序逐个搜索。",
+            return {"status": "ready", "message": intent.reply or "已生成区域搜索计划，执行时将根据实时状态自动选择无人机。",
                     "commands": commands}
         except Clarification as error:
             return self._clarification(str(error))
@@ -293,7 +279,7 @@ class Planner:
                             task.pop("sequence", None)
             intent = Intent.model_validate(data)
         except (ValidationError, ValueError, TypeError):
-            return self._clarification("最终 JSON 格式无效；任务仅允许 action、drone_id、target，target 仅填已查询的 zone_id；"
+            return self._clarification("最终 JSON 格式无效；任务仅允许 action、target，target 仅填已查询的 zone_id；"
                                  "不要输出sequence、question等字段，也不要只给reply；请返回非空tasks。")
         for task in intent.tasks:
             if not task.target.zone_id or set(task.target.model_dump(exclude_defaults=True)) - {"zone_id"}:
@@ -312,7 +298,7 @@ if __name__ == "__main__":
     from .utils.client import create_client, error_message
 
     # 修改下面的任务和无人机状态即可调试；只调用模型，不连接 AirSim。
-    instruction = "让 UAV_01 完整巡查第一学校所在街区"
+    instruction = "完整巡查第一学校所在街区"
     fleet = [{"name": "UAV_01", "available": True, "position_m": None}]
     try:
         client, model = create_client()

@@ -49,9 +49,9 @@ def editor_log():
     return max(logs, key=lambda p: p.stat().st_mtime)
 
 
-def _run_ue_json(client, code, token, rejected_message, timeout_message):
+def _run_ue_json(client, code, token, rejected_message, timeout_message, *, log_path=None):
     """执行 UE Python 命令并读取带标记的 JSON 日志结果。"""
-    log = editor_log()
+    log = log_path if log_path is not None else editor_log()
     offset = log.stat().st_size
     if not client.call("simRunConsoleCommand", "py " + code):
         raise RuntimeError(rejected_message)

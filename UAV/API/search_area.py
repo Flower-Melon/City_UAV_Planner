@@ -17,10 +17,12 @@ if not __package__:
     __package__ = "UAV.API"
 
 from ..runtime.airsim_client import AirSimClient
-from ..runtime.airsim_state import WorldFrame, vector, vehicle_name
-from ..runtime.flight_control import FlightControl, ROUTE_TOLERANCE_M, vehicle_lock
+from ..runtime.airsim_state import WorldFrame, vector
+from ..runtime.flight_control import FlightControl, ROUTE_TOLERANCE_M
+from ..runtime.kill_trees import CameraTreeFilter
 from ..utils.plan_flight_path import _default_graph, plan_flight_path
 from ..utils.plan_search_path import plan_search_path
+from ..utils.select_UAV import _reserve_UAV
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "output"
 logger = logging.getLogger(__name__)
@@ -52,7 +54,9 @@ class SearchCapture:
         self.capture_directory = self.directory / "capture"
         self.capture_directory.mkdir()
         self.camera = "bottom_center"
+        self.camera_fov = None
         self.client = (client_factory or AirSimClient)(timeout=15)
+        self.tree_filter = CameraTreeFilter(self.client, name)
         self.images = 0
         self.records = {}
 
@@ -70,6 +74,7 @@ class SearchCapture:
         self.records[filename] = records
 
     def _image(self):
+        self.tree_filter.refresh()
         responses = self.client.call(
             "simGetImages",
             [{"camera_name": self.camera, "image_type": 0, "pixels_as_float": False, "compress": True}],
@@ -92,9 +97,14 @@ class SearchCapture:
             image.save(output, "JPEG", quality=95, subsampling=0)
         return output.getvalue(), response
 
-    def preflight(self):
+    def preflight(self, *, reclaim_stale=False):
         # 起飞前仅检查下视相机存在，不取图。
-        self.client.call("simGetCameraInfo", self.camera, self.name, False)
+        info = self.client.call("simGetCameraInfo", self.camera, self.name, False)
+        self.camera_fov = float(info["fov"])
+        if not math.isfinite(self.camera_fov) or not 0 < self.camera_fov < 180:
+            raise RuntimeError("巡查相机视场角无效")
+        result = self.tree_filter.start(reclaim_stale=reclaim_stale)
+        self.log("events.json", {"type": "camera_trees_hidden", **result})
 
     def capture_distance(self, point, edge_id, distance, edge_distance):
         return self._capture(tuple(point), {
@@ -129,6 +139,10 @@ class SearchCapture:
                 frame = {
                     "image": filename,
                     "position_m": position, "edge_id": sample["edge_id"],
+                    "camera_orientation_ned": response["camera_orientation"],
+                    "camera_fov_deg": self.camera_fov,
+                    # 纳秒时间戳保存为字符串，避免网页JSON解析损失整数精度。
+                    "capture_time_ns": str(response.get("time_stamp") or ""),
                 }
                 frames = [*self.records.get("frame.json", []), frame]
                 self.write_records(self.capture_directory / "frame.json", frames)
@@ -144,7 +158,10 @@ class SearchCapture:
                     raise RuntimeError(f"巡查拍照失败：{error}") from error
 
     def close(self):
-        self.client.close()
+        try:
+            self.tree_filter.close()
+        finally:
+            self.client.close()
 
 
 class _DistanceCapture:
@@ -269,7 +286,6 @@ def _patrol_edge(points, edge_lookup):
 
 
 def search_area(
-    drone_id,
     target,
     flight_height,
     flight_speed=30.0,
@@ -281,8 +297,9 @@ def search_area(
     """三维导航接入街区、沿道路巡查拍照，完成后返航降落。
 
     flight_height是相对起飞地面的巡查高度；max_height是导航最大
-    当地离地高度，默认60米。target仅需zone_id。巡查途中每累计
-    capture_interval_m米触发下视拍照，默认20米，不在路口额外拍照。
+    当地离地高度，默认60米。target仅需zone_id，由select_UAV实时选机。
+    巡查途中每累计capture_interval_m米触发下视拍照，默认15米，不在路口额外拍照。
+    搜索期间下视RGB相机隐藏树木，停止拍照或异常退出时清理隐藏设置。
     创建照片目录后发布包含capture_directory的日志事件，返回值为None。
     """
     height, speed = _positive(flight_height, "flight_height"), _positive(
@@ -290,14 +307,14 @@ def search_area(
     )
     cap = _positive(max_height, "max_height")
     interval = _positive(capture_interval_m, "capture_interval_m")
+    if not isinstance(target, dict) or set(target) != {"zone_id"}:
+        raise ValueError("target仅接受zone_id")
     with AirSimClient() as client:
-        name = vehicle_name(drone_id, client.call("listVehicles"))
-        lock = vehicle_lock(name)
-        if not lock.acquire(blocking=False):
-            raise RuntimeError(f"{name}已有任务正在执行")
+        name, lock = _reserve_UAV(target["zone_id"])
         pipeline = flight = None
         failure = None
         try:
+            logger.info("搜索无人机已选定", extra={"selected_drone_id": name})
             frame = WorldFrame(client)
             world, local, origin = frame.vehicle(name)
             landed = client.call("getMultirotorState", name)["landed_state"] == 0
@@ -318,12 +335,14 @@ def search_area(
                 "capture_directory": pipeline.capture_directory.resolve(),
             })
             distance_capture = _DistanceCapture(pipeline, interval)
-            pipeline.preflight()
+            # 此时已持有 _reserve_UAV 返回的跨进程独占锁，可以回收旧进程的残留会话。
+            pipeline.preflight(reclaim_stale=True)
             flight = FlightControl(client, frame, name, origin)
             flight.prepare(world, local)
             actual = _world_xyz(client, name, origin, frame.scale)
             if math.dist(actual, plan["segments"][0][0][0][:3]) > 0.1:
                 plan = make_plan(actual)
+            plan["drone_id"] = name
             plan["capture_interval_m"] = interval
             route_file = pipeline.capture_directory / "route.json"
             pipeline.write_records(route_file, plan)
@@ -381,7 +400,6 @@ def search_area(
 
 if __name__ == "__main__":
     # 在此修改参数后，可直接运行本文件或设置断点调试。
-    drone_id = "UAV_01"
     target = {"zone_id": "F-SPORTS-2"}
     flight_height = 15.0
     flight_speed = 50.0
@@ -389,6 +407,6 @@ if __name__ == "__main__":
     output_dir = DEFAULT_OUTPUT / "temp"
 
     search_area(
-        drone_id, target, flight_height, flight_speed,
+        target, flight_height, flight_speed,
         capture_interval_m=capture_interval_m, output_dir=output_dir,
     )

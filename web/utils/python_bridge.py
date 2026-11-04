@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 class PythonBridge:
-    """复用模型连接，提供规划、状态读取和单区域搜索。"""
+    """复用模型连接，提供规划、搜索监控、病人定位和药品投递。"""
 
     def __init__(self):
         self.client = None
@@ -41,17 +41,100 @@ class PythonBridge:
         if operation == "reset":
             from UAV.API.reset_uav import reset_uav
             reset_uav()
+            if request.get("reset_delivery"):
+                from UAV.API.deliver_medicine import _Delivery
+                from UAV.runtime.airsim_client import AirSimClient
+                with AirSimClient() as client:
+                    delivery = _Delivery(client)
+                    state = delivery.read()
+                    if state and state.get("state") != "idle":
+                        delivery.command("reset")
             return {"reset": True}
+        if operation == "deliver_medicine":
+            from UAV.API.deliver_medicine import deliver_medicine
+            if "drone_id" in request:
+                raise ValueError("网页救援不接受drone_id，每次必须重新自动选机")
+            flight = request.get("flight")
+            if not isinstance(flight, dict) or set(flight) != {"max_height", "flight_speed"}:
+                raise ValueError("药品投递需要max_height和flight_speed")
+            drone_id = None
+            target_position = request.get("target_position")
+
+            class RescueHandler(logging.Handler):
+                def emit(self, record):
+                    nonlocal drone_id, target_position
+                    selected = getattr(record, "selected_drone_id", None)
+                    if selected is not None:
+                        drone_id = selected
+                        if on_event is not None:
+                            on_event({"type": "drone_selected", "drone_id": drone_id})
+                    actual = getattr(record, "delivery_position_m", None)
+                    if actual is not None:
+                        target_position = list(actual)
+                        if on_event is not None:
+                            on_event({"type": "delivery_target_selected", "target_position": target_position})
+
+            logger = logging.getLogger(deliver_medicine.__module__)
+            handler = RescueHandler()
+            previous_level = logger.level
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            try:
+                deliver_medicine(None, request.get("target_position"), **flight,
+                                 zone_id=request.get("zone_id"), delivery_radius_m=5.0)
+            finally:
+                logger.removeHandler(handler)
+                logger.setLevel(previous_level)
+                handler.close()
+            return {"delivered": True, "drone_id": drone_id, "target_position": target_position}
+        if operation == "monitor":
+            from UAV.API.monitor_area import monitor_area
+
+            drone_id, position, height = None, None, None
+
+            class MonitorHandler(logging.Handler):
+                def emit(self, record):
+                    nonlocal drone_id, position, height
+                    selected = getattr(record, "selected_drone_id", None)
+                    if selected is not None:
+                        drone_id = selected
+                        if on_event is not None:
+                            on_event({"type": "drone_selected", "drone_id": drone_id})
+                    actual = getattr(record, "monitor_position_m", None)
+                    if actual is not None:
+                        position, height = actual, record.monitor_height_m
+
+            logger = logging.getLogger(monitor_area.__module__)
+            handler = MonitorHandler()
+            previous_level = logger.level
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            try:
+                # 网页仅指定区域/复用监控机；高度使用monitor_area脚本中的默认值。
+                monitor_area(request.get("zone_id"), request.get("drone_id"))
+            finally:
+                logger.removeHandler(handler)
+                logger.setLevel(previous_level)
+                handler.close()
+            return {"hovering": True, "drone_id": drone_id, "position_m": position, "flight_height": height}
         if operation == "search":
             from UAV.API.search_area import search_area
+            if "drone_id" in request:
+                raise ValueError("搜索不接受drone_id，由执行端自动选机")
             flight = request.get("flight")
             if not isinstance(flight, dict):
                 raise ValueError("搜索需要飞行参数")
             capture_directory = None
+            drone_id = None
 
             class CaptureDirectoryHandler(logging.Handler):
                 def emit(self, record):
-                    nonlocal capture_directory
+                    nonlocal capture_directory, drone_id
+                    selected = getattr(record, "selected_drone_id", None)
+                    if selected is not None:
+                        drone_id = selected
+                        if on_event is not None:
+                            on_event({"type": "drone_selected", "drone_id": drone_id})
                     directory = getattr(record, "capture_directory", None)
                     if directory is None:
                         return
@@ -67,14 +150,13 @@ class PythonBridge:
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
             try:
-                search_area(request.get("drone_id"), request.get("target"), **flight)
+                search_area(request.get("target"), **flight)
             finally:
                 logger.removeHandler(handler)
                 logger.setLevel(previous_level)
                 handler.close()
-            return {"completed": True, "capture_directory": capture_directory}
-        if operation == "vision":
-            from web.utils.vision_pipeline import SearchVisionPipeline
+            return {"completed": True, "capture_directory": capture_directory, "drone_id": drone_id}
+        if operation in ("vision", "locate_patient", "locate_target"):
             image_path = request.get("image_path")
             if not isinstance(image_path, str) or not image_path:
                 raise ValueError("视觉分析需要本次任务的图片路径")
@@ -86,6 +168,10 @@ class PythonBridge:
                     or not path.parent.parent.name.isdigit() or len(path.parent.parent.name) < 6
                     or path.suffix.lower() not in (".jpg", ".jpeg", ".png")):
                 raise ValueError("仅允许分析output/编号/capture目录内的巡查图片")
+            if operation in ("locate_patient", "locate_target"):
+                from web.utils.patient_location import locate_target
+                return {"target_position": locate_target(path, request.get("bbox"))}
+            from web.utils.vision_pipeline import SearchVisionPipeline
             if self.vision is None:
                 self.vision = SearchVisionPipeline()
             return self.vision(path)
@@ -158,9 +244,15 @@ class PythonBridge:
                     response = {"id": request_id, "result": result}
                 except Exception as error:
                     message = str(error) if isinstance(error, (ValueError, RuntimeError, OSError)) else type(error).__name__
-                    if operation in ("plan", "vision"):
-                        from llm.utils.client import error_message
-                        message = error_message(error)
+                    if isinstance(error, ModuleNotFoundError):
+                        message = f"Python无法导入模块 {error.name}，请检查目录大小写及当前Python环境的依赖。"
+                    elif operation in ("plan", "vision"):
+                        try:
+                            from llm.utils.client import error_message
+                            message = error_message(error)
+                        except ImportError:
+                            # 错误格式化依赖缺失时仍返回原始错误，不能再次异常导致进程退出。
+                            pass
                     response = {"id": request_id, "error": message, "error_type": type(error).__name__}
                 print(json.dumps(response, ensure_ascii=False, allow_nan=False), file=output, flush=True)
         finally:

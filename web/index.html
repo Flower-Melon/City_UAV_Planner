@@ -44,8 +44,7 @@
         <p id="zone-stats" class="muted"></p>
       </section>
       <section class="layers">
-        <div class="section-heading"><h2>显示图层</h2><button id="clear-trails" type="button" title="清除所有无人机已记录的运动轨迹">清除轨迹</button></div>
-        <p id="trail-status" class="muted" role="status" hidden></p>
+        <div class="section-heading"><h2>显示图层</h2></div>
         <div class="layer-grid">
           <label><input id="layer-base" type="checkbox" checked>实景底图</label>
           <label><input id="layer-zones" type="checkbox" checked>功能区</label>
@@ -79,7 +78,7 @@
       </section>
       </div>
       <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab" hidden>
-        <div class="section-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" title="终止当前任务并复位全部无人机">新任务</button></div>
+        <div class="section-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" title="终止当前任务、复位全部无人机并清除轨迹">新任务</button></div>
         <p class="muted llm-intro">输入任务后自动规划并开始 AirSim 搜索，沿路拍照并识别异常。</p>
         <div class="llm-flight-settings" role="group" aria-label="飞行参数设置">
           <button type="button" data-flight-setting="max_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>最大飞行高度</span><strong><span id="llm-max-height-value">60</span> <small>米</small></strong></button>
@@ -89,7 +88,7 @@
         <p class="muted llm-flight-hint">点击数值设置，应用于本批全部任务；执行期间不可修改。</p>
         <form id="llm-form">
           <label class="field" for="llm-instruction">任务描述</label>
-          <textarea id="llm-instruction" rows="4" maxlength="4000" required placeholder="例如：让 UAV_01 搜索地图东边的学校"></textarea>
+          <textarea id="llm-instruction" rows="4" maxlength="4000" required placeholder="例如：搜索地图东边的学校（自动选择无人机）"></textarea>
           <button id="llm-submit" type="submit">规划并开始搜索 <span aria-hidden="true">→</span></button>
         </form>
         <p id="llm-status" class="llm-status" role="status" aria-live="polite">正在检查执行状态…</p>

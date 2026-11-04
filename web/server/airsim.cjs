@@ -17,7 +17,7 @@ module.exports = class AirsimController {
     this.root = root;
     this.spawnProcess = spawnProcess;
     this.bridge = null;
-    this.nextBridgeStart = this.lastLiveRequest = this.trailsClearedAt = 0;
+    this.nextBridgeStart = this.lastLiveRequest = 0;
     this.capturing = true;
     this.selectedCamera = 'UAV_01';
     this.state = {connected: false, updated_at: 0, drones: []};
@@ -51,9 +51,7 @@ module.exports = class AirsimController {
       try {
         const message = JSON.parse(line);
         if (message.type === 'state') {
-          // 已排队的旧采样也不能在清除后重新显示。
-          this.state = {...message, drones: message.drones.map(drone => ({...drone,
-            trail: (drone.trail || []).filter(point => point[0] > this.trailsClearedAt)}))};
+          this.state = message;
         } else if (message.type === 'reset') this.frames.clear();
         else if (message.type === 'frame' && this.capturing && message.name === this.selectedCamera) {
           this.frames.set(message.name, {data: Buffer.from(message.data, 'base64'),
@@ -90,6 +88,19 @@ module.exports = class AirsimController {
   // 规划模块读取原始采样，避免将网页展示用的占位无人机用于任务派发。
   getState() { return this.state; }
 
+  clearTrails() {
+    this.state = {...this.state, drones: this.state.drones.map(drone => ({...drone, trail: []}))};
+    // 清空采集进程中的全部轨迹；旧进程的在途消息由上方child检查直接丢弃。
+    const child = this.bridge;
+    this.bridge = null;
+    this.frames.clear();
+    this.nextBridgeStart = 0;
+    if (child) {
+      child.kill();
+      this.startBridge();
+    }
+  }
+
   liveState() {
     const now = Date.now();
     const freshFrame = [...this.frames.values()].some(frame => now - frame.updated_at < 2500);
@@ -110,9 +121,7 @@ module.exports = class AirsimController {
       if (request.method !== 'POST') {
         response.writeHead(405, {Allow: 'POST'}); response.end(); return;
       }
-      this.trailsClearedAt = Date.now();
-      this.state = {...this.state, drones: this.state.drones.map(drone => ({...drone, trail: []}))};
-      if (this.bridge) this.bridge.stdin.write('{"clear_trails":true}\n');
+      this.clearTrails();
       send(response, 200, {cleared: true}); return;
     }
     if (!['GET', 'HEAD'].includes(request.method)) {

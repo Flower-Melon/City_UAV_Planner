@@ -67,18 +67,19 @@ None
 
 ### 1.3 search_area
 
-巡查目标所在完整街区的道路边界和内部道路，具体算法实现见 `utils.plan_search_path`。
+巡查目标所在完整街区的道路边界和内部道路，路径规划的算法实现见 `utils.plan_search_path`。
 
-巡查途中按道路折线的累计前进里程，用 `bottom_center` 触发下视拍照，默认每20米一次，可通过 `capture_interval_m` 调整。
+具体选择哪架或者哪几架无人机执行搜索的逻辑见 `utils.select_UAV`，根据区域和 AirSim 实时状态自动选择并占用一架无人机。
+
+巡查途中按道路折线的累计前进里程，用 `bottom_center` 触发下视拍照，默认每15米一次，可通过 `capture_interval_m` 调整。搜索期间，下视 RGB 相机默认不渲染树木。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
-| `drone_id` | `int` 或 `str` | 无人机编号，`1` 或 `"UAV_01"` |
 | `target` | `dict` | 搜索目标，仅需区域 ID；可直接传入规划结果中的 `SearchArea.target` |
 | `flight_height` | `float` | 相对起飞地面的固定巡查高度，单位米，大于 `0`；需满足巡查道路的建筑净空检查 |
 | `flight_speed` | `float` | 巡航速度上限，单位米/秒，大于 `0`，默认 `30.0`；拐弯及短路段自动降速 |
 | `max_height` | `float` | 去程和返航的最大当地离地高度，默认60米，至少15米；仅限关键字传入 |
-| `capture_interval_m` | `float` | 巡查途中下视拍照的累计里程间距，单位米，大于0且有限，默认20.0；仅限关键字传入 |
+| `capture_interval_m` | `float` | 巡查途中下视拍照的累计里程间距，单位米，大于0且有限，默认15.0；仅限关键字传入 |
 | `output_dir` | `str` 或 `Path` | 输出根目录，默认是项目根目录下的 `output/`；每次任务新增连续编号目录，图片及 `frame.json`、`route.json` 保存在其 `capture/` 子目录 |
 
 `target` 字段：
@@ -100,7 +101,6 @@ target = {
     "zone_id": "F-SCHOOL-1",
 }
 result = search_area(
-    "UAV_01",
     target,
     flight_height=40.0,
     flight_speed=30.0,
@@ -167,6 +167,37 @@ result = deliver_medicine(drone_id, target_position, max_height, flight_speed)
 
 ```python
 None  # result；药箱已着地并收绳，无人机在落点上空悬停
+```
+
+### 1.5 monitor_area
+
+下视 RGB 相机通过 `runtime.kill_trees` 隐藏树木；到位悬停并返回后仍保留设置，供后续监控拍照使用。
+
+飞往目标区域几何中心的正上方并悬停。
+
+| 入参 | 类型 | 含义 |
+|---|---|---|
+| `zone_id` | `str` | `Map/zones/functional_zones.json` 中真实的区域ID，如 `"F-SCHOOL-1"` |
+| `drone_id` | `int`、`str` 或 `None` | 无人机编号或名称，默认 `None`，从当前可用无人机中自动选取一架；指定ID时可将已悬停的监控机转往下一区域 |
+| `flight_height` | `float` | 相对无人机起飞原点的高度，单位米，大于0，默认 `200.0`，默认值在 `monitor_area.py` 中设置 |
+
+| 出参 | 类型 | 含义 |
+|---|---|---|
+| 返回值 | `None` | 同步完成飞行和悬停后返回，不自动返航或降落 |
+
+入参样例与调用：
+
+```python
+from UAV.API import monitor_area
+
+monitor_area("F-SCHOOL-1")
+monitor_area("F-SCHOOL-2", drone_id="UAV_02", flight_height=200.0)
+```
+
+出参样例：
+
+```python
+None  # 无人机已到区域中心上空悬停
 ```
 
 ## 2 utils
@@ -247,6 +278,30 @@ segments = plan_search_path(
 ]
 ```
 
+### 2.3 select_UAV.py
+
+根据目标区域选择一架可用无人机。读取 `Map/zones/functional_zones.json` 中的区域边界，以及 `AirSim` 中无人机的状态。
+
+| 入参 | 类型 | 含义 |
+|---|---|---|
+| `zone_id` | `str` | `Map/zones/functional_zones.json` 中真实的区域ID，如 `"F-SCHOOL-1"` |
+
+| 出参 | 类型 | 含义 |
+|---|---|---|
+| `drone_id` | `str` | 选中的无人机名称，如 `"UAV_02"`；每次返回一架 |
+
+```python
+from UAV.utils.select_UAV import select_UAV
+
+drone_id = select_UAV("F-SCHOOL-1")
+```
+
+输出格式示例（实际结果由当前无人机状态决定）：
+
+```python
+"UAV_02"
+```
+
 ## 3 runtime
 
 供无人机 API 和网页后端使用的仿真运行支持。
@@ -255,4 +310,5 @@ segments = plan_search_path(
 |---|---|
 | `airsim_client.py` | 连接 AirSim，发送请求并接收结果 |
 | `airsim_state.py` | 读取机队状态、解析无人机名称，完成坐标标定与地面测量 |
-| `flight_control.py` | 按航点速度执行三维路径，原地升降到高后继续飞行，核对位置和碰撞，管理任务锁与降落 |
+| `kill_trees.py` | 巡查和监控无人机的下视 RGB 相机隐藏树木组件 |
+| `flight_control.py` | 按航点速度执行三维路径，原地升降到高后继续飞行，核对位置和碰撞，管理跨线程/进程的任务锁与降落；进程退出后自动释放占用 |

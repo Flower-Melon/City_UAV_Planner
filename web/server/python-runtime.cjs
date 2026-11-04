@@ -7,7 +7,7 @@ function requestError(message, statusCode) {
   return Object.assign(new Error(message), {statusCode});
 }
 
-// 管理 Python 通信通道；规划、状态读取和每架无人机使用独立进程。
+// 管理 Python 通信通道；规划、状态读取和各搜索工作进程互相独立。
 class PythonRuntime {
   constructor({root, spawnProcess = spawn, pythonExecutable = process.env.CITY_UAV_PYTHON || 'python'}) {
     this.root = root;
@@ -108,18 +108,18 @@ class PythonRuntime {
   fail(worker, error, {terminate = false, spawnFailure = false, exited = false} = {}) {
     if (worker.failed) return;
     worker.failed = true;
-    const searching = [...worker.pending.values()].some(call => call.operation === 'search');
+    const flying = [...worker.pending.values()].some(call => ['search', 'monitor', 'deliver_medicine'].includes(call.operation));
     for (const call of worker.pending.values()) {
       clearTimeout(call.timer);
       call.reject(Object.assign(new Error(error.message), {
-        statusCode: error.statusCode, uncertain: !spawnFailure && call.operation === 'search'
+        statusCode: error.statusCode, uncertain: !spawnFailure && ['search', 'monitor', 'deliver_medicine'].includes(call.operation)
       }));
     }
     worker.pending.clear();
     if (this.workers.get(worker.channel) === worker) this.workers.delete(worker.channel);
     if (!exited) {
-      // 飞行进程关闭输入后，仍会完成当前区域及悬停清理。
-      if (terminate && !searching && !worker.channel.startsWith('drone:')) worker.child.kill();
+      // 飞行进程关闭输入后，仍会完成当前飞行、投递及悬停清理。
+      if (terminate && !flying && !/^(search|monitor|delivery):/.test(worker.channel)) worker.child.kill();
       else worker.child.stdin.end();
     }
   }
@@ -169,7 +169,7 @@ class PythonRuntime {
     if (this.closed) return;
     this.closed = true;
     for (const worker of this.workers.values()) {
-      if (worker.channel.startsWith('drone:')) worker.child.stdin.end();
+      if (/^(search|monitor|delivery):/.test(worker.channel)) worker.child.stdin.end();
       else this.fail(worker, Error('网页服务已停止。'), {terminate: true});
     }
   }

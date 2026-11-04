@@ -14,7 +14,7 @@ from PIL import Image
 MODEL_DIR = Path(__file__).resolve().parent
 DEFAULT_WEIGHTS = MODEL_DIR / "weights.pt"
 DEFAULT_OUTPUT_DIR = MODEL_DIR.parents[1] / "output" / "yolov26"
-CONFIDENCE_THRESHOLD = 0.25
+CONFIDENCE_THRESHOLD = 0.85
 IMAGE_SIZE = 640
 DEFAULT_DEVICE = "0"
 TARGET_CLASSES = {"person", "car"}

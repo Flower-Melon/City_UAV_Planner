@@ -6,7 +6,7 @@
 
 ### 1.1 planner
 
-根据任务描述、无人机状态和真实地图，确定搜索区域、分配无人机并生成搜索指令。
+根据任务描述、无人机状态和真实地图确定搜索区域并生成指令。执行无人机由 `UAV/utils/select_UAV.py` 在飞行前自动选择，规划结果不包含 `drone_id`。
 
 先创建 `Planner(client, model, catalog)`：
 
@@ -27,7 +27,7 @@
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
-| `instruction` | `str` | 自然语言任务，1–4000 字，如“让 UAV_01 完整巡查第一学校所在街区” |
+| `instruction` | `str` | 自然语言任务，1–4000 字，如“完整巡查第一学校所在街区” |
 | `fleet` | `list[dict]` | 调用方提供的非空无人机列表，字段见下表 |
 | `conversation` | `list[dict]` 或 `None` | 可选历史问答，默认 `None`；每条含 `role` 和 `content`，按 `user`、`assistant` 成对排列，最多 6 组 |
 
@@ -36,7 +36,7 @@
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `name` | `str` | 无人机名称，如 `"UAV_01"`，不能重复 |
-| `available` | `bool` | 当前是否可接受任务；只有 `True` 的无人机会被分配 |
+| `available` | `bool` | 规划时的可用状态快照；执行时重新读取 AirSim 状态选机 |
 | `position_m` | `[x, y, z]` 或 `None` | UE 世界坐标，单位米；未知时填 `None` |
 
 历史问答与本次任务的总长度不超过 16000 字。
@@ -52,8 +52,7 @@
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| `drone_id` | `str` | 执行该区域任务的无人机名称 |
-| `sequence` | `int` | 同一架无人机的任务顺序，从 `1` 开始 |
+| `sequence` | `int` | 区域任务的派发顺序，从 `1` 开始连续编号 |
 | `target` | `dict` | 搜索目标，仅包含区域 ID |
 | `target.zone_id` | `str` | 地图中的真实区域 ID |
 
@@ -72,7 +71,7 @@ fleet = [
 client, model = create_client()
 with client:
     result = Planner(client, model, ZoneCatalog()).plan(
-        "让 UAV_01 完整巡查第一学校所在街区",
+        "完整巡查第一学校所在街区",
         fleet,
     )
 ```
@@ -85,7 +84,6 @@ with client:
     "message": "已规划第一学校所在街区的完整巡查任务。",
     "commands": [
         {
-            "drone_id": "UAV_01",
             "sequence": 1,
             "target": {"zone_id": "F-SCHOOL-1"},
         },
@@ -95,7 +93,7 @@ with client:
 
 ### 1.2 vision
 
-分析一张本地图片，判断是否存在需要紧急医疗救援的病人、疑似持刀危险人员或可疑车辆。
+分析一张本地图片，判断是否存在需要紧急医疗救援的病人或者疑似持刀危险人员。
 
 先创建 `VisionAnalyzer(client=None, model=None)`：
 
@@ -116,7 +114,7 @@ with client:
 | 出参 | 类型 | 含义 |
 |---|---|---|
 | 返回值 | `dict` | 单张图片的判断结果 |
-| `status` | `str` | `normal` 正常、`abnormal` 发现异常、`uncertain` 无法确定 |
+| `status` | `str` | 三类目标标识：`normal` 正常、`patient` 病人、`armed_person` 持刀人员 |
 | `description` | `str` | 中文判断说明 |
 
 入参样例与调用：
@@ -134,7 +132,7 @@ finally:
 出参样例：
 
 ```python
-{"status": "uncertain", "description": "图片较模糊，无法确认人员是否持有刀具。"}
+{"status": "armed_person", "description": "俯视图可见右手握持带刀柄的细长刀状物并呈举起姿态。"}
 ```
 
 单独运行 `python llm/vision.py` 时，只将意图识别结果保存到项目根目录下的 `output/temp/analysis.json`。

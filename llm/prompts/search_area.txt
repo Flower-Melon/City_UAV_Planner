@@ -2,15 +2,14 @@
 
 输入：
 - instruction是用户最新要求，conversation是历史问答。任务条件以用户消息为依据，保留此前仍有效的条件，最新修改优先。
-- queries包含成功查询的筛选条件和真实目标；fleet提供无人机名称与可用状态。
+- queries包含成功查询的筛选条件和真实目标。
 - required_zone_ids是必须全部覆盖的区域ID。同类别多次all查询以最后一次的范围为准。
 
 直接返回JSON对象，顶层字段为tasks：
-{"tasks":[{"action":"SearchArea","target":{"zone_id":"已查询的真实ID"},"drone_id":"UAV_01"}]}
+{"tasks":[{"action":"SearchArea","target":{"zone_id":"已查询的真实ID"}}]}
 
 规则：
 - 合并必要查询的目标，每个区域对应唯一一项。tasks为非空列表，完整包含符合用户要求的目标和required_zone_ids。
 - target的结构为{"zone_id":"真实ID"}，ID取自queries。
-- 用户指定一架无人机时，每项drone_id均填写该无人机；指定多架时按用户要求对应目标，未指定对应关系时按区域ID排序轮流分配给这些无人机；未指定无人机时省略drone_id，由程序分配。
 - 程序负责计算完整街区巡查路线和执行顺序。
 - 收到validation_error时，依据已有输入修正tasks并返回完整任务列表。

@@ -24,7 +24,7 @@
   let checking = true, flying = false, mission = null, pollTimer;
   let resetting = false, resetFailed = false, generation = 0, planningController = null;
   let visionMission = null;
-  const shownAnomalies = new Set();
+  const shownAnomalies = new Map();
 
   function showFlight(settings) {
     for (const [key, field] of Object.entries(flightFields)) {
@@ -84,27 +84,44 @@
       visionMission = execution.mission_id; shownAnomalies.clear();
       $('llm-anomalies').replaceChildren();
     }
-    $('llm-anomaly-count').textContent = vision.abnormal;
+    $('llm-anomaly-count').textContent = vision.unique_targets ?? vision.abnormal;
     const error = vision.errors?.[0]?.error;
     $('llm-vision-error').hidden = !error;
-    $('llm-vision-error').textContent = error ? `部分照片未完成识别：${error}` : '';
-    for (const record of vision.anomalies) {
-      const key = `${record.task_id}:${record.image}`;
-      if (shownAnomalies.has(key)) continue;
-      shownAnomalies.add(key);
-      const card = document.createElement('article'); card.className = 'llm-anomaly-card';
+    $('llm-vision-error').textContent = error ? `部分目标识别或定位未完成：${error}` : '';
+    const targets = vision.targets ?? vision.anomalies.map(record =>
+      ({target_id: `${record.task_id}:${record.image}`, first_observation: record, sightings: 1}));
+    for (const target of targets) {
+      const record = target.first_observation;
+      const key = target.target_id;
+      const signature = JSON.stringify([record.task_id, record.image, record.detections,
+        target.sightings, target.location_error]);
+      let entry = shownAnomalies.get(key);
+      if (!entry) {
+        const card = document.createElement('article'); card.className = 'llm-anomaly-card';
+        entry = {card, signature: null}; shownAnomalies.set(key, entry);
+      }
+      const card = entry.card;
+      // 按首次曝光时间排序；更早一帧较晚完成分析时，更新原卡片而不新增。
+      $('llm-anomalies').append(card);
+      if (entry.signature === signature) continue;
+      entry.signature = signature;
       const heading = document.createElement('p'); heading.className = 'llm-anomaly-heading';
-      heading.textContent = `${record.drone_id} · ${record.image} · ${record.zone_id}`;
+      heading.textContent = `${key} · ${record.drone_id} · 首次图像 ${record.image} · ${record.zone_id}`;
       const button = document.createElement('button'); button.type = 'button';
       button.className = 'llm-anomaly-open'; button.setAttribute('aria-label', `放大异常照片 ${record.image}`);
       button.append(annotatedImage(record));
-      const description = document.createElement('p'); description.textContent = record.description;
+      const categories = [...new Set(record.detections.map(detection =>
+        ({patient: '病人', armed_person: '持刀人员'})[detection.status]))].join('、');
+      const description = document.createElement('p');
+      description.textContent = `${categories}：${record.description}` +
+        (target.sightings > 1 ? `（已合并 ${target.sightings} 帧识别）` : '') +
+        (target.location_error ? `；${target.location_error}` : '');
       button.onclick = () => {
         $('llm-image-detail').replaceChildren(annotatedImage(record));
-        const caption = document.createElement('p'); caption.textContent = record.description;
+        const caption = document.createElement('p'); caption.textContent = description.textContent;
         $('llm-image-detail').append(caption); $('llm-image-dialog').showModal();
       };
-      card.append(heading, button, description); $('llm-anomalies').append(card);
+      card.replaceChildren(heading, button, description);
     }
   }
   $('llm-image-close').onclick = () => $('llm-image-dialog').close();
@@ -146,7 +163,8 @@
     }
     if (wasResetting && data.reset_completed && !data.execution) {
       clearTask();
-      setStatus('idle', '后台任务已终止，无人机已复位，可以输入新任务。'); controls(); return;
+      window.dispatchEvent(new Event('mission:reset'));
+      setStatus('idle', '后台任务已终止，无人机已复位，轨迹已清除，可以输入新任务。'); controls(); return;
     }
     mission = data.execution;
     if (mission?.settings) showFlight(mission.settings);
@@ -154,10 +172,28 @@
     flying = !!data.starting || !!data.uncertain || !!mission && !['completed', 'failed'].includes(mission.status);
     if (mission || flying) needsClarification = false;
     if (mission) {
+      $('llm-queue').hidden = false;
+      const monitorLabels = {queued: '等待分配', flying: '飞往区域中心', hovering: '高空悬停',
+        relocated: '已转往后续区域', failed: '失败', skipped: '未执行'};
+      $('llm-queue').textContent = `共 ${mission.tasks.length} 个区域 · 自动选机：\n` +
+        mission.tasks.map(task => `${task.sequence}. ${task.target.zone_id} → 巡查：${task.drone_id || '等待自动分配'}` +
+          (task.monitor ? `；监控：${task.monitor.drone_id || '等待自动分配'}（${monitorLabels[task.monitor.status] || task.monitor.status}）` : '')).join('\n');
+      const rescueLabels = {locating: '定位地面落点', dispatching: '正在派机', delivering: '执行药品投递',
+        delivered: '投递完成，保持悬停', failed: '失败', uncertain: '执行状态未确认', stopped: '已停止'};
+      const rescues = mission.rescues || [];
+      if (rescues.length) $('llm-queue').textContent += '\n药品救援：\n' + rescues.map(rescue =>
+        `${rescue.rescue_id} · ${rescue.zone_id} · ${rescue.image} → ${rescue.drone_id || '尚未分配'}（${rescueLabels[rescue.status] || rescue.status}）` +
+        (rescue.target_position ? `；落点 [${rescue.target_position.map(value => value.toFixed(1)).join(', ')}] 米` : '') +
+        (rescue.error ? `：${rescue.error}` : '')).join('\n');
+      const delivering = rescues.some(rescue => ['dispatching', 'delivering'].includes(rescue.status));
       const messages = {running: mission.tasks.some(task => task.status === 'analyzing') ?
-        '无人机已返航降落，正在分析剩余巡查照片。' : '搜索执行中 · 沿路拍照并识别异常，结束后返航降落。',
-        completed: '搜索已完成 · 已返航降落，照片与识别结果已保存。',
-        failed: '搜索任务失败。' + (mission.tasks.find(task => task.error)?.error || '')};
+        '巡查机已返航，正在完成照片分析和监控机到位确认。' : '搜索执行中 · 巡查机沿路拍照，监控机飞往区域中心高空悬停。',
+        completed: '搜索已完成 · 巡查机已返航降落，监控机保持高空悬停。',
+        failed: '任务执行失败。' + (mission.tasks.find(task => task.error)?.error || rescues.find(rescue => rescue.error)?.error || '')};
+      if (mission.status === 'running' && delivering)
+        messages.running = '任务执行中 · 已发现病人，救援无人机正在执行药品投递。';
+      if (mission.status === 'completed' && rescues.length)
+        messages.completed = '巡查及药品救援已完成 · 救援机和监控机保持悬停。';
       setStatus(mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready', messages[mission.status] || '正在确认执行状态…');
       newTask.hidden = false;
       if (resultPanel.hidden && data.plan) {
@@ -183,7 +219,7 @@
       snapshot = data;
       checking = false; showMission(data);
       if (resetIdle && !mission && !flying && !pending && !resetting && !resetFailed)
-        setStatus('idle', data.reset_completed ? '后台任务已终止，无人机已复位，可以输入新任务。' : '输入任务后自动规划并开始搜索。');
+        setStatus('idle', data.reset_completed ? '后台任务已终止，无人机已复位，轨迹已清除，可以输入新任务。' : '输入任务后自动规划并开始搜索。');
     } catch (error) {
       if (current !== generation) return;
       checking = true; controls(); setStatus('error', `无法确认执行状态：${error.message} 正在重试。`);
@@ -279,14 +315,8 @@
       $('llm-command-panel').hidden = !ready;
       $('llm-queue').hidden = !ready;
       if (ready) {
-        const queues = new Map();
-        for (const command of result.commands) {
-          if (!queues.has(command.drone_id)) queues.set(command.drone_id, []);
-          queues.get(command.drone_id).push(command);
-        }
-        $('llm-queue').textContent = `共 ${commands.length} 个区域 · ${queues.size} 架无人机，分别按顺序搜索：\n` + [...queues].map(([drone, tasks]) =>
-          `${drone}：${tasks.sort((a, b) => a.sequence - b.sequence).map(c =>
-            c.target.zone_id + ' 完整街区').join(' → ')}`).join('\n');
+        $('llm-queue').textContent = `共 ${commands.length} 个区域 · 执行时自动选择空闲无人机：\n` +
+          commands.map(c => `${c.sequence}. ${c.target.zone_id} 完整街区`).join('\n');
         $('llm-commands').textContent = JSON.stringify(commands.length === 1 ? commands[0] : {tasks: commands}, null, 2);
       } else $('llm-commands').textContent = '';
       form.hidden = true; newTask.hidden = false;
