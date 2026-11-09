@@ -82,7 +82,7 @@
       $('abnormal-action').dataset.error = String(!!target.error);
       $('abnormal-vehicle-controls').hidden = target.kind !== 'vehicle';
       if ($('abnormal-behavior').dataset.target !== selected) {
-        $('abnormal-behavior').value = target.behavior || 'mixed';
+        $('abnormal-behavior').value = target.behavior || 'surge';
         $('abnormal-behavior').dataset.target = selected;
       }
     }
@@ -194,10 +194,12 @@
   }
   $('abnormal-pick').onclick = () => {
     if (busy || !online || !window.liveMap?.isReady()) return;
-    picking = true; controls(); message(`请点击地图指定${names[$('abnormal-kind').value]}出现的位置；按 Esc 取消。`);
+    picking = true; controls(); message($('abnormal-kind').value === 'vehicle'
+      ? '请点击目标地块或附近道路，车辆将在周边车道上自动选择生成位置；按 Esc 取消。'
+      : `请点击地图指定${names[$('abnormal-kind').value]}出现的位置；按 Esc 取消。`);
     window.liveMap.setPickHandler(position => {
       window.liveMap.setPendingPoint(position);
-      void runJob('spawn', {kind: $('abnormal-kind').value, position, behavior: 'mixed'});
+      void runJob('spawn', {kind: $('abnormal-kind').value, position, behavior: 'surge'});
     });
   };
   $('abnormal-cancel').onclick = () => { cancelPick(); message('已取消地图选点。'); };

@@ -1,4 +1,4 @@
-"""可复用的 YOLO 人车检测与目标裁剪，不调用大模型。"""
+"""可复用的 YOLO 行人检测与目标裁剪，不调用大模型。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ DEFAULT_OUTPUT_DIR = MODEL_DIR.parents[1] / "output" / "yolov26"
 CONFIDENCE_THRESHOLD = 0.85
 IMAGE_SIZE = 640
 DEFAULT_DEVICE = "0"
-TARGET_CLASSES = {"person", "car"}
+TARGET_CLASSES = {"person"}
 
 
 class YoloPredictor:
@@ -29,6 +29,10 @@ class YoloPredictor:
         from ultralytics import YOLO
 
         self.model = YOLO(str(DEFAULT_WEIGHTS), task="detect")
+        self.class_ids = [class_id for class_id, name in self.model.names.items()
+                          if name.lower() in TARGET_CLASSES]
+        if not self.class_ids:
+            raise ValueError("Weights do not contain the person class")
 
     @staticmethod
     def _output_directory(image_path: Path) -> Path:
@@ -43,7 +47,7 @@ class YoloPredictor:
         conf: float = CONFIDENCE_THRESHOLD,
         device: str = DEFAULT_DEVICE,
     ) -> dict:
-        """检测并裁剪一张图片，连续调用复用同一份权重。"""
+        """检测并裁剪一张图片中的行人，连续调用复用同一份权重。"""
         if not 0 <= conf <= 1:
             raise ValueError("conf must be between 0 and 1")
         image_path = Path(image_path).expanduser().resolve()
@@ -51,7 +55,7 @@ class YoloPredictor:
             raise FileNotFoundError(f"Image file does not exist: {image_path}")
         result = self.model.predict(
             source=str(image_path), conf=conf, imgsz=IMAGE_SIZE,
-            device=device, save=False, verbose=False,
+            device=device, classes=self.class_ids, save=False, verbose=False,
         )[0]
         output_dir = self._output_directory(image_path)
         crop_dir = output_dir / "crops"
@@ -96,7 +100,8 @@ class YoloPredictor:
         report = {
             "image_path": str(image_path), "weights_path": str(DEFAULT_WEIGHTS),
             "image_size": {"width": width, "height": height},
-            "classes": dict(result.names), "confidence_threshold": conf,
+            "classes": {class_id: name for class_id, name in result.names.items()
+                        if class_id in self.class_ids}, "confidence_threshold": conf,
             "detection_count": len(detections), "detections": detections,
             "artifacts": {},
         }

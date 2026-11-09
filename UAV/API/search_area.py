@@ -24,25 +24,8 @@ from ..utils.plan_flight_path import _default_graph, plan_flight_path
 from ..utils.plan_search_path import plan_search_path
 from ..utils.select_UAV import _reserve_UAV
 
-DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "output"
+DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "output" / "temp"
 logger = logging.getLogger(__name__)
-
-
-def new_capture_directory(output_dir):
-    """每次搜索分配一个 output/编号/ 任务目录，支持并发创建。"""
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    number = (
-        max((int(p.name) for p in output.iterdir() if p.is_dir() and p.name.isdecimal()), default=0)
-        + 1
-    )
-    while True:
-        directory = output / f"{number:06d}"
-        try:
-            directory.mkdir()
-            return directory
-        except FileExistsError:
-            number += 1
 
 
 class SearchCapture:
@@ -52,7 +35,7 @@ class SearchCapture:
         self.directory, self.name = Path(directory), name
         self.origin, self.scale = origin, scale
         self.capture_directory = self.directory / "capture"
-        self.capture_directory.mkdir()
+        self.capture_directory.mkdir(exist_ok=True)
         self.camera = "bottom_center"
         self.camera_fov = None
         self.client = (client_factory or AirSimClient)(timeout=15)
@@ -292,7 +275,7 @@ def search_area(
     *,
     max_height=60.0,
     capture_interval_m=15.0,
-    output_dir=DEFAULT_OUTPUT,
+    output_dir=None,
 ) -> None:
     """三维导航接入街区、沿道路巡查拍照，完成后返航降落。
 
@@ -301,6 +284,7 @@ def search_area(
     巡查途中每累计capture_interval_m米触发下视拍照，默认15米，不在路口额外拍照。
     搜索期间下视RGB相机隐藏树木，停止拍照或异常退出时清理隐藏设置。
     创建照片目录后发布包含capture_directory的日志事件，返回值为None。
+    output_dir指定本次巡查的保存目录；不传时使用项目output/temp，照片写入capture子目录。
     """
     height, speed = _positive(flight_height, "flight_height"), _positive(
         flight_speed, "flight_speed"
@@ -329,7 +313,8 @@ def search_area(
                 return _complete_plan(segments, target, origin, home, cap, speed)
 
             plan = make_plan(world)
-            directory = new_capture_directory(output_dir)
+            directory = DEFAULT_OUTPUT if output_dir is None else Path(output_dir)
+            directory.mkdir(parents=True, exist_ok=True)
             pipeline = SearchCapture(directory, name, origin, frame.scale)
             logger.info("搜索照片目录已创建", extra={
                 "capture_directory": pipeline.capture_directory.resolve(),
@@ -404,9 +389,8 @@ if __name__ == "__main__":
     flight_height = 15.0
     flight_speed = 50.0
     capture_interval_m = 20.0
-    output_dir = DEFAULT_OUTPUT / "temp"
 
     search_area(
         target, flight_height, flight_speed,
-        capture_interval_m=capture_interval_m, output_dir=output_dir,
+        capture_interval_m=capture_interval_m,
     )

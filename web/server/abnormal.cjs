@@ -1,5 +1,5 @@
 'use strict';
-const PythonRuntime = require('./python-runtime.cjs');
+const PythonRuntime = require('./python.cjs');
 
 function sendJSON(response, status, data) {
   if (response.destroyed || response.writableEnded) return;

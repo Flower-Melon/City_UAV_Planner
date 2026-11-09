@@ -4,9 +4,22 @@ from contextlib import redirect_stdout
 import json
 import logging
 from pathlib import Path
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+
+def region_directory(value):
+    """只接受调度端已创建的output/编号区域目录，不允许越界或嵌套。"""
+    if not isinstance(value, str) or not value or Path(value).is_absolute():
+        raise ValueError("需要项目内的区域输出目录")
+    root = Path(__file__).resolve().parents[2]
+    directory = (root / value).resolve(strict=True)
+    if (not directory.is_dir() or directory.parent != (root / "output").resolve()
+            or not re.fullmatch(r"[0-9]{6,}", directory.name)):
+        raise ValueError("区域输出目录必须为output/编号")
+    return directory
 
 
 class PythonBridge:
@@ -16,11 +29,36 @@ class PythonBridge:
         self.client = None
         self.planner = None
         self.vision = None
+        self.traffic = None
 
     def handle(self, request, *, on_event=None):
         if not isinstance(request, dict):
             raise ValueError("请求必须是 JSON 对象")
         operation = request.get("operation")
+        if operation == "traffic_start":
+            from web.utils.traffic_pipeline import start_session
+
+            if self.traffic is not None:
+                raise RuntimeError("该通道已有车辆测速会话")
+            mission_id, task_id = request.get("mission_id"), request.get("task_id")
+            if (not isinstance(mission_id, str) or not re.fullmatch(r'[a-f0-9]{32}', mission_id)
+                    or not isinstance(task_id, str) or not re.fullmatch(r'task_[1-9]\d*', task_id)):
+                raise ValueError("车辆测速需要有效任务编号")
+            directory = region_directory(request.get("output_directory")) / "monitor"
+            self.traffic = start_session(request.get('drone_id'), request.get('zone_id'), directory,
+                                         request.get('speed_limit_kmh', 60.0))
+            return {'started': True, 'drone_id': self.traffic['name']}
+        if operation == "traffic_step":
+            if self.traffic is None:
+                raise RuntimeError("车辆测速会话尚未启动")
+            from web.utils.traffic_pipeline import step_session
+            return step_session(self.traffic)
+        if operation == "traffic_stop":
+            if self.traffic is not None:
+                session, self.traffic = self.traffic, None
+                from web.utils.traffic_pipeline import close_session
+                close_session(session)
+            return {'stopped': True}
         if operation == "plan":
             if self.planner is None:
                 from llm.utils.catalog import ZoneCatalog
@@ -150,7 +188,8 @@ class PythonBridge:
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
             try:
-                search_area(request.get("target"), **flight)
+                search_area(request.get("target"), **flight,
+                            output_dir=region_directory(request.get("output_directory")) / "search")
             finally:
                 logger.removeHandler(handler)
                 logger.setLevel(previous_level)
@@ -164,12 +203,13 @@ class PythonBridge:
             path = (root / image_path).resolve(strict=True)
             output_root = (root / "output").resolve()
             if (not path.is_file() or path.parent.name != "capture"
-                    or path.parent.parent.parent != output_root
-                    or not path.parent.parent.name.isdigit() or len(path.parent.parent.name) < 6
+                    or path.parent.parent.name != "search"
+                    or path.parent.parent.parent.parent != output_root
+                    or not re.fullmatch(r"[0-9]{6,}", path.parent.parent.parent.name)
                     or path.suffix.lower() not in (".jpg", ".jpeg", ".png")):
-                raise ValueError("仅允许分析output/编号/capture目录内的巡查图片")
+                raise ValueError("仅允许分析output/编号/search/capture目录内的巡查图片")
             if operation in ("locate_patient", "locate_target"):
-                from web.utils.patient_location import locate_target
+                from web.utils.vision_pipeline import locate_target
                 return {"target_position": locate_target(path, request.get("bbox"))}
             from web.utils.vision_pipeline import SearchVisionPipeline
             if self.vision is None:
@@ -183,7 +223,7 @@ class PythonBridge:
             result = {"target_id": name}
             if kind == "vehicle":
                 try:
-                    set_vehicle_behavior(name, request.get("behavior", "mixed"))
+                    set_vehicle_behavior(name, request.get("behavior", "surge"))
                 except Exception as error:
                     result["warning"] = "车辆已生成，但设置行为失败：" + str(error)
             return result
@@ -259,6 +299,10 @@ class PythonBridge:
             self.close()
 
     def close(self):
+        if self.traffic is not None:
+            from web.utils.traffic_pipeline import close_session
+            close_session(self.traffic)
+            self.traffic = None
         if self.vision is not None:
             self.vision.close()
             self.vision = None

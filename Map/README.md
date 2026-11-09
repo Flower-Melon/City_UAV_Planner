@@ -18,7 +18,7 @@ Map/
 
 ## roads/road_network.json
 
-保存车道、节点及连接线，供车辆按车道方向、无人机沿拓扑边双向规划最短路径。
+保存车道、节点及连接线，供车辆按车道方向规划路线；人物生成从中读取人行道，网页从中绘制道路。
 
 ```json
 {
@@ -26,17 +26,6 @@ Map/
     "system": "UE_WORLD_METRES",
     "unit": "m",
     "bounds_m": [-1000, -3000, 3000, 1000]
-  },
-  "routing_rules": {
-    "distance_metric": "xy",
-    "vehicle": {
-      "lane_types": ["driving"],
-      "direction": "forward",
-      "connection_requires_both_lanes": true
-    },
-    "uav": {
-      "direction": "both"
-    }
   },
   "lanes": [],
   "nodes": [],
@@ -47,9 +36,6 @@ Map/
 | 字段 | 含义 |
 |---|---|
 | `coordinate_metadata` | 坐标系、单位和地图范围 `[xmin, ymin, xmax, ymax]` |
-| `routing_rules.distance_metric` | 按 XY 平面长度计算路径成本 |
-| `routing_rules.vehicle` | 仅用机动车道；按起点到终点通行；连接两端须为机动车道 |
-| `routing_rules.uav` | 沿图边双向通行 |
 | `lanes[].id`、`type` | 车道编号及类型：机动车、人行、停车、自行车 |
 | `nodes[].id`、`position_m` | 节点编号及 `[X, Y, Z]`；未知 Z 为 `null` |
 | `edges[].id`、`kind` | 边编号及类型：`road` 道路、`connection` 连接 |

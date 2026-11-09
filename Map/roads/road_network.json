@@ -4,19 +4,6 @@
     "unit": "m",
     "bounds_m": [-1000, -3000, 3000, 1000]
   },
-  "routing_rules": {
-    "distance_metric": "xy",
-    "vehicle": {
-      "lane_types": [
-        "driving"
-      ],
-      "direction": "forward",
-      "connection_requires_both_lanes": true
-    },
-    "uav": {
-      "direction": "both"
-    }
-  },
   "lanes": [
     {
       "id": "r0:s0:l4",
@@ -1043914,6 +1043901,17 @@
       "length_m": 0.4376650445481491
     },
     {
+      "id": "C:3df4f2fd96523f27",
+      "kind": "connection",
+      "from_node_id": "N:r9950:s0:l-1:p1:s0:end",
+      "to_node_id": "N:r9950:s0:l-1:p2:s0:start",
+      "polyline_xy_m": [
+        [2399.7871078122357, 44.092553076017204],
+        [2399.8389758402286, 44.71243262312911]
+      ],
+      "length_m": 0.6220457742445765
+    },
+    {
       "id": "C:9d9aef09ea64ae1e",
       "kind": "connection",
       "from_node_id": "N:r9952:s0:l-1:p0:s0:end",
@@ -1192246,6 +1192244,204 @@
         [-217.43366000000003, -2068.2769200000002]
       ],
       "length_m": 4.627584219957461e-06
+    },
+    {
+      "id": "C:8ab0112fe81de687",
+      "kind": "connection",
+      "from_node_id": "N:r614:s0:l1:p2:s0:end",
+      "to_node_id": "N:r614:s0:l1:p3:s0:start",
+      "polyline_xy_m": [
+        [-216.81910222436753, -2736.4436662282715],
+        [-216.82112261116268, -2734.2636465018077]
+      ],
+      "length_m": 2.180020662685125
+    },
+    {
+      "id": "C:3b79ec9eb1ff2dd0",
+      "kind": "connection",
+      "from_node_id": "N:r942:s0:l1:p0:s6:end",
+      "to_node_id": "N:r942:s0:l1:p1:s0:start",
+      "polyline_xy_m": [
+        [1441.9576864493677, 127.21570054186803],
+        [1443.1262464843603, 124.47583055821283]
+      ],
+      "length_m": 2.97866078678267
+    },
+    {
+      "id": "C:0dc47219035b4675",
+      "kind": "connection",
+      "from_node_id": "N:r942:s0:l-1:p0:s6:end",
+      "to_node_id": "N:r942:s0:l-1:p1:s0:start",
+      "polyline_xy_m": [
+        [1404.8729347845835, 207.40347045144958],
+        [1404.368222049708, 210.32582226814137]
+      ],
+      "length_m": 2.9656154648347965
+    },
+    {
+      "id": "C:dc088c182e30d4b1",
+      "kind": "connection",
+      "from_node_id": "N:r1002:s0:l-1:p0:s20:end",
+      "to_node_id": "N:r1002:s0:l-1:p1:s0:start",
+      "polyline_xy_m": [
+        [-653.9683232468237, 118.21799330077447],
+        [-651.0098857764067, 117.7718720389414]
+      ],
+      "length_m": 2.991885099168599
+    },
+    {
+      "id": "C:0c76515e828fd221",
+      "kind": "connection",
+      "from_node_id": "N:r1019:s1:l1:p1:s0:end",
+      "to_node_id": "N:r1019:s1:l1:p2:s0:start",
+      "polyline_xy_m": [
+        [-216.87461560984255, -2662.700878435551],
+        [-216.87666434172493, -2660.5238144286404]
+      ],
+      "length_m": 2.1770649708928524
+    },
+    {
+      "id": "C:c17435b6998090c9",
+      "kind": "connection",
+      "from_node_id": "N:r2618:s0:l-1:p0:s0:end",
+      "to_node_id": "N:r2618:s0:l-1:p1:s0:start",
+      "polyline_xy_m": [
+        [-749.8580886167402, -7.260661312215325],
+        [-750.2790333971107, -6.626228026410917]
+      ],
+      "length_m": 0.7613803926144056
+    },
+    {
+      "id": "C:9fa8018889be3ab7",
+      "kind": "connection",
+      "from_node_id": "N:r4587:s0:l1:p0:s0:end",
+      "to_node_id": "N:r4587:s0:l1:p1:s0:start",
+      "polyline_xy_m": [
+        [2158.8889828829883, 119.94109321119741],
+        [2161.3416802030856, 120.18426353087953]
+      ],
+      "length_m": 2.4647222862599985
+    },
+    {
+      "id": "C:12b11cb7ba88a2e2",
+      "kind": "connection",
+      "from_node_id": "N:r5757:s0:l1:p0:s0:end",
+      "to_node_id": "N:r5757:s0:l1:p1:s0:start",
+      "polyline_xy_m": [
+        [1479.6260859415738, 0.3106735335483358],
+        [1477.888150056538, -0.42040743935171554]
+      ],
+      "length_m": 1.8854443851335267
+    },
+    {
+      "id": "C:0f1867a5dafeebd1",
+      "kind": "connection",
+      "from_node_id": "N:r6750:s0:l1:p0:s0:end",
+      "to_node_id": "N:r6750:s0:l1:p1:s0:start",
+      "polyline_xy_m": [
+        [1056.8032995064923, -539.8524661015285],
+        [1054.405037082328, -540.434945030857]
+      ],
+      "length_m": 2.4679838650749795
+    },
+    {
+      "id": "C:8d321b7078bb39b8",
+      "kind": "connection",
+      "from_node_id": "N:r6777:s0:l2:p0:s0:end",
+      "to_node_id": "N:r6777:s0:l2:p1:s0:start",
+      "polyline_xy_m": [
+        [1056.803403841141, -539.8531268876379],
+        [1054.3747075586812, -540.247660222339]
+      ],
+      "length_m": 2.4605329066332167
+    },
+    {
+      "id": "C:a47d0db805e26fcf",
+      "kind": "connection",
+      "from_node_id": "N:r7349:s0:l-1:p1:s0:end",
+      "to_node_id": "N:r7349:s0:l-1:p2:s0:start",
+      "polyline_xy_m": [
+        [1409.7867538456628, -350.4673091880347],
+        [1409.8501492692606, -349.8185843302242]
+      ],
+      "length_m": 0.6518150971512885
+    },
+    {
+      "id": "C:cbdc6c4b375ea691",
+      "kind": "connection",
+      "from_node_id": "N:r8523:s0:l-1:p0:s0:end",
+      "to_node_id": "N:r8523:s0:l-1:p1:s0:start",
+      "polyline_xy_m": [
+        [-968.4957914686795, 0.03409378719170696],
+        [-966.0518065103754, -0.009827898351524532]
+      ],
+      "length_m": 2.4443795922232803
+    },
+    {
+      "id": "C:5a033f71f05e09df",
+      "kind": "connection",
+      "from_node_id": "N:r8551:s0:l-1:p0:s0:end",
+      "to_node_id": "N:r8551:s0:l-1:p1:s0:start",
+      "polyline_xy_m": [
+        [-968.4957914782424, 0.034091175554152836],
+        [-966.0357757439654, 0.026104008493895797]
+      ],
+      "length_m": 2.460028700590333
+    },
+    {
+      "id": "C:d2dd2fe89a0ee6db",
+      "kind": "connection",
+      "from_node_id": "N:r12218:s0:l1:p1:s0:end",
+      "to_node_id": "N:r12218:s0:l1:p2:s0:start",
+      "polyline_xy_m": [
+        [2249.966180920857, -462.1120259742272],
+        [2250.3614669167714, -464.541477592018]
+      ],
+      "length_m": 2.4613992325001637
+    },
+    {
+      "id": "C:0b0d5525301550a3",
+      "kind": "connection",
+      "from_node_id": "N:r15729:s0:l2:p0:s0:end",
+      "to_node_id": "N:r15729:s0:l2:p1:s0:start",
+      "polyline_xy_m": [
+        [1410.0858429980067, 570.85],
+        [1410.0748416272907, 568.39]
+      ],
+      "length_m": 2.4600245995025762
+    },
+    {
+      "id": "C:cf740a594b6023a4",
+      "kind": "connection",
+      "from_node_id": "N:r15748:s0:l1:p1:s0:end",
+      "to_node_id": "N:r15748:s0:l1:p2:s0:start",
+      "polyline_xy_m": [
+        [1410.419716064944, 570.85],
+        [1410.0748357874352, 568.39]
+      ],
+      "length_m": 2.484057649454759
+    },
+    {
+      "id": "C:f6f33932191de7f1",
+      "kind": "connection",
+      "from_node_id": "N:r19437:s0:l-1:p1:s0:end",
+      "to_node_id": "N:r19437:s0:l-1:p2:s0:start",
+      "polyline_xy_m": [
+        [-959.6190942799915, -167.55818053711934],
+        [-960.05137332951, -168.19662762265486]
+      ],
+      "length_m": 0.7710251991222302
+    },
+    {
+      "id": "C:f3b9c08ef15cc40e",
+      "kind": "connection",
+      "from_node_id": "N:r19485:s0:l1:p0:s0:end",
+      "to_node_id": "N:r19485:s0:l1:p1:s0:start",
+      "polyline_xy_m": [
+        [-960.0106254281269, -157.77160296845088],
+        [-959.5878197193055, -158.40623911887783]
+      ],
+      "length_m": 0.762579642293675
     }
   ]
 }

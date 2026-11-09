@@ -97,6 +97,13 @@
           <p id="llm-vision-error" class="llm-vision-error" hidden></p>
           <div id="llm-anomalies" class="llm-anomalies"></div>
         </section>
+        <section id="llm-traffic" class="llm-vision" hidden aria-label="高空车辆测速">
+          <div class="section-heading"><h2>超速车辆 <span id="llm-speeding-count" class="llm-anomaly-count">0</span></h2></div>
+          <p id="llm-traffic-status" class="muted"></p>
+          <p id="llm-traffic-error" class="llm-vision-error" hidden></p>
+          <div id="llm-vehicle-speeds" class="muted"></div>
+          <div id="llm-speeding-alerts" class="llm-anomalies"></div>
+        </section>
         <details id="llm-history" class="llm-history" hidden>
           <summary>前面的对话</summary><div id="llm-messages"></div>
         </details>
@@ -123,7 +130,7 @@
         <select id="abnormal-kind"><option value="vehicle">异常车辆</option><option value="armed_person">持刀人员</option><option value="patient">病人</option></select>
         <div class="abnormal-buttons"><button id="abnormal-pick" type="button">地图选点生成</button><button id="abnormal-cancel" type="button" hidden>取消选点</button></div>
         <p id="abnormal-operation" class="abnormal-status" role="status" aria-live="polite">选择类型后，可在地图上生成新目标。</p>
-        <p class="muted">车辆需点击距离机动车道 5 米以内的位置，自动沿固定闭环行驶，初始行为为混合模式。人员在选点 100 米内寻找可用人行道。</p>
+        <p class="muted">车辆选点仅作参考，可点击目标地块或附近道路，系统自动选择周边车道上的生成位置，并沿地块外围顺时针闭环行驶，初始行为为突然加速。人员在选点 100 米内寻找可用人行道。</p>
         <section>
           <div class="section-heading"><h2>已生成目标 <span id="abnormal-count">0</span></h2><span id="abnormal-connection" class="muted" role="status">正在连接…</span></div>
           <div id="abnormal-list" class="abnormal-list" aria-label="异常目标列表"></div>
@@ -135,7 +142,7 @@
           <p id="abnormal-action"></p>
           <div id="abnormal-vehicle-controls" hidden>
             <label class="field" for="abnormal-behavior">车辆行为</label>
-            <div class="abnormal-buttons"><select id="abnormal-behavior"><option value="mixed">混合（随机切换）</option><option value="cruise">正常巡航</option><option value="surge">突然加速</option><option value="weave">蛇形行驶</option><option value="brake">急刹减速</option><option value="wrong_way">逆向行驶</option><option value="stop">停止</option></select><button id="abnormal-apply" type="button">应用</button></div>
+            <div class="abnormal-buttons"><select id="abnormal-behavior"><option value="mixed">混合（随机切换）</option><option value="cruise">正常巡航</option><option value="surge" selected>突然加速</option><option value="weave">蛇形行驶</option><option value="brake">急刹减速</option><option value="wrong_way">逆向行驶</option><option value="stop">停止</option></select><button id="abnormal-apply" type="button">应用</button></div>
           </div>
         </section>
       </div>

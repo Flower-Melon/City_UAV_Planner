@@ -25,6 +25,8 @@
   let resetting = false, resetFailed = false, generation = 0, planningController = null;
   let visionMission = null;
   const shownAnomalies = new Map();
+  const shownSpeeding = new Set();
+  let trafficMission = null;
 
   function showFlight(settings) {
     for (const [key, field] of Object.entries(flightFields)) {
@@ -126,6 +128,51 @@
   }
   $('llm-image-close').onclick = () => $('llm-image-dialog').close();
 
+  function showTraffic(execution) {
+    const traffic = execution?.traffic;
+    $('llm-traffic').hidden = !traffic;
+    if (!traffic) return;
+    if (trafficMission !== execution.mission_id) {
+      trafficMission = execution.mission_id; shownSpeeding.clear();
+      $('llm-speeding-alerts').replaceChildren();
+    }
+    $('llm-speeding-count').textContent = traffic.alerts.length;
+    $('llm-traffic-status').textContent = `限速 ${execution.traffic_settings.speed_limit_kmh} km/h · 已处理 ${traffic.frames} 帧` +
+      (traffic.active ? ' · 持续监测中' : ' · 监测未运行');
+    const error = traffic.errors[0]?.error;
+    $('llm-traffic-error').hidden = !error;
+    $('llm-traffic-error').textContent = error || '';
+    const states = {queued: '等待到位', starting: '准备监测', running: '测速中', paused: '仿真暂停',
+      stabilizing: '等待悬停稳定', timing_unstable: '取图时间不稳定，暂停测速', retrying: '正在重试',
+      stopped: '已停止', failed: '监测失败'};
+    const rows = execution.tasks.map(task => {
+      const state = task.monitor.traffic;
+      const row = document.createElement('p');
+      row.textContent = `${task.monitor.drone_id || task.target.zone_id} · ${states[state.status] || state.status}` +
+        (state.vehicles.length ? '：' + state.vehicles.map(vehicle => `车辆 ${vehicle.track_id} ` +
+          (vehicle.speed_kmh === null ? '积累轨迹中' : `${vehicle.speed_kmh.toFixed(1)} km/h`)).join('；') : '') +
+        (state.unlocated_count ? `；${state.unlocated_count} 辆车暂无法测速` : '');
+      return row;
+    });
+    $('llm-vehicle-speeds').replaceChildren(...rows);
+    for (const record of traffic.alerts) {
+      const key = `${record.task_id}:${record.event_id}`;
+      if (shownSpeeding.has(key)) continue;
+      shownSpeeding.add(key);
+      const card = document.createElement('article'); card.className = 'llm-anomaly-card';
+      const heading = document.createElement('p'); heading.className = 'llm-anomaly-heading';
+      heading.textContent = `${record.drone_id} · ${record.zone_id} · 车辆 ${record.track_id}`;
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'llm-anomaly-open';
+      button.setAttribute('aria-label', '放大超速车辆证据'); button.append(annotatedImage(record));
+      const description = document.createElement('p'); description.textContent = record.description;
+      button.onclick = () => {
+        const caption = document.createElement('p'); caption.textContent = record.description;
+        $('llm-image-detail').replaceChildren(annotatedImage(record), caption); $('llm-image-dialog').showModal();
+      };
+      card.append(heading, button, description); $('llm-speeding-alerts').append(card);
+    }
+  }
+
   // 根据规划与飞行状态锁定输入，防止刷新或重复点击再次派发。
   function controls() {
     for (const element of [submit, input, followupSubmit, followupInput, ...flightButtons])
@@ -169,7 +216,9 @@
     mission = data.execution;
     if (mission?.settings) showFlight(mission.settings);
     showVision(mission);
-    flying = !!data.starting || !!data.uncertain || !!mission && !['completed', 'failed'].includes(mission.status);
+    showTraffic(mission);
+    flying = !!data.starting || !!data.uncertain || !!mission?.traffic?.active ||
+      !!mission && !['completed', 'failed'].includes(mission.status);
     if (mission || flying) needsClarification = false;
     if (mission) {
       $('llm-queue').hidden = false;
@@ -194,6 +243,8 @@
         messages.running = '任务执行中 · 已发现病人，救援无人机正在执行药品投递。';
       if (mission.status === 'completed' && rescues.length)
         messages.completed = '巡查及药品救援已完成 · 救援机和监控机保持悬停。';
+      if (mission.traffic?.active && ['completed', 'failed'].includes(mission.status))
+        messages[mission.status] += ' 高空车辆测速继续运行，点击「新任务」结束并复位。';
       setStatus(mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready', messages[mission.status] || '正在确认执行状态…');
       newTask.hidden = false;
       if (resultPanel.hidden && data.plan) {
@@ -282,7 +333,9 @@
     try {
       const response = await fetch('/api/llm/plan', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({instruction, conversation, flight: {...flightSettings}}), signal: controller.signal
+        body: JSON.stringify({instruction, conversation,
+          flight: {max_height: flightSettings.max_height, flight_speed: flightSettings.flight_speed,
+            flight_height: flightSettings.flight_height}}), signal: controller.signal
       });
       if (!response.headers.get('Content-Type')?.includes('application/json')) {
         throw new Error('网页服务未返回有效数据，请重启 node web/serve.cjs 后刷新页面。');
@@ -361,6 +414,8 @@
     $('llm-answer-heading').textContent = '模型回答';
     $('llm-vision').hidden = true; $('llm-anomalies').replaceChildren();
     shownAnomalies.clear(); visionMission = null;
+    $('llm-traffic').hidden = true; $('llm-speeding-alerts').replaceChildren();
+    shownSpeeding.clear(); trafficMission = null;
     input.value = ''; followupInput.value = ''; form.hidden = false;
     if ($('llm-image-dialog').open) $('llm-image-dialog').close();
     input.focus();

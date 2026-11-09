@@ -6,8 +6,14 @@
   const selector = document.getElementById('camera-drone');
   const status = document.getElementById('airsim-status');
   let selected = selector.value;
-  let frameRequest = null, stateRequest = null, timer, generation = 0;
-  let stamp = 0, imageUrl = null;
+  let stateRequest = null, timer, generation = 0;
+  let stream = null;
+  const params = new URLSearchParams(location.search);
+  // 画面由 CityNPC 在 UE 内直接输出；地址可加 fps=（默认 30，0 为每帧）、stats=1（显示帧率与延迟）。
+  const video = {mode: params.get('mode') || 'capture', fps: params.get('fps')};
+  const stats = window.__videoStats = {frames: [], received: 0, events: []};
+  const note = (event, detail = '') => { stats.events.push([Date.now(), event, String(detail)]); if (stats.events.length > 2000) stats.events.shift(); };
+  const HEADER_END = new Uint8Array([13, 10, 13, 10]);
 
   const card = document.createElement('article'); card.className = 'drone-card';
   const heading = document.createElement('div'); heading.className = 'drone-heading';
@@ -16,43 +22,109 @@
   locate.onclick = () => window.liveMap?.centerDrone(selected);
   heading.append(title, locate);
   const view = document.createElement('div'); view.className = 'camera-view';
-  const image = document.createElement('img'); image.hidden = true;
+  const canvas = document.createElement('canvas'); canvas.hidden = true; canvas.setAttribute('role', 'img');
+  const context = canvas.getContext('2d');
   const placeholder = document.createElement('div'); placeholder.className = 'camera-placeholder';
+  const overlay = document.createElement('div'); overlay.className = 'camera-stats'; overlay.hidden = params.get('stats') !== '1';
   const position = document.createElement('p'); position.className = 'drone-position';
-  view.append(image, placeholder); card.append(heading, view, position); container.append(card);
+  view.append(canvas, placeholder, overlay); card.append(heading, view, position); container.append(card);
 
   function clearImage(message) {
-    frameRequest?.abort(); frameRequest = null; stamp = 0;
-    image.hidden = true; image.removeAttribute('src');
-    if (imageUrl) URL.revokeObjectURL(imageUrl);
-    imageUrl = null; placeholder.hidden = false; placeholder.textContent = message;
+    stream?.controller.abort(); stream = null;
+    canvas.hidden = true; placeholder.hidden = false; placeholder.textContent = message;
   }
 
+  function concat(a, b) {
+    const out = new Uint8Array(a.length + b.length); out.set(a); out.set(b, a.length); return out;
+  }
+
+  function indexOf(buffer, pattern) {
+    outer: for (let i = 0; i + pattern.length <= buffer.length; i++) {
+      for (let j = 0; j < pattern.length; j++) if (buffer[i + j] !== pattern[j]) continue outer;
+      return i;
+    }
+    return -1;
+  }
+
+  function record(captured) {
+    stats.frames.push([Date.now(), captured]);
+    if (stats.frames.length > 200000) stats.frames.splice(0, 100000);
+  }
+
+  // 只画最新到达的一帧：解码跟不上时丢弃中间帧，不积压延迟。
+  async function readStream(url, controller) {
+    let pending = null, drawing = false;
+    const draw = async () => {
+      if (drawing || !pending) return;
+      drawing = true;
+      const {bytes, captured} = pending; pending = null;
+      try {
+        const bitmap = await createImageBitmap(new Blob([bytes], {type: 'image/jpeg'}));
+        if (controller.signal.aborted) { bitmap.close(); return; }
+        if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+          canvas.width = bitmap.width; canvas.height = bitmap.height;
+        }
+        context.drawImage(bitmap, 0, 0); bitmap.close();
+        canvas.hidden = false; placeholder.hidden = true;
+        record(captured);
+      } catch {} finally {
+        drawing = false;
+        if (pending && !controller.signal.aborted) void draw();
+      }
+    };
+    try {
+      const response = await fetch(url, {cache: 'no-store', signal: controller.signal});
+      if (!response.ok || !response.body) throw new Error('视频流不可用');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = new Uint8Array(0);
+      for (;;) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        buffer = concat(buffer, value);
+        for (;;) {
+          const end = indexOf(buffer, HEADER_END);
+          if (end < 0) break;
+          const head = decoder.decode(buffer.subarray(0, end));
+          const length = Number(/Content-Length:\s*(\d+)/i.exec(head)?.[1]);
+          const start = end + HEADER_END.length;
+          if (!Number.isFinite(length)) { buffer = buffer.subarray(start); continue; }
+          if (buffer.length < start + length) break;
+          pending = {bytes: buffer.slice(start, start + length), captured: Number(/X-Frame-Time:\s*(\d+)/i.exec(head)?.[1]) || 0};
+          stats.received++;
+          buffer = buffer.subarray(start + length);
+          void draw();
+        }
+      }
+      note('stream-end', 'done');
+    } catch (error) { note('stream-end', controller.signal.aborted ? 'aborted' : error.message); }
+    // 连接断开后由下一次状态刷新重新建立。
+    if (stream?.controller === controller) stream = null;
+  }
+
+  function ensureStream(name) {
+    if (stream?.camera === name) return;
+    stream?.controller.abort();
+    const controller = new AbortController();
+    stream = {camera: name, controller};
+    const query = new URLSearchParams({camera: name, mode: video.mode});
+    if (video.fps !== null) query.set('fps', video.fps);
+    note('stream-start', name);
+    void readStream(`/api/airsim/stream?${query}`, controller);
+  }
+
+  setInterval(() => {
+    if (overlay.hidden) return;
+    const now = Date.now(), recent = stats.frames.filter(frame => now - frame[0] <= 1000);
+    const delays = recent.filter(frame => frame[1]).map(frame => frame[0] - frame[1]).sort((a, b) => a - b);
+    overlay.textContent = `${recent.length} fps` + (delays.length ? ` · 延迟 ${delays[delays.length >> 1]} ms` : '');
+  }, 500);
+
   function resetSelection() {
-    title.textContent = selected; image.alt = `${selected} 第三人称实时画面`;
+    title.textContent = selected; canvas.setAttribute('aria-label', `${selected} 第三人称实时画面`);
     card.style.setProperty('--drone-color', colors[Math.max(0, selector.selectedIndex) % colors.length]);
     position.textContent = '等待实时位置'; locate.disabled = true;
     clearImage('等待摄像头画面');
-  }
-
-  async function frameFor(name, updatedAt) {
-    if (frameRequest || updatedAt === stamp) return;
-    const controller = new AbortController(); frameRequest = controller;
-    const timeout = setTimeout(() => controller.abort(), 4000);
-    try {
-      const response = await fetch(`/api/airsim/camera/${encodeURIComponent(name)}?t=${updatedAt}`, {cache: 'no-store', signal: controller.signal});
-      if (!response.ok) throw new Error('画面暂不可用');
-      const blob = await response.blob();
-      if (controller.signal.aborted || name !== selected || document.hidden || document.getElementById('uav-camera-panel').hidden) return;
-      const previous = imageUrl; imageUrl = URL.createObjectURL(blob); image.src = imageUrl;
-      image.hidden = false; placeholder.hidden = true; stamp = updatedAt;
-      if (previous) URL.revokeObjectURL(previous);
-    } catch {
-      if (!controller.signal.aborted && !imageUrl) placeholder.textContent = '正在等待画面…';
-    } finally {
-      clearTimeout(timeout);
-      if (frameRequest === controller) frameRequest = null;
-    }
   }
 
   function disconnected() {
@@ -80,7 +152,8 @@
       const timeout = setTimeout(() => controller.abort(), 4000);
       try {
         const capture = !document.getElementById('uav-camera-panel').hidden;
-        const response = await fetch(`/api/airsim/state?camera=${encodeURIComponent(selected)}&capture=${capture}`, {cache: 'no-store', signal: controller.signal});
+        // 画面来自 UE 推送，Python 端只读状态不取图。
+        const response = await fetch(`/api/airsim/state?camera=${encodeURIComponent(selected)}&capture=false`, {cache: 'no-store', signal: controller.signal});
         if (!response.ok) throw new Error('读取实时状态失败');
         const data = await response.json();
         if (current !== generation) return;
@@ -101,10 +174,10 @@
           status.textContent = located ? `已连接 · ${located} 架无人机实时位置` : data.coordinate_error ? '已连接 · 世界坐标校准失败' : '已连接 · 正在校准世界坐标';
           status.title = data.coordinate_error || '';
           window.liveMap?.setDrones(records);
-          if (capture && drone?.camera_updated_at) void frameFor(selected, drone.camera_updated_at);
+          if (capture) ensureStream(selected);
           else clearImage('正在等待摄像头画面…');
-        } else disconnected();
-      } catch { if (current === generation) disconnected(); }
+        } else { note('state-offline'); disconnected(); }
+      } catch (error) { if (current === generation) { note('state-error', error.message); disconnected(); } }
       finally {
         clearTimeout(timeout);
         if (stateRequest === controller) stateRequest = null;
@@ -121,7 +194,7 @@
   selector.onchange = () => { selected = selector.value; resetSelection(); void update(); };
   window.addEventListener('sidebar:change', () => { clearImage('等待摄像头画面'); void update(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) frameRequest?.abort();
+    if (document.hidden) clearImage('等待摄像头画面');
     else void update();
   });
   window.addEventListener('pagehide', () => { clearTimeout(timer); stateRequest?.abort(); clearImage(''); });

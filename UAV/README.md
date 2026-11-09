@@ -67,9 +67,7 @@ None
 
 ### 1.3 search_area
 
-巡查目标所在完整街区的道路边界和内部道路，路径规划的算法实现见 `utils.plan_search_path`。
-
-具体选择哪架或者哪几架无人机执行搜索的逻辑见 `utils.select_UAV`，根据区域和 AirSim 实时状态自动选择并占用一架无人机。
+巡查目标所在完整街区的道路边界和内部道路，路径规划的算法实现见 `utils.plan_search_path`。具体选择哪架或者哪几架无人机执行搜索的逻辑见 `utils.select_UAV`，根据区域和 AirSim 实时状态自动选择并占用一架无人机。
 
 巡查途中按道路折线的累计前进里程，用 `bottom_center` 触发下视拍照，默认每15米一次，可通过 `capture_interval_m` 调整。搜索期间，下视 RGB 相机默认不渲染树木。
 
@@ -80,7 +78,7 @@ None
 | `flight_speed` | `float` | 巡航速度上限，单位米/秒，大于 `0`，默认 `30.0`；拐弯及短路段自动降速 |
 | `max_height` | `float` | 去程和返航的最大当地离地高度，默认60米，至少15米；仅限关键字传入 |
 | `capture_interval_m` | `float` | 巡查途中下视拍照的累计里程间距，单位米，大于0且有限，默认15.0；仅限关键字传入 |
-| `output_dir` | `str` 或 `Path` | 输出根目录，默认是项目根目录下的 `output/`；每次任务新增连续编号目录，图片及 `frame.json`、`route.json` 保存在其 `capture/` 子目录 |
+| `output_dir` | `str`、`Path` 或 `None` | 本次巡查的保存目录；默认 `None`，使用项目根目录下的 `output/temp/` |
 
 `target` 字段：
 
@@ -115,18 +113,16 @@ result = search_area(
 None  # result；巡查结束，已返航并降落
 ```
 
-输出目录示例：
+不传 `output_dir` 时的输出目录：
 
 ```text
-output/000001/
+output/temp/
 └─ capture/
    ├─ 000001.jpg
    ├─ 000002.jpg
    ├─ route.json         导航/巡查航段、返航路径、起飞基点及拍照间距
    └─ frame.json         道路巡查照片及拍摄位置
 ```
-
-单独运行 `python UAV/API/search_area.py` 时，输出到 `output/temp/编号/capture/`，如 `output/temp/000001/capture/`。
 
 `frame.json` 是按照片编号排列的数组，结构如下：
 
@@ -170,8 +166,6 @@ None  # result；药箱已着地并收绳，无人机在落点上空悬停
 ```
 
 ### 1.5 monitor_area
-
-下视 RGB 相机通过 `runtime.kill_trees` 隐藏树木；到位悬停并返回后仍保留设置，供后续监控拍照使用。
 
 飞往目标区域几何中心的正上方并悬停。
 

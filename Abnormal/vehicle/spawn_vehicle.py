@@ -12,8 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import msgpack
-from shapely.geometry import LineString, Point
-from shapely.strtree import STRtree
+from shapely.geometry import LineString, Point, Polygon, shape
 
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -62,7 +61,6 @@ class AirSimClient:
 
 
 _VEHICLE_SETTINGS = {
-    "max_spawn_snap_m": 5.0,
     "cruise_speed_kmh": 75.0,
     "surge_speed_kmh": 104.4,
     "brake_speed_kmh": 36.0,
@@ -131,6 +129,7 @@ def request(client, operation, _controller=None, _module_name="city_abnormal_run
 
 
 NETWORK = Path(__file__).resolve().parents[2] / "Map/roads/road_network.json"
+ZONES = Path(__file__).resolve().parents[2] / "Map/zones/functional_zones.json"
 
 
 def position_xy(value):
@@ -149,13 +148,19 @@ def position_xy(value):
 
 
 class RoadGraph:
-    def __init__(self, network):
+    def __init__(self, network, zones):
+        self.zones = []
+        for feature in zones["features"]:
+            if feature["properties"]["category"] == "transport":
+                continue
+            geometry = shape(feature["geometry"])
+            polygons = geometry.geoms if geometry.geom_type == "MultiPolygon" else [geometry]
+            self.zones.extend((feature, Polygon(p.exterior)) for p in polygons)
         driving = {lane["id"] for lane in network["lanes"] if lane["type"] == "driving"}
         roads = [e for e in network["edges"] if e.get("lane_id") in driving]
         road_ids = {e["id"] for e in roads}
         nodes = {node for e in roads for node in (e["from_node_id"], e["to_node_id"])}
         self.edges = {}
-        self.outgoing = {}
         for e in network["edges"]:
             if e["id"] not in road_ids and not (e.get("kind") == "connection"
                                       and e["from_node_id"] in nodes and e["to_node_id"] in nodes):
@@ -165,50 +170,87 @@ class RoadGraph:
                 continue
             edge = dict(e, points=points, length=sum(math.dist(a, b) for a, b in zip(points, points[1:])))
             self.edges[e["id"]] = edge
-            self.outgoing.setdefault(e["from_node_id"], []).append(edge)
-        for edges in self.outgoing.values():
-            edges.sort(key=lambda e: e["id"])
         self.roads = sorted((self.edges[e["id"]] for e in roads if e["id"] in self.edges),
                             key=lambda e: e["id"])
         if not self.roads:
             raise ValueError("路网没有机动车道")
         self.lines = [LineString(e["points"]) for e in self.roads]
-        self.index = STRtree(self.lines)
 
-    def _return_path(self, source, target):
+    def _perimeter_graph(self, polygon):
+        # 只使用地块外围 40 米内的道路，避免绕到相邻街区或穿过地块内部。
+        corridor = polygon.buffer(40.0).difference(polygon)
+        xmin, ymin, xmax, ymax = corridor.bounds
+        center = polygon.representative_point()
+        outgoing, turns = {}, {}
+        for edge in self.edges.values():
+            x, y = edge["points"][0]
+            if not (xmin <= x <= xmax and ymin <= y <= ymax):
+                continue
+            if not corridor.covers(LineString(edge["points"])):
+                continue
+            # 记录有向边穿过从地块内部向右发出的射线的次数。
+            # 网页地图 X 向右、Y 向下；穿越次数 +1 才是所需的顺时针完整闭环。
+            turn = 0
+            for a, b in zip(edge["points"], edge["points"][1:]):
+                if (a[1] > center.y) != (b[1] > center.y):
+                    cross_x = a[0] + (center.y - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+                    if cross_x > center.x:
+                        turn += 1 if b[1] > a[1] else -1
+            turns[edge["id"]] = turn
+            outgoing.setdefault(edge["from_node_id"], []).append(edge)
+        for edges in outgoing.values():
+            edges.sort(key=lambda e: e["id"])
+        return outgoing, turns
+
+    def _return_path(self, start_edge, outgoing, turns):
+        source = (start_edge["to_node_id"], turns[start_edge["id"]])
+        target = start_edge["from_node_id"]
         queue = [(0.0, source)]
         best = {source: 0.0}
         previous = {}
         while queue:
-            cost, node = heapq.heappop(queue)
-            if cost != best[node]:
+            cost, state = heapq.heappop(queue)
+            if cost != best[state]:
                 continue
-            if node == target:
+            node, winding = state
+            if node == target and winding == 1:
                 path = []
-                while node != source:
-                    edge = previous[node]
+                while state != source:
+                    state, edge = previous[state]
                     path.append(edge)
-                    node = edge["from_node_id"]
                 return list(reversed(path))
-            for edge in self.outgoing.get(node, ()):
-                end = edge["to_node_id"]
+            for edge in outgoing.get(node, ()):
+                next_winding = winding + turns[edge["id"]]
+                if abs(next_winding) > 1:
+                    continue
+                end = (edge["to_node_id"], next_winding)
                 candidate = cost + max(edge["length"], 1e-6)
                 if candidate < best.get(end, math.inf):
                     best[end] = candidate
-                    previous[end] = edge
+                    previous[end] = (state, edge)
                     heapq.heappush(queue, (candidate, end))
-        raise ValueError("指定出生点所在车道无法沿机动车道连接形成闭环")
+        return None
 
-    def loop(self, position, max_snap=5.0):
+    def loop(self, position):
         point = Point(position_xy(position))
-        # 距离并列时按真实车道边 ID 选择，避免 STRtree 的并列顺序影响路线。
-        near = self.index.query_nearest(point, all_matches=True)
-        i = min((int(i) for i in near), key=lambda i: (self.lines[i].distance(point), self.roads[i]["id"]))
-        edge, line = self.roads[i], self.lines[i]
-        distance = line.distance(point)
-        if distance > max_snap:
-            raise ValueError(f"出生点距离最近机动车道 {distance:.2f} 米，超过允许的 {max_snap:g} 米")
-        along = line.project(point)
+        # 点击仅指定目标区域：内部点击选择所在的地块，外部点击选择最近的地块。
+        zone, polygon = min(self.zones, key=lambda item: (
+            item[1].distance(point), item[0]["id"]))
+        outgoing, turns = self._perimeter_graph(polygon)
+        # 在目标地块的全部外围车道中选择出生点，不要求参考点落在道路上。
+        # 车道至少长 6 米，以便出生点离两端各留出 3 米。
+        candidates = sorted((i for i, edge in enumerate(self.roads)
+                             if edge["id"] in turns and self.lines[i].length >= 6.0),
+                            key=lambda i: (self.lines[i].distance(point), self.roads[i]["id"]))
+        returning = None
+        for i in candidates:
+            edge, line = self.roads[i], self.lines[i]
+            returning = self._return_path(edge, outgoing, turns)
+            if returning is not None:
+                break
+        if returning is None:
+            raise ValueError(f"{zone['properties']['name']}：当前路网无法沿该地块外围形成顺时针闭环")
+        along = min(max(line.project(point), 3.0), line.length - 3.0)
         spawn = tuple(line.interpolate(along).coords[0])
         before, after = [edge["points"][0]], []
         traversed = 0.0
@@ -223,7 +265,6 @@ class RoadGraph:
             traversed = end
         before.append(spawn)
         parts = [[spawn] + after]
-        returning = self._return_path(edge["to_node_id"], edge["from_node_id"])
         parts.extend(e["points"] for e in returning)
         parts.append(before)
         points = []
@@ -235,25 +276,27 @@ class RoadGraph:
                     points.append(xy)
         if len(points) < 4 or sum(math.dist(a, b) for a, b in zip(points, points[1:])) < 20:
             raise ValueError("出生点所在道路没有足够长度的可行闭环")
-        return {"points": points, "spawn_xy": spawn, "snap_distance_m": distance,
+        return {"points": points, "spawn_xy": spawn, "snap_distance_m": point.distance(Point(spawn)),
+                "zone_id": zone["id"], "zone_name": zone["properties"]["name"],
                 "edge_id": edge["id"], "edge_ids": [edge["id"]] + [e["id"] for e in returning]}
 
 
 @lru_cache(maxsize=1)
 def road_graph():
-    return RoadGraph(json.loads(NETWORK.read_text(encoding="utf-8")))
+    return RoadGraph(json.loads(NETWORK.read_text(encoding="utf-8")),
+                     json.loads(ZONES.read_text(encoding="utf-8")))
 
 
 def spawn_vehicle(position) -> str:
-    """position 为 UE 世界 (x, y) 米制坐标；返回可供 AirSim 查询的唯一车辆 ID。
+    """position 为 UE 世界 (x, y) 米制参考坐标；返回可供 AirSim 查询的唯一车辆 ID。
 
-    每次调用新增一辆车，独立生成有向机动车道闭环，初始停车。
-    输入允许在 5 米范围内贴合最近车道；无法形成闭环时抛出异常。
+    每次调用新增一辆车，在参考点所在或最近地块的外围车道自动选择出生点，初始停车。
+    仅生成网页地图上的顺时针闭环；地块外围路网无法顺时针闭环时抛出异常。
     返回前已确认车辆在运行中的 UE 世界生成并注册控制器。
     """
     position = position_xy(position)
     settings = _VEHICLE_SETTINGS.copy()
-    route = road_graph().loop(position, settings["max_spawn_snap_m"])
+    route = road_graph().loop(position)
     with AirSimClient(timeout=45) as client:
         prepared = request(client, "prepare", route=route, settings=settings)
         name = prepared["vehicle_id"]
@@ -283,7 +326,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("x", type=float, help="UE 世界 X，米")
-    parser.add_argument("y", type=float, help="UE 世界 Y，米")
+    parser.add_argument("x", type=float, help="参考位置的 UE 世界 X，米")
+    parser.add_argument("y", type=float, help="参考位置的 UE 世界 Y，米")
     args = parser.parse_args()
     print(spawn_vehicle((args.x, args.y)))

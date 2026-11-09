@@ -1,8 +1,12 @@
 'use strict';
 // 无人机监控接口：管理采集进程、实时状态、轨迹及画面缓存。
 const path = require('node:path');
+const net = require('node:net');
 const {spawn} = require('node:child_process');
 const readline = require('node:readline');
+
+const BOUNDARY = 'uavframe';
+const UE_VIDEO_PORT = 41460;
 
 function send(response, status, value) {
   if (response.destroyed || response.writableEnded) return;
@@ -22,6 +26,9 @@ module.exports = class AirsimController {
     this.selectedCamera = 'UAV_01';
     this.state = {connected: false, updated_at: 0, drones: []};
     this.frames = new Map();
+    // 推送无人机视角视频的网页连接；画面由 CityNPC 在 UE 内直接输出（CityDroneVideo）。
+    this.streams = new Set();
+    this.ue = null;
     this.closed = false;
     this.idleTimer = setInterval(() => {
       if (this.bridge && this.capturing && Date.now() - this.lastLiveRequest > 10000) {
@@ -42,7 +49,7 @@ module.exports = class AirsimController {
     this.bridge = child;
     this.capturing = true;
     child.stdin.on('error', () => {});
-    child.stdin.write(JSON.stringify({capture: true, camera: this.selectedCamera}) + '\n');
+    child.stdin.write(JSON.stringify({capture: true, camera: this.selectedCamera}) +'\n');
     let diagnostic = '';
     child.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-3000); });
     const lines = readline.createInterface({input: child.stdout});
@@ -83,6 +90,79 @@ module.exports = class AirsimController {
       if (!capture) this.frames.clear();
       this.bridge.stdin.write(JSON.stringify({capture, camera: this.selectedCamera}) + '\n');
     }
+  }
+
+  // 每个连接只保留最新帧：上一帧还没写出时直接丢弃，避免积压造成延迟。
+  broadcast(camera, jpeg, capturedAt) {
+    if (!this.streams.size) return;
+    const head = Buffer.from(`--${BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n` +
+      `X-Frame-Time: ${capturedAt}\r\nX-Sent-Time: ${Date.now()}\r\n\r\n`);
+    const part = Buffer.concat([head, jpeg, Buffer.from('\r\n')]);
+    for (const client of this.streams) {
+      if (client.camera !== camera) continue;
+      if (client.busy) { client.dropped++; continue; }
+      if (!client.response.write(part)) {
+        client.busy = true;
+        client.response.once('drain', () => { client.busy = false; });
+      }
+    }
+  }
+
+  openStream(request, response, url) {
+    const camera = url.searchParams.get('camera') || this.selectedCamera;
+    if (camera.length > 128 || /[^\w.-]/.test(camera)) { send(response, 400, {error: '无效的无人机名称'}); return; }
+    response.writeHead(200, {'Content-Type': `multipart/x-mixed-replace; boundary=${BOUNDARY}`,
+      'Cache-Control': 'no-store', Connection: 'keep-alive'});
+    // mode：capture 出图，off 连上但不出图（测基线用）；fps 默认 30，0 为每帧。
+    const fps = url.searchParams.get('fps');
+    const client = {response, camera, busy: false, dropped: 0,
+      mode: url.searchParams.get('mode') === 'off' ? 'off' : 'capture',
+      fps: fps === null ? 30 : Math.max(0, Math.min(120, Number(fps) || 0))};
+    this.streams.add(client);
+    response.on('close', () => { this.streams.delete(client); this.updateUe(); });
+    this.updateUe();
+  }
+
+  // CityNPC 视频输出：本机 TCP，UE 发 [u32 头长][头 JSON][u32 图长][JPEG]，网页服务回一行 JSON 选择无人机与模式。
+  updateUe() {
+    const clients = [...this.streams];
+    if (!clients.length) {
+      if (this.ue) { const old = this.ue; this.ue = null; old.socket.destroy(); }
+      return;
+    }
+    const wanted = clients[clients.length - 1];
+    const control = JSON.stringify({drone: wanted.camera, mode: wanted.mode, fps: wanted.fps}) + '\n';
+    if (this.ue) {
+      if (this.ue.control !== control && this.ue.connected) this.ue.socket.write(control);
+      this.ue.control = control;
+      return;
+    }
+    const socket = net.createConnection({host: '127.0.0.1', port: UE_VIDEO_PORT});
+    const ue = this.ue = {socket, control, connected: false, buffer: Buffer.alloc(0)};
+    socket.setNoDelay(true);
+    socket.on('connect', () => { ue.connected = true; socket.write(ue.control); });
+    socket.on('data', chunk => {
+      ue.buffer = Buffer.concat([ue.buffer, chunk]);
+      for (;;) {
+        if (ue.buffer.length < 4) break;
+        const headLength = ue.buffer.readUInt32LE(0);
+        if (ue.buffer.length < 8 + headLength) break;
+        const imageLength = ue.buffer.readUInt32LE(4 + headLength);
+        if (ue.buffer.length < 8 + headLength + imageLength) break;
+        let head = {};
+        try { head = JSON.parse(ue.buffer.subarray(4, 4 + headLength).toString('utf8')); } catch {}
+        const jpeg = Buffer.from(ue.buffer.subarray(8 + headLength, 8 + headLength + imageLength));
+        ue.buffer = ue.buffer.subarray(8 + headLength + imageLength);
+        this.broadcast(head.drone, jpeg, head.t || Date.now());
+      }
+    });
+    const retry = () => {
+      if (this.ue !== ue) return;
+      this.ue = null;
+      setTimeout(() => this.updateUe(), 2000).unref();
+    };
+    socket.on('error', retry);
+    socket.on('close', retry);
   }
 
   // 规划模块读取原始采样，避免将网页展示用的占位无人机用于任务派发。
@@ -127,6 +207,7 @@ module.exports = class AirsimController {
     if (!['GET', 'HEAD'].includes(request.method)) {
       response.writeHead(405, {Allow: 'GET, HEAD'}); response.end(); return;
     }
+    if (pathname === '/api/airsim/stream') { this.openStream(request, response, url); return; }
     if (pathname === '/api/airsim/state') {
       const camera = url.searchParams.get('camera') || this.selectedCamera;
       if (camera.length > 128 || /[\x00-\x1f]/.test(camera)) {
@@ -156,6 +237,9 @@ module.exports = class AirsimController {
     const child = this.bridge;
     this.bridge = null;
     this.frames.clear();
+    for (const client of this.streams) client.response.end();
+    this.streams.clear();
+    this.updateUe();
     if (child) child.kill();
   }
 };
