@@ -35,6 +35,10 @@ class PythonBridge:
         if not isinstance(request, dict):
             raise ValueError("请求必须是 JSON 对象")
         operation = request.get("operation")
+        if operation == "model_backend":
+            from llm.utils.settings import get_backend, set_backend
+
+            return set_backend(request["backend"]) if "backend" in request else get_backend()
         if operation == "traffic_start":
             from web.utils.traffic_pipeline import start_session
 
@@ -216,7 +220,7 @@ class PythonBridge:
                 self.vision = SearchVisionPipeline()
             return self.vision(path)
         if operation == "abnormal_spawn":
-            from Abnormal import spawn_vehicle, spawn_armed_person, spawn_patient, set_vehicle_behavior
+            from Scene import spawn_vehicle, spawn_armed_person, spawn_patient, set_vehicle_behavior
             factories = {"vehicle": spawn_vehicle, "armed_person": spawn_armed_person, "patient": spawn_patient}
             kind = request["kind"]
             name = factories[kind](request["position"])
@@ -228,11 +232,11 @@ class PythonBridge:
                     result["warning"] = "车辆已生成，但设置行为失败：" + str(error)
             return result
         if operation == "abnormal_behavior":
-            from Abnormal import set_vehicle_behavior
+            from Scene import set_vehicle_behavior
             set_vehicle_behavior(request["target_id"], request["behavior"])
             return {"target_id": request["target_id"]}
         if operation == "abnormal_remove":
-            from Abnormal.vehicle.spawn_vehicle import AirSimClient, request as ue_request
+            from Scene.vehicle.spawn_vehicle import AirSimClient, request as ue_request
             target_id = request["target_id"]
             with AirSimClient(timeout=45) as client:
                 def removal_info():
@@ -247,7 +251,7 @@ class PythonBridge:
                     raise RuntimeError("目标未能完全移除，请重试")
             return {"target_id": target_id, "removed": True}
         if operation in ("abnormal_state", "abnormal_frame"):
-            from Abnormal.vehicle.spawn_vehicle import AirSimClient, request as ue_request
+            from Scene.vehicle.spawn_vehicle import AirSimClient, request as ue_request
             import base64
             import io
             import tempfile

@@ -7,9 +7,10 @@ Map/
 │  ├─ road_network.json       原始车道级路网
 │  ├─ uav_road_network.json   无人机二维道路导航与搜索路网
 │  └─ uav_flight_network.json 无人机分层飞行导航路网
-├─ objects/                   建筑与任务点
+├─ objects/                   建筑、任务点与交通探头
 │  ├─ buildings.json
-│  └─ task_points.json
+│  ├─ task_points.json
+│  └─ traffic_probes.json
 └─ zones/                     功能区与模型目录
    ├─ functional_zones.json
    ├─ zone_catalog.json
@@ -252,3 +253,17 @@ python Map/zones/generate_catalog.py
 | `properties.category`、`parent_id` | 用途分类及所属区域 |
 | `properties.z_min_m`、`z_max_m` | 最低和最高世界 Z 值 |
 
+## objects/traffic_probes.json
+
+完整探头布设，共 100 个路口、373 个探头。
+
+| 字段 | 含义 |
+|---|---|
+| `coordinate_metadata` | UE 世界米制坐标；朝向 0° 指向 +X，90° 指向 +Y |
+| `source` | 布设数据的来源包与文件 |
+| `probes[].id`、`junction`、`region` | 探头编号、所属路口与地图分区 |
+| `probes[].xy_m`、`ground_z_m` | 探头平面位置与地面高度 |
+| `probes[].yaw_deg` | 感知朝向 |
+| `probes[].near_m`、`far_m`、`half_fov_deg` | 感知近界、远界和半视场角 |
+| `probes[].rank` | 路口启用顺序，运行时可按排名选择路口数量 |
+| `read_model`、`heading_tolerance_deg` | 原包的逻辑读牌模型与车辆朝向判定配置 |

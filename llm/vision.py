@@ -2,7 +2,6 @@
 
 import base64
 import json
-import os
 from pathlib import Path
 import sys
 
@@ -34,9 +33,9 @@ class VisionAnalyzer:
         self.prompt = PROMPT_PATH.read_text(encoding="utf-8")
         self.owns_client = client is None
         if client is None:
-            client, default_model = create_client(timeout=25.0, max_retries=0)
+            client, default_model = create_client(timeout=25.0, max_retries=0, vision=True)
             # 超时分别应用于请求的各个网络阶段。
-            model = model or os.getenv("OPENAI_VISION_MODEL", "").strip() or default_model
+            model = model or default_model
         if not model:
             raise ValueError("视觉模型不能为空")
         self.client, self.model = client, model

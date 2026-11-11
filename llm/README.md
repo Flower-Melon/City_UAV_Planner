@@ -190,6 +190,7 @@ result = ZoneCatalog().query(ZoneQuery(name="第一学校"))
 |---|---|---|
 | `timeout` | `float` | 请求超时设置，单位秒，默认 `60.0` |
 | `max_retries` | `int` | 请求失败后的重试次数，默认 `1` |
+| `vision` | `bool` | 默认 `False`；`VisionAnalyzer` 自动设为 `True`，读取对应后端的视觉模型 |
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
@@ -209,7 +210,13 @@ client, model = create_client(timeout=60.0, max_retries=1)
 
 | 配置项 | 含义 |
 |---|---|
-| `OPENAI_API_KEY` | 模型服务密钥，必填 |
+| `LLM_BACKEND` | `openai` 为原有云端调用（默认），`ollama` 为远程 Ollama |
+| `OPENAI_API_KEY` | 云端模型服务密钥，云端模式必填 |
 | `OPENAI_MODEL` | 规划模型，默认 `gpt-4.1-mini` |
 | `OPENAI_BASE_URL` | 模型服务地址，可选，留空使用官方服务 |
 | `OPENAI_VISION_MODEL` | 视觉模型，可选，未设置时使用 `OPENAI_MODEL` |
+| `OLLAMA_BASE_URL` | Ollama 服务根地址，默认 `http://127.0.0.1:11434` |
+| `OLLAMA_MODEL` | Ollama 中的规划模型标签，默认 `qwen3.5:4b-q4_K_M` |
+| `OLLAMA_VISION_MODEL` | 可选，未设置时使用 `OLLAMA_MODEL` |
+| `OLLAMA_TIMEOUT` | 等待 Ollama 响应的超时秒数，默认 `120`，规划与视觉共用 |
+| `OLLAMA_NUM_CTX` | Ollama 请求的上下文长度，默认 `16384`；按远程显存和任务长度调整 |

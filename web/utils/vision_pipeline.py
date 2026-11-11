@@ -2,11 +2,14 @@
 
 import json
 import math
+import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+LOG_TIMEZONE = timezone(timedelta(hours=8))
 
 
 def target_context(target):
@@ -162,6 +165,7 @@ class SearchVisionPipeline:
                 "status": "normal", "description": "", "detections": [],
                 "yolo_detection_count": 0, "llm_skipped": True,
                 "llm_requested": False, "analysis_failed": False, "target_errors": [],
+                "llm_duration_ms": 0,
             }
         yolo_dir = Path(yolo["artifacts"]["json"]).parent
         output_dir = image_path.parent.parent / "llm_analysis"
@@ -171,13 +175,24 @@ class SearchVisionPipeline:
         for index, target in enumerate(yolo["detections"], 1):
             record = dict(target)
             record["crop_image"] = f"../yolo_detection/{target['crop_image']}"
+            record["llm_duration_ms"] = None
+            record["llm_request_started_at"] = None
+            record["llm_request_finished_at"] = None
             try:
                 if self.analyzer is None:
                     from llm.vision import VisionAnalyzer
 
                     self.analyzer = VisionAnalyzer()
                 llm_requested = True
-                analysis = self.analyzer(yolo_dir / target["crop_image"], context=target_context(target))
+                context = target_context(target)
+                # 计时覆盖目标图片输入到结果返回（含失败），排除 YOLO 和客户端初始化。
+                record["llm_request_started_at"] = datetime.now(LOG_TIMEZONE).isoformat(timespec="milliseconds")
+                started = time.perf_counter()
+                try:
+                    analysis = self.analyzer(yolo_dir / target["crop_image"], context=context)
+                finally:
+                    record["llm_duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
+                    record["llm_request_finished_at"] = datetime.now(LOG_TIMEZONE).isoformat(timespec="milliseconds")
                 record.update(analysis)
                 if analysis["status"] in ("patient", "armed_person"):
                     x1, y1, x2, y2 = target["bbox_xyxy"]
@@ -213,6 +228,8 @@ class SearchVisionPipeline:
             "yolo_detection_count": len(targets), "llm_skipped": False,
             "llm_requested": llm_requested, "analysis_failed": len(errors) == len(targets),
             "target_errors": errors,
+            "llm_duration_ms": round(sum(target["llm_duration_ms"] for target in targets
+                                         if target["llm_duration_ms"] is not None), 3),
         }
         if not llm_requested:
             return result

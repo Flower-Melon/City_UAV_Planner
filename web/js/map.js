@@ -109,7 +109,8 @@ const $ = id => document.getElementById(id);
 const canvas = $('map'), ctx = canvas.getContext('2d');
 const state = {scale: 1, ox: 0, oy: 0, width: 1, height: 1, ratio: 1,
   selected: null, drag: null, frame: 0};
-let zones, points, roads, background, buildings;
+let zones, points, roads, background, buildings, probes;
+let probeRecords = [];
 let zoneParts = [], pointRecords = [], colors = new Map(), categoryNames = new Map();
 let ready = false, buildingRequest;
 let liveDrones = [];
@@ -238,52 +239,69 @@ function draw() {
     ctx.fillStyle = point.properties.execution_enabled ? (access ? '#eeeef4' : '#ffde69') : '#8293a4';
     ctx.strokeStyle = point.properties.execution_enabled ? '#253c56' : '#dbe4ec'; ctx.fill(); ctx.stroke();
   }
-  if (state.selected) {
+  drawProbes();
+  if (state.selected && (state.selected.properties.object_type !== 'traffic_probe' || $('layer-probes').checked)) {
     ctx.strokeStyle = '#ff3d7b'; ctx.lineWidth = 3 / scale;
     if (state.selected.geometry.type === 'Point') {
       const [x, y] = state.selected.geometry.coordinates;
       ctx.beginPath(); ctx.arc(x, y, 8 / scale, 0, Math.PI * 2); ctx.stroke();
     } else for (const part of groups.get(state.selected.id) || []) ctx.stroke(part.path);
   }
-  if ($('layer-trails').checked) {
-    for (const drone of liveDrones) {
-      const trail = drone.trail || [];
-      if (trail.length < 2) continue;
-      ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      const sections = Math.min(8, trail.length - 1);
-      for (let section = 0; section < sections; section++) {
-        const first = Math.floor(section * (trail.length - 1) / sections);
-        const last = Math.floor((section + 1) * (trail.length - 1) / sections);
-        ctx.beginPath(); ctx.moveTo(trail[first][1], trail[first][2]);
-        for (let i = first + 1; i <= last; i++) ctx.lineTo(trail[i][1], trail[i][2]);
-        ctx.globalAlpha = .25 + .7 * (section + 1) / sections;
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 5 / scale; ctx.stroke();
-        ctx.strokeStyle = drone.color; ctx.lineWidth = 3 / scale; ctx.stroke();
-      }
-      ctx.restore();
+  for (const drone of liveDrones) {
+    const trail = drone.trail || [];
+    if (trail.length < 2) continue;
+    ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const sections = Math.min(8, trail.length - 1);
+    for (let section = 0; section < sections; section++) {
+      const first = Math.floor(section * (trail.length - 1) / sections);
+      const last = Math.floor((section + 1) * (trail.length - 1) / sections);
+      ctx.beginPath(); ctx.moveTo(trail[first][1], trail[first][2]);
+      for (let i = first + 1; i <= last; i++) ctx.lineTo(trail[i][1], trail[i][2]);
+      ctx.globalAlpha = .25 + .7 * (section + 1) / sections;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 5 / scale; ctx.stroke();
+      ctx.strokeStyle = drone.color; ctx.lineWidth = 3 / scale; ctx.stroke();
     }
+    ctx.restore();
   }
-  if ($('layer-drones').checked) {
-    liveDrones.forEach((drone, index) => {
-      const [x, y] = drone.position_m;
-      ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale);
-      ctx.beginPath();
-      if (Number.isFinite(drone.course_rad)) {
-        // 地图 X 向右、Y 向下，箭头沿实际水平速度方向旋转。
-        ctx.rotate(drone.course_rad);
-        ctx.moveTo(11, 0); ctx.lineTo(-7, -6); ctx.lineTo(-4, 0); ctx.lineTo(-7, 6); ctx.closePath();
-      } else {
-        ctx.arc(0, 0, 6, 0, Math.PI * 2);
-      }
-      ctx.fillStyle = drone.color; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke(); ctx.restore();
-      const labelX = x + 14 / scale, labelY = y + (index * 18 - 10) / scale;
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(labelX, labelY); ctx.strokeStyle = drone.color; ctx.lineWidth = 1 / scale; ctx.stroke();
-      ctx.font = `600 ${14 / scale}px "Microsoft YaHei", sans-serif`; ctx.textAlign = 'left';
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 / scale; ctx.lineJoin = 'round'; ctx.strokeText(drone.name, labelX, labelY);
-      ctx.fillStyle = drone.color; ctx.fillText(drone.name, labelX, labelY);
-    });
-  }
+  liveDrones.forEach((drone, index) => {
+    const [x, y] = drone.position_m;
+    ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale);
+    ctx.beginPath();
+    if (Number.isFinite(drone.course_rad)) {
+      // 地图 X 向右、Y 向下，箭头沿实际水平速度方向旋转。
+      ctx.rotate(drone.course_rad);
+      ctx.moveTo(11, 0); ctx.lineTo(-7, -6); ctx.lineTo(-4, 0); ctx.lineTo(-7, 6); ctx.closePath();
+    } else {
+      ctx.arc(0, 0, 6, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = drone.color; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke(); ctx.restore();
+    const labelX = x + 14 / scale, labelY = y + (index * 18 - 10) / scale;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(labelX, labelY); ctx.strokeStyle = drone.color; ctx.lineWidth = 1 / scale; ctx.stroke();
+    ctx.font = `600 ${14 / scale}px "Microsoft YaHei", sans-serif`; ctx.textAlign = 'left';
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 / scale; ctx.lineJoin = 'round'; ctx.strokeText(drone.name, labelX, labelY);
+    ctx.fillStyle = drone.color; ctx.fillText(drone.name, labelX, labelY);
+  });
   drawAbnormal();
+}
+function drawProbes() {
+  if (!$('layer-probes').checked) return;
+  const {scale, ox, oy, width, height} = state;
+  for (const feature of probeRecords) {
+    const p = feature.properties, [x, y] = feature.geometry.coordinates;
+    const pad = p.far_m * scale + 16;
+    if (x * scale + ox < -pad || x * scale + ox > width + pad || y * scale + oy < -pad || y * scale + oy > height + pad) continue;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(p.yaw_deg * Math.PI / 180);
+    if ($('layer-probe-coverage').checked || state.selected?.id === feature.id) {
+      const angle = p.half_fov_deg * Math.PI / 180;
+      ctx.beginPath(); ctx.arc(0, 0, p.far_m, -angle, angle);
+      ctx.arc(0, 0, p.near_m, angle, -angle, true); ctx.closePath();
+      ctx.fillStyle = '#087c9826'; ctx.strokeStyle = '#087c98'; ctx.lineWidth = 1 / scale; ctx.fill(); ctx.stroke();
+    }
+    ctx.scale(1 / scale, 1 / scale);
+    ctx.beginPath(); ctx.moveTo(9, 0); ctx.lineTo(-4, -4); ctx.lineTo(-4, 4); ctx.closePath();
+    ctx.fillStyle = '#087c98'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
 }
 function drawAbnormal() {
   const {scale} = state;
@@ -327,6 +345,11 @@ function worldAt(event) {
 }
 function hitAt(x, y) {
   const radius = 8 / state.scale;
+  if ($('layer-probes').checked) {
+    const probe = probeRecords.map(f => ({f, distance: Math.hypot(f.geometry.coordinates[0] - x, f.geometry.coordinates[1] - y)}))
+      .filter(p => p.distance < 10 / state.scale).sort((a, b) => a.distance - b.distance)[0];
+    if (probe) return probe.f;
+  }
   const point = pointRecords.filter(visiblePoint).map(f => ({f, distance: Math.hypot(f.geometry.coordinates[0] - x, f.geometry.coordinates[1] - y)}))
     .filter(p => p.distance < radius).sort((a, b) => a.distance - b.distance)[0];
   if (point) return point.f;
@@ -344,12 +367,14 @@ const statusNames = {static_verified: '静态核验通过', reference_only: '仅
 function showFeature(feature, center = false) {
   state.selected = feature; const target = $('object-detail'); target.replaceChildren();
   $('export').disabled = !feature;
-  if (!feature) { target.textContent = '此处没有可选功能区或可见任务点。'; schedule(); return; }
+  if (!feature) { target.textContent = '此处没有可选功能区、可见任务点或探头。'; schedule(); return; }
   const title = document.createElement('strong'); title.textContent = feature.properties.name; target.append(title);
   const id = document.createElement('span'); id.textContent = feature.id; target.append(id);
   const fields = {category: '类型', subtype: '二级标签', environment: '环境', area_m2: '面积 m²',
     point_type: '点位用途', position_status: '核验状态', execution_enabled: '静态执行',
-    xyz_m: 'UE XYZ（米）', label_xy_m: '标签 XY（米）', region_id: '所属区域', host_region_id: '所在街区'};
+    xyz_m: 'UE XYZ（米）', label_xy_m: '标签 XY（米）', region_id: '所属区域', host_region_id: '所在街区',
+    junction: '所属路口', region: '地图分区', xy_m: 'UE XY（米）', yaw_deg: '朝向（度）',
+    near_m: '感知近界（米）', far_m: '感知远界（米）', half_fov_deg: '半视场角（度）', ground_z_m: '地面高度（米）'};
   const dl = document.createElement('dl');
   for (const [key, label] of Object.entries(fields)) {
     let value = feature.properties[key];
@@ -363,6 +388,11 @@ function showFeature(feature, center = false) {
     dt.textContent = label; dd.textContent = String(value); dl.append(dt, dd);
   }
   target.append(dl);
+  if (feature.properties.object_type === 'traffic_probe') {
+    const note = document.createElement('p');
+    note.textContent = '箭头表示感知朝向，扇形表示逻辑感知范围。此处展示增量包布设信息，运行时是否启用尚未读取。';
+    target.append(note);
+  }
   const nearby = feature.properties.nearby_graph_edge_ids;
   if (nearby?.length) {
     const note = document.createElement('p'); note.textContent = `15米内邻近道路分段 ${nearby.length} 条；此关联仅表示空间邻近。`; target.append(note);
@@ -376,14 +406,17 @@ function showFeature(feature, center = false) {
   }
   if (center) {
     const q = feature.geometry.type === 'Point' ? feature.geometry.coordinates : feature.properties.label_xy_m;
-    if (q) { state.scale = Math.max(state.scale, .7); state.ox = state.width / 2 - q[0] * state.scale; state.oy = state.height / 2 - q[1] * state.scale; }
+    if (q) { state.scale = Math.max(state.scale, feature.properties.object_type === 'traffic_probe' ? 2.5 : .7); state.ox = state.width / 2 - q[0] * state.scale; state.oy = state.height / 2 - q[1] * state.scale; }
   }
   schedule();
 }
 function resultButton(feature) {
   const button = document.createElement('button'); button.className = 'result'; button.textContent = feature.properties.name;
   const small = document.createElement('small'); small.textContent = feature.id; button.append(small);
-  button.onclick = () => showFeature(feature, true); return button;
+  button.onclick = () => {
+    if (feature.properties.object_type === 'traffic_probe') $('layer-probes').checked = true;
+    showFeature(feature, true);
+  }; return button;
 }
 function exportSelection() {
   const data = state.selected, name = data?.id;
@@ -399,11 +432,11 @@ $('export').onclick = exportSelection;
 $('search').oninput = () => {
   const query = $('search').value.trim().toLowerCase(); const target = $('results'); target.replaceChildren();
   if (!query || !ready) return;
-  const matches = [...zones.features, ...points.features].filter(f => [f.id, f.properties.name].some(v => String(v).toLowerCase().includes(query)));
+  const matches = [...zones.features, ...points.features, ...probeRecords].filter(f => [f.id, f.properties.name, f.properties.junction].some(v => String(v || '').toLowerCase().includes(query)));
   for (const f of matches.slice(0, 30)) target.append(resultButton(f));
   if (!matches.length) target.textContent = '没有匹配对象。';
 };
-for (const layer of ['base', 'zones', 'roads', 'drones', 'trails']) $(`layer-${layer}`).onchange = schedule;
+for (const layer of ['base', 'zones', 'roads', 'probes', 'probe-coverage']) $(`layer-${layer}`).onchange = schedule;
 $('layer-buildings').onchange = async () => {
   if ($('layer-buildings').checked) {
     try { await ensureBuildings(); } catch (error) { $('layer-buildings').checked = false; $('object-detail').textContent = error.message; }
@@ -443,14 +476,18 @@ canvas.onpointercancel = () => { state.drag = null; };
 window.addEventListener('resize', () => { resize(); schedule(); });
 
 async function initialize() {
-  [zones, points, roads] = await Promise.all([
+  [zones, points, roads, probes] = await Promise.all([
     loadJSON('zones/functional_zones.json'), loadJSON('objects/task_points.json'),
-    loadJSON('roads/road_network.json')
+    loadJSON('roads/road_network.json'), loadJSON('objects/traffic_probes.json')
   ]);
   if (![zones, points].every(data => Array.isArray(data?.features)) || !Array.isArray(zones?.categories)) {
     throw new Error('标定 JSON 缺少 features 或 categories 数组');
   }
   if (!Array.isArray(roads?.edges)) throw new Error('roads/road_network.json 缺少 edges 数组');
+  if (!Array.isArray(probes?.probes)) throw new Error('objects/traffic_probes.json 缺少 probes 数组');
+  probeRecords = probes.probes.map(p => ({id: p.id, geometry: {type: 'Point', coordinates: p.xy_m},
+    properties: {...p, name: `交通探头 ${p.id}`, object_type: 'traffic_probe'}}));
+  $('probe-stats').textContent = `${probeRecords.length} 个探头 · ${new Set(probes.probes.map(p => p.junction)).size} 个路口（布设数据，非实时启用状态）`;
   await background.decode();
   for (const category of zones.categories) {
     colors.set(category.code, category.color); categoryNames.set(category.code, category.name);

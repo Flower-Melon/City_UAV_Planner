@@ -1,0 +1,5628 @@
+{
+  "version": "v2",
+  "map": "GroundFix3",
+  "heading_tolerance_deg": 45.0,
+  "note": "增量包静态布设数据；默认启用前100个路口，实际运行时状态需另行读取。",
+  "probes": [
+    {
+      "id": "P_001-1",
+      "junction": "P_001",
+      "rank": 1,
+      "region": "3_1",
+      "xy_m": [
+        -128.31,
+        -961.7
+      ],
+      "yaw_deg": 8.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.01
+    },
+    {
+      "id": "P_001-2",
+      "junction": "P_001",
+      "rank": 1,
+      "region": "3_1",
+      "xy_m": [
+        -142.07,
+        -951.65
+      ],
+      "yaw_deg": 99.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.01
+    },
+    {
+      "id": "P_001-3",
+      "junction": "P_001",
+      "rank": 1,
+      "region": "3_1",
+      "xy_m": [
+        -151.82,
+        -966.35
+      ],
+      "yaw_deg": 189.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.01
+    },
+    {
+      "id": "P_001-4",
+      "junction": "P_001",
+      "rank": 1,
+      "region": "3_1",
+      "xy_m": [
+        -138.37,
+        -975.36
+      ],
+      "yaw_deg": 279.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.01
+    },
+    {
+      "id": "P_002-1",
+      "junction": "P_002",
+      "rank": 2,
+      "region": "3_1",
+      "xy_m": [
+        678.93,
+        -714.14
+      ],
+      "yaw_deg": 8.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.29
+    },
+    {
+      "id": "P_002-2",
+      "junction": "P_002",
+      "rank": 2,
+      "region": "3_1",
+      "xy_m": [
+        665.26,
+        -704.65
+      ],
+      "yaw_deg": 99.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.29
+    },
+    {
+      "id": "P_002-3",
+      "junction": "P_002",
+      "rank": 2,
+      "region": "3_1",
+      "xy_m": [
+        655.32,
+        -718.38
+      ],
+      "yaw_deg": 189.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.29
+    },
+    {
+      "id": "P_002-4",
+      "junction": "P_002",
+      "rank": 2,
+      "region": "3_1",
+      "xy_m": [
+        669.27,
+        -728.31
+      ],
+      "yaw_deg": 279.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.29
+    },
+    {
+      "id": "P_003-1",
+      "junction": "P_003",
+      "rank": 3,
+      "region": "3_1",
+      "xy_m": [
+        605.76,
+        -264.61
+      ],
+      "yaw_deg": 0.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.18
+    },
+    {
+      "id": "P_003-2",
+      "junction": "P_003",
+      "rank": 3,
+      "region": "3_1",
+      "xy_m": [
+        581.91,
+        -264.54
+      ],
+      "yaw_deg": 133.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.18
+    },
+    {
+      "id": "P_003-3",
+      "junction": "P_003",
+      "rank": 3,
+      "region": "3_1",
+      "xy_m": [
+        581.91,
+        -264.54
+      ],
+      "yaw_deg": 179.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.18
+    },
+    {
+      "id": "P_003-4",
+      "junction": "P_003",
+      "rank": 3,
+      "region": "3_1",
+      "xy_m": [
+        595.13,
+        -277.76
+      ],
+      "yaw_deg": 279.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.18
+    },
+    {
+      "id": "P_004-1",
+      "junction": "P_004",
+      "rank": 4,
+      "region": "4_2",
+      "xy_m": [
+        1961.83,
+        -1345.92
+      ],
+      "yaw_deg": 7.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.27
+    },
+    {
+      "id": "P_004-2",
+      "junction": "P_004",
+      "rank": 4,
+      "region": "4_2",
+      "xy_m": [
+        1949.65,
+        -1335.5
+      ],
+      "yaw_deg": 90.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.27
+    },
+    {
+      "id": "P_004-3",
+      "junction": "P_004",
+      "rank": 4,
+      "region": "4_2",
+      "xy_m": [
+        1938.03,
+        -1349.05
+      ],
+      "yaw_deg": 187.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.27
+    },
+    {
+      "id": "P_004-4",
+      "junction": "P_004",
+      "rank": 4,
+      "region": "4_2",
+      "xy_m": [
+        1949.9,
+        -1359.5
+      ],
+      "yaw_deg": 269.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.27
+    },
+    {
+      "id": "P_005-1",
+      "junction": "P_005",
+      "rank": 5,
+      "region": "3_1",
+      "xy_m": [
+        -211.25,
+        11.5
+      ],
+      "yaw_deg": 89.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.08
+    },
+    {
+      "id": "P_005-2",
+      "junction": "P_005",
+      "rank": 5,
+      "region": "3_1",
+      "xy_m": [
+        -223.03,
+        0.44
+      ],
+      "yaw_deg": 173.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.08
+    },
+    {
+      "id": "P_005-3",
+      "junction": "P_005",
+      "rank": 5,
+      "region": "3_1",
+      "xy_m": [
+        -211.36,
+        -12.5
+      ],
+      "yaw_deg": 269.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.08
+    },
+    {
+      "id": "P_005-4",
+      "junction": "P_005",
+      "rank": 5,
+      "region": "3_1",
+      "xy_m": [
+        -199.09,
+        -1.21
+      ],
+      "yaw_deg": 356.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.08
+    },
+    {
+      "id": "P_006-1",
+      "junction": "P_006",
+      "rank": 6,
+      "region": "4_1",
+      "xy_m": [
+        1826.4,
+        765.38
+      ],
+      "yaw_deg": 8.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.58
+    },
+    {
+      "id": "P_006-2",
+      "junction": "P_006",
+      "rank": 6,
+      "region": "4_1",
+      "xy_m": [
+        1812.98,
+        775.73
+      ],
+      "yaw_deg": 99.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.58
+    },
+    {
+      "id": "P_006-3",
+      "junction": "P_006",
+      "rank": 6,
+      "region": "4_1",
+      "xy_m": [
+        1802.69,
+        761.71
+      ],
+      "yaw_deg": 190.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.58
+    },
+    {
+      "id": "P_006-4",
+      "junction": "P_006",
+      "rank": 6,
+      "region": "4_1",
+      "xy_m": [
+        1816.83,
+        752.06
+      ],
+      "yaw_deg": 278.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.58
+    },
+    {
+      "id": "P_007-1",
+      "junction": "P_007",
+      "rank": 7,
+      "region": "4_2",
+      "xy_m": [
+        1654.5,
+        -2578.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.29
+    },
+    {
+      "id": "P_007-2",
+      "junction": "P_007",
+      "rank": 7,
+      "region": "4_2",
+      "xy_m": [
+        1642.5,
+        -2590.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.29
+    },
+    {
+      "id": "P_007-3",
+      "junction": "P_007",
+      "rank": 7,
+      "region": "4_2",
+      "xy_m": [
+        1654.5,
+        -2602.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.29
+    },
+    {
+      "id": "P_007-4",
+      "junction": "P_007",
+      "rank": 7,
+      "region": "4_2",
+      "xy_m": [
+        1666.5,
+        -2590.55
+      ],
+      "yaw_deg": 359.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.29
+    },
+    {
+      "id": "P_008-1",
+      "junction": "P_008",
+      "rank": 8,
+      "region": "3_2",
+      "xy_m": [
+        -323.04,
+        -1008.2
+      ],
+      "yaw_deg": 90.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.0
+    },
+    {
+      "id": "P_008-2",
+      "junction": "P_008",
+      "rank": 8,
+      "region": "3_2",
+      "xy_m": [
+        -334.1,
+        -1021.45
+      ],
+      "yaw_deg": 180.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.0
+    },
+    {
+      "id": "P_008-3",
+      "junction": "P_008",
+      "rank": 8,
+      "region": "3_2",
+      "xy_m": [
+        -310.24,
+        -1021.4
+      ],
+      "yaw_deg": 359.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.0
+    },
+    {
+      "id": "P_009-1",
+      "junction": "P_009",
+      "rank": 9,
+      "region": "4_1",
+      "xy_m": [
+        2489.39,
+        -418.53
+      ],
+      "yaw_deg": 8.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.93
+    },
+    {
+      "id": "P_009-2",
+      "junction": "P_009",
+      "rank": 9,
+      "region": "4_1",
+      "xy_m": [
+        2476.08,
+        -408.25
+      ],
+      "yaw_deg": 97.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.93
+    },
+    {
+      "id": "P_009-3",
+      "junction": "P_009",
+      "rank": 9,
+      "region": "4_1",
+      "xy_m": [
+        2465.67,
+        -422.2
+      ],
+      "yaw_deg": 189.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.93
+    },
+    {
+      "id": "P_009-4",
+      "junction": "P_009",
+      "rank": 9,
+      "region": "4_1",
+      "xy_m": [
+        2479.75,
+        -431.96
+      ],
+      "yaw_deg": 278.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.93
+    },
+    {
+      "id": "P_010-1",
+      "junction": "P_010",
+      "rank": 10,
+      "region": "3_1",
+      "xy_m": [
+        750.94,
+        238.35
+      ],
+      "yaw_deg": 91.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.54
+    },
+    {
+      "id": "P_010-2",
+      "junction": "P_010",
+      "rank": 10,
+      "region": "3_1",
+      "xy_m": [
+        750.79,
+        214.67
+      ],
+      "yaw_deg": 269.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.54
+    },
+    {
+      "id": "P_010-3",
+      "junction": "P_010",
+      "rank": 10,
+      "region": "3_1",
+      "xy_m": [
+        764.75,
+        226.5
+      ],
+      "yaw_deg": 360.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.54
+    },
+    {
+      "id": "P_011-1",
+      "junction": "P_011",
+      "rank": 11,
+      "region": "4_2",
+      "xy_m": [
+        1033.67,
+        -1006.54
+      ],
+      "yaw_deg": 8.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.74
+    },
+    {
+      "id": "P_011-2",
+      "junction": "P_011",
+      "rank": 11,
+      "region": "4_2",
+      "xy_m": [
+        1019.68,
+        -996.69
+      ],
+      "yaw_deg": 99.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.74
+    },
+    {
+      "id": "P_011-3",
+      "junction": "P_011",
+      "rank": 11,
+      "region": "4_2",
+      "xy_m": [
+        1010.05,
+        -1010.79
+      ],
+      "yaw_deg": 188.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.74
+    },
+    {
+      "id": "P_011-4",
+      "junction": "P_011",
+      "rank": 11,
+      "region": "4_2",
+      "xy_m": [
+        1023.42,
+        -1020.39
+      ],
+      "yaw_deg": 279.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.74
+    },
+    {
+      "id": "P_012-1",
+      "junction": "P_012",
+      "rank": 12,
+      "region": "4_2",
+      "xy_m": [
+        2723.94,
+        -2470.89
+      ],
+      "yaw_deg": 0.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.56
+    },
+    {
+      "id": "P_012-2",
+      "junction": "P_012",
+      "rank": 12,
+      "region": "4_2",
+      "xy_m": [
+        2711.85,
+        -2462.01
+      ],
+      "yaw_deg": 90.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.56
+    },
+    {
+      "id": "P_012-3",
+      "junction": "P_012",
+      "rank": 12,
+      "region": "4_2",
+      "xy_m": [
+        2700.62,
+        -2476.31
+      ],
+      "yaw_deg": 180.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.56
+    },
+    {
+      "id": "P_012-4",
+      "junction": "P_012",
+      "rank": 12,
+      "region": "4_2",
+      "xy_m": [
+        2711.59,
+        -2485.97
+      ],
+      "yaw_deg": 269.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.56
+    },
+    {
+      "id": "P_013-1",
+      "junction": "P_013",
+      "rank": 13,
+      "region": "4_2",
+      "xy_m": [
+        2179.53,
+        -1738.25
+      ],
+      "yaw_deg": 89.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.32
+    },
+    {
+      "id": "P_013-2",
+      "junction": "P_013",
+      "rank": 13,
+      "region": "4_2",
+      "xy_m": [
+        2167.56,
+        -1751.4
+      ],
+      "yaw_deg": 180.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.32
+    },
+    {
+      "id": "P_013-3",
+      "junction": "P_013",
+      "rank": 13,
+      "region": "4_2",
+      "xy_m": [
+        2191.45,
+        -1751.36
+      ],
+      "yaw_deg": 359.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.32
+    },
+    {
+      "id": "P_014-1",
+      "junction": "P_014",
+      "rank": 14,
+      "region": "4_1",
+      "xy_m": [
+        2413.71,
+        39.55
+      ],
+      "yaw_deg": 8.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.73
+    },
+    {
+      "id": "P_014-2",
+      "junction": "P_014",
+      "rank": 14,
+      "region": "4_1",
+      "xy_m": [
+        2400.37,
+        49.74
+      ],
+      "yaw_deg": 99.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.73
+    },
+    {
+      "id": "P_014-3",
+      "junction": "P_014",
+      "rank": 14,
+      "region": "4_1",
+      "xy_m": [
+        2390.12,
+        35.21
+      ],
+      "yaw_deg": 188.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.73
+    },
+    {
+      "id": "P_014-4",
+      "junction": "P_014",
+      "rank": 14,
+      "region": "4_1",
+      "xy_m": [
+        2404.74,
+        26.19
+      ],
+      "yaw_deg": 279.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.73
+    },
+    {
+      "id": "P_015-1",
+      "junction": "P_015",
+      "rank": 15,
+      "region": "3_1",
+      "xy_m": [
+        -195.5,
+        580.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.83
+    },
+    {
+      "id": "P_015-2",
+      "junction": "P_015",
+      "rank": 15,
+      "region": "3_1",
+      "xy_m": [
+        -207.5,
+        592.5
+      ],
+      "yaw_deg": 88.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.83
+    },
+    {
+      "id": "P_015-3",
+      "junction": "P_015",
+      "rank": 15,
+      "region": "3_1",
+      "xy_m": [
+        -219.5,
+        580.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.83
+    },
+    {
+      "id": "P_015-4",
+      "junction": "P_015",
+      "rank": 15,
+      "region": "3_1",
+      "xy_m": [
+        -207.5,
+        568.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.83
+    },
+    {
+      "id": "P_016-1",
+      "junction": "P_016",
+      "rank": 16,
+      "region": "4_2",
+      "xy_m": [
+        1398.5,
+        -2822.46
+      ],
+      "yaw_deg": 0.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.44
+    },
+    {
+      "id": "P_016-2",
+      "junction": "P_016",
+      "rank": 16,
+      "region": "4_2",
+      "xy_m": [
+        1386.5,
+        -2810.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.44
+    },
+    {
+      "id": "P_016-3",
+      "junction": "P_016",
+      "rank": 16,
+      "region": "4_2",
+      "xy_m": [
+        1374.5,
+        -2822.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.44
+    },
+    {
+      "id": "P_016-4",
+      "junction": "P_016",
+      "rank": 16,
+      "region": "4_2",
+      "xy_m": [
+        1386.5,
+        -2834.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.44
+    },
+    {
+      "id": "P_017-1",
+      "junction": "P_017",
+      "rank": 17,
+      "region": "3_1",
+      "xy_m": [
+        -632.5,
+        -915.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.54
+    },
+    {
+      "id": "P_017-2",
+      "junction": "P_017",
+      "rank": 17,
+      "region": "3_1",
+      "xy_m": [
+        -644.5,
+        -903.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.54
+    },
+    {
+      "id": "P_017-3",
+      "junction": "P_017",
+      "rank": 17,
+      "region": "3_1",
+      "xy_m": [
+        -656.5,
+        -915.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.54
+    },
+    {
+      "id": "P_017-4",
+      "junction": "P_017",
+      "rank": 17,
+      "region": "3_1",
+      "xy_m": [
+        -644.5,
+        -927.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.54
+    },
+    {
+      "id": "P_018-1",
+      "junction": "P_018",
+      "rank": 18,
+      "region": "4_2",
+      "xy_m": [
+        1719.5,
+        -1726.25
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.11
+    },
+    {
+      "id": "P_018-2",
+      "junction": "P_018",
+      "rank": 18,
+      "region": "4_2",
+      "xy_m": [
+        1707.55,
+        -1739.35
+      ],
+      "yaw_deg": 179.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.11
+    },
+    {
+      "id": "P_018-3",
+      "junction": "P_018",
+      "rank": 18,
+      "region": "4_2",
+      "xy_m": [
+        1731.3,
+        -1740.4
+      ],
+      "yaw_deg": 357.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.11
+    },
+    {
+      "id": "P_019-1",
+      "junction": "P_019",
+      "rank": 19,
+      "region": "3_1",
+      "xy_m": [
+        764.75,
+        -124.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.32
+    },
+    {
+      "id": "P_019-2",
+      "junction": "P_019",
+      "rank": 19,
+      "region": "3_1",
+      "xy_m": [
+        750.93,
+        -112.64
+      ],
+      "yaw_deg": 91.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.32
+    },
+    {
+      "id": "P_019-3",
+      "junction": "P_019",
+      "rank": 19,
+      "region": "3_1",
+      "xy_m": [
+        750.8,
+        -136.33
+      ],
+      "yaw_deg": 269.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.32
+    },
+    {
+      "id": "P_020-1",
+      "junction": "P_020",
+      "rank": 20,
+      "region": "3_2",
+      "xy_m": [
+        -752.5,
+        -1177.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.61
+    },
+    {
+      "id": "P_020-2",
+      "junction": "P_020",
+      "rank": 20,
+      "region": "3_2",
+      "xy_m": [
+        -764.5,
+        -1189.53
+      ],
+      "yaw_deg": 180.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.61
+    },
+    {
+      "id": "P_020-3",
+      "junction": "P_020",
+      "rank": 20,
+      "region": "3_2",
+      "xy_m": [
+        -752.5,
+        -1201.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.61
+    },
+    {
+      "id": "P_020-4",
+      "junction": "P_020",
+      "rank": 20,
+      "region": "3_2",
+      "xy_m": [
+        -740.5,
+        -1189.53
+      ],
+      "yaw_deg": 359.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.61
+    },
+    {
+      "id": "P_021-1",
+      "junction": "P_021",
+      "rank": 21,
+      "region": "3_1",
+      "xy_m": [
+        -213.6,
+        -369.56
+      ],
+      "yaw_deg": 89.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.33
+    },
+    {
+      "id": "P_021-2",
+      "junction": "P_021",
+      "rank": 21,
+      "region": "3_1",
+      "xy_m": [
+        -226.75,
+        -381.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.33
+    },
+    {
+      "id": "P_021-3",
+      "junction": "P_021",
+      "rank": 21,
+      "region": "3_1",
+      "xy_m": [
+        -213.71,
+        -393.45
+      ],
+      "yaw_deg": 268.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.33
+    },
+    {
+      "id": "P_022-1",
+      "junction": "P_022",
+      "rank": 22,
+      "region": "3_1",
+      "xy_m": [
+        -841.5,
+        916.11
+      ],
+      "yaw_deg": 0.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.97
+    },
+    {
+      "id": "P_022-2",
+      "junction": "P_022",
+      "rank": 22,
+      "region": "3_1",
+      "xy_m": [
+        -853.5,
+        928.0
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.97
+    },
+    {
+      "id": "P_022-3",
+      "junction": "P_022",
+      "rank": 22,
+      "region": "3_1",
+      "xy_m": [
+        -865.5,
+        915.88
+      ],
+      "yaw_deg": 180.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.97
+    },
+    {
+      "id": "P_022-4",
+      "junction": "P_022",
+      "rank": 22,
+      "region": "3_1",
+      "xy_m": [
+        -853.5,
+        904.0
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.97
+    },
+    {
+      "id": "P_023-1",
+      "junction": "P_023",
+      "rank": 23,
+      "region": "4_1",
+      "xy_m": [
+        2374.94,
+        266.85
+      ],
+      "yaw_deg": 9.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.13
+    },
+    {
+      "id": "P_023-2",
+      "junction": "P_023",
+      "rank": 23,
+      "region": "4_1",
+      "xy_m": [
+        2361.41,
+        276.37
+      ],
+      "yaw_deg": 98.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.13
+    },
+    {
+      "id": "P_023-3",
+      "junction": "P_023",
+      "rank": 23,
+      "region": "4_1",
+      "xy_m": [
+        2351.32,
+        262.62
+      ],
+      "yaw_deg": 189.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.13
+    },
+    {
+      "id": "P_023-4",
+      "junction": "P_023",
+      "rank": 23,
+      "region": "4_1",
+      "xy_m": [
+        2365.45,
+        252.72
+      ],
+      "yaw_deg": 279.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.13
+    },
+    {
+      "id": "P_024-1",
+      "junction": "P_024",
+      "rank": 24,
+      "region": "4_2",
+      "xy_m": [
+        1946.5,
+        -2223.82
+      ],
+      "yaw_deg": 1.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.57
+    },
+    {
+      "id": "P_024-2",
+      "junction": "P_024",
+      "rank": 24,
+      "region": "4_2",
+      "xy_m": [
+        1934.5,
+        -2212.0
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.57
+    },
+    {
+      "id": "P_024-3",
+      "junction": "P_024",
+      "rank": 24,
+      "region": "4_2",
+      "xy_m": [
+        1922.5,
+        -2224.26
+      ],
+      "yaw_deg": 181.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.57
+    },
+    {
+      "id": "P_024-4",
+      "junction": "P_024",
+      "rank": 24,
+      "region": "4_2",
+      "xy_m": [
+        1934.5,
+        -2236.0
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.57
+    },
+    {
+      "id": "P_025-1",
+      "junction": "P_025",
+      "rank": 25,
+      "region": "3_1",
+      "xy_m": [
+        174.5,
+        -251.25
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.27
+    },
+    {
+      "id": "P_025-2",
+      "junction": "P_025",
+      "rank": 25,
+      "region": "3_1",
+      "xy_m": [
+        162.6,
+        -261.8
+      ],
+      "yaw_deg": 159.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.27
+    },
+    {
+      "id": "P_025-3",
+      "junction": "P_025",
+      "rank": 25,
+      "region": "3_1",
+      "xy_m": [
+        186.2,
+        -265.86
+      ],
+      "yaw_deg": 359.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.27
+    },
+    {
+      "id": "P_026-1",
+      "junction": "P_026",
+      "rank": 26,
+      "region": "4_2",
+      "xy_m": [
+        2421.83,
+        -1287.94
+      ],
+      "yaw_deg": 6.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.77
+    },
+    {
+      "id": "P_026-2",
+      "junction": "P_026",
+      "rank": 26,
+      "region": "4_2",
+      "xy_m": [
+        2409.65,
+        -1277.5
+      ],
+      "yaw_deg": 90.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.77
+    },
+    {
+      "id": "P_026-3",
+      "junction": "P_026",
+      "rank": 26,
+      "region": "4_2",
+      "xy_m": [
+        2398.02,
+        -1290.96
+      ],
+      "yaw_deg": 187.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.77
+    },
+    {
+      "id": "P_026-4",
+      "junction": "P_026",
+      "rank": 26,
+      "region": "4_2",
+      "xy_m": [
+        2409.91,
+        -1301.5
+      ],
+      "yaw_deg": 269.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.77
+    },
+    {
+      "id": "P_027-1",
+      "junction": "P_027",
+      "rank": 27,
+      "region": "3_1",
+      "xy_m": [
+        479.67,
+        -746.23
+      ],
+      "yaw_deg": 8.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.74
+    },
+    {
+      "id": "P_027-2",
+      "junction": "P_027",
+      "rank": 27,
+      "region": "3_1",
+      "xy_m": [
+        466.2,
+        -736.28
+      ],
+      "yaw_deg": 99.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.74
+    },
+    {
+      "id": "P_027-3",
+      "junction": "P_027",
+      "rank": 27,
+      "region": "3_1",
+      "xy_m": [
+        456.1,
+        -750.68
+      ],
+      "yaw_deg": 188.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.74
+    },
+    {
+      "id": "P_027-4",
+      "junction": "P_027",
+      "rank": 27,
+      "region": "3_1",
+      "xy_m": [
+        470.48,
+        -759.87
+      ],
+      "yaw_deg": 279.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.74
+    },
+    {
+      "id": "P_028-1",
+      "junction": "P_028",
+      "rank": 28,
+      "region": "4_1",
+      "xy_m": [
+        1555.85,
+        -453.62
+      ],
+      "yaw_deg": 8.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.82
+    },
+    {
+      "id": "P_028-2",
+      "junction": "P_028",
+      "rank": 28,
+      "region": "4_1",
+      "xy_m": [
+        1542.03,
+        -443.66
+      ],
+      "yaw_deg": 99.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.82
+    },
+    {
+      "id": "P_028-3",
+      "junction": "P_028",
+      "rank": 28,
+      "region": "4_1",
+      "xy_m": [
+        1532.33,
+        -458.26
+      ],
+      "yaw_deg": 188.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.82
+    },
+    {
+      "id": "P_028-4",
+      "junction": "P_028",
+      "rank": 28,
+      "region": "4_1",
+      "xy_m": [
+        1545.88,
+        -467.35
+      ],
+      "yaw_deg": 279.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.82
+    },
+    {
+      "id": "P_029-1",
+      "junction": "P_029",
+      "rank": 29,
+      "region": "3_1",
+      "xy_m": [
+        -753.42,
+        428.07
+      ],
+      "yaw_deg": 120.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.74
+    },
+    {
+      "id": "P_029-2",
+      "junction": "P_029",
+      "rank": 29,
+      "region": "3_1",
+      "xy_m": [
+        -754.13,
+        408.05
+      ],
+      "yaw_deg": 231.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.74
+    },
+    {
+      "id": "P_029-3",
+      "junction": "P_029",
+      "rank": 29,
+      "region": "3_1",
+      "xy_m": [
+        -736.0,
+        413.45
+      ],
+      "yaw_deg": 336.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.74
+    },
+    {
+      "id": "P_030-1",
+      "junction": "P_030",
+      "rank": 30,
+      "region": "4_2",
+      "xy_m": [
+        1276.31,
+        -1900.66
+      ],
+      "yaw_deg": 1.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.2
+    },
+    {
+      "id": "P_030-2",
+      "junction": "P_030",
+      "rank": 30,
+      "region": "4_2",
+      "xy_m": [
+        1270.72,
+        -1891.69
+      ],
+      "yaw_deg": 37.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.2
+    },
+    {
+      "id": "P_030-3",
+      "junction": "P_030",
+      "rank": 30,
+      "region": "4_2",
+      "xy_m": [
+        1252.47,
+        -1903.33
+      ],
+      "yaw_deg": 181.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.2
+    },
+    {
+      "id": "P_030-4",
+      "junction": "P_030",
+      "rank": 30,
+      "region": "4_2",
+      "xy_m": [
+        1269.22,
+        -1912.82
+      ],
+      "yaw_deg": 330.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.2
+    },
+    {
+      "id": "P_031-1",
+      "junction": "P_031",
+      "rank": 31,
+      "region": "3_1",
+      "xy_m": [
+        -3.24,
+        822.45
+      ],
+      "yaw_deg": 0.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.37
+    },
+    {
+      "id": "P_031-2",
+      "junction": "P_031",
+      "rank": 31,
+      "region": "3_1",
+      "xy_m": [
+        -27.1,
+        822.46
+      ],
+      "yaw_deg": 179.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.37
+    },
+    {
+      "id": "P_031-3",
+      "junction": "P_031",
+      "rank": 31,
+      "region": "3_1",
+      "xy_m": [
+        -15.18,
+        809.17
+      ],
+      "yaw_deg": 269.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.37
+    },
+    {
+      "id": "P_032-1",
+      "junction": "P_032",
+      "rank": 32,
+      "region": "3_1",
+      "xy_m": [
+        -202.33,
+        -974.12
+      ],
+      "yaw_deg": 8.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.51
+    },
+    {
+      "id": "P_032-2",
+      "junction": "P_032",
+      "rank": 32,
+      "region": "3_1",
+      "xy_m": [
+        -216.11,
+        -963.65
+      ],
+      "yaw_deg": 90.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.51
+    },
+    {
+      "id": "P_032-3",
+      "junction": "P_032",
+      "rank": 32,
+      "region": "3_1",
+      "xy_m": [
+        -216.12,
+        -987.34
+      ],
+      "yaw_deg": 267.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.51
+    },
+    {
+      "id": "P_033-1",
+      "junction": "P_033",
+      "rank": 33,
+      "region": "3_1",
+      "xy_m": [
+        764.5,
+        579.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.06
+    },
+    {
+      "id": "P_033-2",
+      "junction": "P_033",
+      "rank": 33,
+      "region": "3_1",
+      "xy_m": [
+        752.8,
+        591.5
+      ],
+      "yaw_deg": 90.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.06
+    },
+    {
+      "id": "P_033-3",
+      "junction": "P_033",
+      "rank": 33,
+      "region": "3_1",
+      "xy_m": [
+        740.5,
+        579.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.06
+    },
+    {
+      "id": "P_033-4",
+      "junction": "P_033",
+      "rank": 33,
+      "region": "3_1",
+      "xy_m": [
+        752.5,
+        567.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.06
+    },
+    {
+      "id": "P_034-1",
+      "junction": "P_034",
+      "rank": 34,
+      "region": "4_2",
+      "xy_m": [
+        1198.5,
+        -2589.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.17
+    },
+    {
+      "id": "P_034-2",
+      "junction": "P_034",
+      "rank": 34,
+      "region": "4_2",
+      "xy_m": [
+        1186.5,
+        -2577.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.17
+    },
+    {
+      "id": "P_034-3",
+      "junction": "P_034",
+      "rank": 34,
+      "region": "4_2",
+      "xy_m": [
+        1174.5,
+        -2589.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.17
+    },
+    {
+      "id": "P_034-4",
+      "junction": "P_034",
+      "rank": 34,
+      "region": "4_2",
+      "xy_m": [
+        1186.5,
+        -2601.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 364.17
+    },
+    {
+      "id": "P_035-1",
+      "junction": "P_035",
+      "rank": 35,
+      "region": "3_1",
+      "xy_m": [
+        -536.94,
+        -694.5
+      ],
+      "yaw_deg": 89.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.63
+    },
+    {
+      "id": "P_035-2",
+      "junction": "P_035",
+      "rank": 35,
+      "region": "3_1",
+      "xy_m": [
+        -549.0,
+        -706.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.63
+    },
+    {
+      "id": "P_035-3",
+      "junction": "P_035",
+      "rank": 35,
+      "region": "3_1",
+      "xy_m": [
+        -537.0,
+        -718.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.63
+    },
+    {
+      "id": "P_035-4",
+      "junction": "P_035",
+      "rank": 35,
+      "region": "3_1",
+      "xy_m": [
+        -525.01,
+        -706.98
+      ],
+      "yaw_deg": 359.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.63
+    },
+    {
+      "id": "P_036-1",
+      "junction": "P_036",
+      "rank": 36,
+      "region": "4_2",
+      "xy_m": [
+        1731.98,
+        -1372.39
+      ],
+      "yaw_deg": 4.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.12
+    },
+    {
+      "id": "P_036-2",
+      "junction": "P_036",
+      "rank": 36,
+      "region": "4_2",
+      "xy_m": [
+        1719.67,
+        -1361.0
+      ],
+      "yaw_deg": 90.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.12
+    },
+    {
+      "id": "P_036-3",
+      "junction": "P_036",
+      "rank": 36,
+      "region": "4_2",
+      "xy_m": [
+        1708.03,
+        -1373.78
+      ],
+      "yaw_deg": 183.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.12
+    },
+    {
+      "id": "P_036-4",
+      "junction": "P_036",
+      "rank": 36,
+      "region": "4_2",
+      "xy_m": [
+        1719.97,
+        -1385.0
+      ],
+      "yaw_deg": 269.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.12
+    },
+    {
+      "id": "P_037-1",
+      "junction": "P_037",
+      "rank": 37,
+      "region": "3_1",
+      "xy_m": [
+        362.5,
+        6.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.82
+    },
+    {
+      "id": "P_037-2",
+      "junction": "P_037",
+      "rank": 37,
+      "region": "3_1",
+      "xy_m": [
+        350.5,
+        -5.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.82
+    },
+    {
+      "id": "P_037-3",
+      "junction": "P_037",
+      "rank": 37,
+      "region": "3_1",
+      "xy_m": [
+        362.5,
+        -17.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.82
+    },
+    {
+      "id": "P_037-4",
+      "junction": "P_037",
+      "rank": 37,
+      "region": "3_1",
+      "xy_m": [
+        374.5,
+        -5.52
+      ],
+      "yaw_deg": 358.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.82
+    },
+    {
+      "id": "P_038-1",
+      "junction": "P_038",
+      "rank": 38,
+      "region": "4_2",
+      "xy_m": [
+        2652.47,
+        -1731.0
+      ],
+      "yaw_deg": 5.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.73
+    },
+    {
+      "id": "P_038-2",
+      "junction": "P_038",
+      "rank": 38,
+      "region": "4_2",
+      "xy_m": [
+        2639.78,
+        -1718.27
+      ],
+      "yaw_deg": 90.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.73
+    },
+    {
+      "id": "P_038-3",
+      "junction": "P_038",
+      "rank": 38,
+      "region": "4_2",
+      "xy_m": [
+        2628.71,
+        -1732.49
+      ],
+      "yaw_deg": 185.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.73
+    },
+    {
+      "id": "P_039-1",
+      "junction": "P_039",
+      "rank": 39,
+      "region": "4_2",
+      "xy_m": [
+        2191.83,
+        -1316.92
+      ],
+      "yaw_deg": 7.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.9
+    },
+    {
+      "id": "P_039-2",
+      "junction": "P_039",
+      "rank": 39,
+      "region": "4_2",
+      "xy_m": [
+        2179.65,
+        -1306.5
+      ],
+      "yaw_deg": 90.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.9
+    },
+    {
+      "id": "P_039-3",
+      "junction": "P_039",
+      "rank": 39,
+      "region": "4_2",
+      "xy_m": [
+        2168.02,
+        -1319.99
+      ],
+      "yaw_deg": 187.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.9
+    },
+    {
+      "id": "P_039-4",
+      "junction": "P_039",
+      "rank": 39,
+      "region": "4_2",
+      "xy_m": [
+        2179.9,
+        -1330.5
+      ],
+      "yaw_deg": 269.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.9
+    },
+    {
+      "id": "P_040-1",
+      "junction": "P_040",
+      "rank": 40,
+      "region": "4_2",
+      "xy_m": [
+        2422.45,
+        -1745.36
+      ],
+      "yaw_deg": 1.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.46
+    },
+    {
+      "id": "P_040-2",
+      "junction": "P_040",
+      "rank": 40,
+      "region": "4_2",
+      "xy_m": [
+        2409.78,
+        -1732.27
+      ],
+      "yaw_deg": 90.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.46
+    },
+    {
+      "id": "P_040-3",
+      "junction": "P_040",
+      "rank": 40,
+      "region": "4_2",
+      "xy_m": [
+        2398.74,
+        -1746.6
+      ],
+      "yaw_deg": 183.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.46
+    },
+    {
+      "id": "P_041-1",
+      "junction": "P_041",
+      "rank": 41,
+      "region": "3_1",
+      "xy_m": [
+        362.5,
+        -252.25
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.25
+    },
+    {
+      "id": "P_041-2",
+      "junction": "P_041",
+      "rank": 41,
+      "region": "3_1",
+      "xy_m": [
+        350.55,
+        -265.36
+      ],
+      "yaw_deg": 180.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.25
+    },
+    {
+      "id": "P_041-3",
+      "junction": "P_041",
+      "rank": 41,
+      "region": "3_1",
+      "xy_m": [
+        374.47,
+        -265.14
+      ],
+      "yaw_deg": 359.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.25
+    },
+    {
+      "id": "P_042-1",
+      "junction": "P_042",
+      "rank": 42,
+      "region": "4_2",
+      "xy_m": [
+        1949.5,
+        -1735.25
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.32
+    },
+    {
+      "id": "P_042-2",
+      "junction": "P_042",
+      "rank": 42,
+      "region": "4_2",
+      "xy_m": [
+        1937.55,
+        -1748.35
+      ],
+      "yaw_deg": 179.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.32
+    },
+    {
+      "id": "P_042-3",
+      "junction": "P_042",
+      "rank": 42,
+      "region": "4_2",
+      "xy_m": [
+        1961.38,
+        -1748.9
+      ],
+      "yaw_deg": 357.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.32
+    },
+    {
+      "id": "P_043-1",
+      "junction": "P_043",
+      "rank": 43,
+      "region": "4_1",
+      "xy_m": [
+        1313.99,
+        -949.52
+      ],
+      "yaw_deg": 97.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 356.94
+    },
+    {
+      "id": "P_043-2",
+      "junction": "P_043",
+      "rank": 43,
+      "region": "4_1",
+      "xy_m": [
+        1301.65,
+        -963.4
+      ],
+      "yaw_deg": 189.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 356.94
+    },
+    {
+      "id": "P_043-3",
+      "junction": "P_043",
+      "rank": 43,
+      "region": "4_1",
+      "xy_m": [
+        1316.97,
+        -972.98
+      ],
+      "yaw_deg": 278.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 356.94
+    },
+    {
+      "id": "P_044-1",
+      "junction": "P_044",
+      "rank": 44,
+      "region": "3_1",
+      "xy_m": [
+        -640.58,
+        127.76
+      ],
+      "yaw_deg": 89.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.07
+    },
+    {
+      "id": "P_044-2",
+      "junction": "P_044",
+      "rank": 44,
+      "region": "3_1",
+      "xy_m": [
+        -653.77,
+        117.01
+      ],
+      "yaw_deg": 173.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.07
+    },
+    {
+      "id": "P_044-3",
+      "junction": "P_044",
+      "rank": 44,
+      "region": "3_1",
+      "xy_m": [
+        -630.43,
+        112.11
+      ],
+      "yaw_deg": 346.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.07
+    },
+    {
+      "id": "P_045-1",
+      "junction": "P_045",
+      "rank": 45,
+      "region": "3_1",
+      "xy_m": [
+        622.34,
+        -370.55
+      ],
+      "yaw_deg": 9.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.02
+    },
+    {
+      "id": "P_045-2",
+      "junction": "P_045",
+      "rank": 45,
+      "region": "3_1",
+      "xy_m": [
+        609.05,
+        -360.59
+      ],
+      "yaw_deg": 99.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.02
+    },
+    {
+      "id": "P_045-3",
+      "junction": "P_045",
+      "rank": 45,
+      "region": "3_1",
+      "xy_m": [
+        598.65,
+        -374.38
+      ],
+      "yaw_deg": 189.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.02
+    },
+    {
+      "id": "P_045-4",
+      "junction": "P_045",
+      "rank": 45,
+      "region": "3_1",
+      "xy_m": [
+        613.38,
+        -384.15
+      ],
+      "yaw_deg": 279.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.02
+    },
+    {
+      "id": "P_046-1",
+      "junction": "P_046",
+      "rank": 46,
+      "region": "3_1",
+      "xy_m": [
+        962.5,
+        -249.25
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.53
+    },
+    {
+      "id": "P_046-2",
+      "junction": "P_046",
+      "rank": 46,
+      "region": "3_1",
+      "xy_m": [
+        950.56,
+        -262.37
+      ],
+      "yaw_deg": 180.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.53
+    },
+    {
+      "id": "P_046-3",
+      "junction": "P_046",
+      "rank": 46,
+      "region": "3_1",
+      "xy_m": [
+        974.47,
+        -262.16
+      ],
+      "yaw_deg": 320.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.53
+    },
+    {
+      "id": "P_047-1",
+      "junction": "P_047",
+      "rank": 47,
+      "region": "3_2",
+      "xy_m": [
+        -538.28,
+        -1009.08
+      ],
+      "yaw_deg": 90.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.76
+    },
+    {
+      "id": "P_047-2",
+      "junction": "P_047",
+      "rank": 47,
+      "region": "3_2",
+      "xy_m": [
+        -549.92,
+        -1020.66
+      ],
+      "yaw_deg": 179.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.76
+    },
+    {
+      "id": "P_047-3",
+      "junction": "P_047",
+      "rank": 47,
+      "region": "3_2",
+      "xy_m": [
+        -537.85,
+        -1033.07
+      ],
+      "yaw_deg": 270.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.76
+    },
+    {
+      "id": "P_047-4",
+      "junction": "P_047",
+      "rank": 47,
+      "region": "3_2",
+      "xy_m": [
+        -525.93,
+        -1021.27
+      ],
+      "yaw_deg": 359.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.76
+    },
+    {
+      "id": "P_048-1",
+      "junction": "P_048",
+      "rank": 48,
+      "region": "4_2",
+      "xy_m": [
+        2651.83,
+        -1259.92
+      ],
+      "yaw_deg": 7.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.98
+    },
+    {
+      "id": "P_048-2",
+      "junction": "P_048",
+      "rank": 48,
+      "region": "4_2",
+      "xy_m": [
+        2639.65,
+        -1249.5
+      ],
+      "yaw_deg": 90.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.98
+    },
+    {
+      "id": "P_048-3",
+      "junction": "P_048",
+      "rank": 48,
+      "region": "4_2",
+      "xy_m": [
+        2628.01,
+        -1262.92
+      ],
+      "yaw_deg": 186.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.98
+    },
+    {
+      "id": "P_048-4",
+      "junction": "P_048",
+      "rank": 48,
+      "region": "4_2",
+      "xy_m": [
+        2639.91,
+        -1273.5
+      ],
+      "yaw_deg": 269.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.98
+    },
+    {
+      "id": "P_049-1",
+      "junction": "P_049",
+      "rank": 49,
+      "region": "4_2",
+      "xy_m": [
+        2361.5,
+        -2592.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 356.56
+    },
+    {
+      "id": "P_049-2",
+      "junction": "P_049",
+      "rank": 49,
+      "region": "4_2",
+      "xy_m": [
+        2349.88,
+        -2580.51
+      ],
+      "yaw_deg": 90.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 356.56
+    },
+    {
+      "id": "P_049-3",
+      "junction": "P_049",
+      "rank": 49,
+      "region": "4_2",
+      "xy_m": [
+        2337.5,
+        -2592.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 356.56
+    },
+    {
+      "id": "P_049-4",
+      "junction": "P_049",
+      "rank": 49,
+      "region": "4_2",
+      "xy_m": [
+        2349.5,
+        -2604.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 356.56
+    },
+    {
+      "id": "P_050-1",
+      "junction": "P_050",
+      "rank": 50,
+      "region": "3_2",
+      "xy_m": [
+        553.38,
+        -1198.5
+      ],
+      "yaw_deg": 9.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.59
+    },
+    {
+      "id": "P_050-2",
+      "junction": "P_050",
+      "rank": 50,
+      "region": "3_2",
+      "xy_m": [
+        539.66,
+        -1188.31
+      ],
+      "yaw_deg": 98.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.59
+    },
+    {
+      "id": "P_050-3",
+      "junction": "P_050",
+      "rank": 50,
+      "region": "3_2",
+      "xy_m": [
+        529.7,
+        -1202.35
+      ],
+      "yaw_deg": 189.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.59
+    },
+    {
+      "id": "P_050-4",
+      "junction": "P_050",
+      "rank": 50,
+      "region": "3_2",
+      "xy_m": [
+        543.82,
+        -1211.94
+      ],
+      "yaw_deg": 278.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.59
+    },
+    {
+      "id": "P_051-1",
+      "junction": "P_051",
+      "rank": 51,
+      "region": "3_1",
+      "xy_m": [
+        978.75,
+        929.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.77
+    },
+    {
+      "id": "P_051-2",
+      "junction": "P_051",
+      "rank": 51,
+      "region": "3_1",
+      "xy_m": [
+        964.87,
+        941.35
+      ],
+      "yaw_deg": 90.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.77
+    },
+    {
+      "id": "P_051-3",
+      "junction": "P_051",
+      "rank": 51,
+      "region": "3_1",
+      "xy_m": [
+        964.76,
+        917.67
+      ],
+      "yaw_deg": 268.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.77
+    },
+    {
+      "id": "P_052-1",
+      "junction": "P_052",
+      "rank": 52,
+      "region": "3_1",
+      "xy_m": [
+        363.5,
+        297.0
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.6
+    },
+    {
+      "id": "P_052-2",
+      "junction": "P_052",
+      "rank": 52,
+      "region": "3_1",
+      "xy_m": [
+        351.51,
+        284.64
+      ],
+      "yaw_deg": 179.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.6
+    },
+    {
+      "id": "P_052-3",
+      "junction": "P_052",
+      "rank": 52,
+      "region": "3_1",
+      "xy_m": [
+        363.5,
+        273.0
+      ],
+      "yaw_deg": 268.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.6
+    },
+    {
+      "id": "P_052-4",
+      "junction": "P_052",
+      "rank": 52,
+      "region": "3_1",
+      "xy_m": [
+        375.5,
+        284.93
+      ],
+      "yaw_deg": 359.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.6
+    },
+    {
+      "id": "P_053-1",
+      "junction": "P_053",
+      "rank": 53,
+      "region": "4_1",
+      "xy_m": [
+        2886.46,
+        349.49
+      ],
+      "yaw_deg": 99.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.43
+    },
+    {
+      "id": "P_053-2",
+      "junction": "P_053",
+      "rank": 53,
+      "region": "4_1",
+      "xy_m": [
+        2875.31,
+        342.37
+      ],
+      "yaw_deg": 139.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.43
+    },
+    {
+      "id": "P_053-3",
+      "junction": "P_053",
+      "rank": 53,
+      "region": "4_1",
+      "xy_m": [
+        2888.83,
+        325.78
+      ],
+      "yaw_deg": 281.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.43
+    },
+    {
+      "id": "P_054-1",
+      "junction": "P_054",
+      "rank": 54,
+      "region": "4_1",
+      "xy_m": [
+        1039.08,
+        -418.39
+      ],
+      "yaw_deg": 9.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.0
+    },
+    {
+      "id": "P_054-2",
+      "junction": "P_054",
+      "rank": 54,
+      "region": "4_1",
+      "xy_m": [
+        1025.28,
+        -408.54
+      ],
+      "yaw_deg": 99.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.0
+    },
+    {
+      "id": "P_054-3",
+      "junction": "P_054",
+      "rank": 54,
+      "region": "4_1",
+      "xy_m": [
+        1015.4,
+        -422.25
+      ],
+      "yaw_deg": 189.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.0
+    },
+    {
+      "id": "P_054-4",
+      "junction": "P_054",
+      "rank": 54,
+      "region": "4_1",
+      "xy_m": [
+        1029.28,
+        -432.21
+      ],
+      "yaw_deg": 279.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.0
+    },
+    {
+      "id": "P_055-1",
+      "junction": "P_055",
+      "rank": 55,
+      "region": "4_1",
+      "xy_m": [
+        1744.33,
+        -188.19
+      ],
+      "yaw_deg": 9.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.45
+    },
+    {
+      "id": "P_055-2",
+      "junction": "P_055",
+      "rank": 55,
+      "region": "4_1",
+      "xy_m": [
+        1730.99,
+        -178.27
+      ],
+      "yaw_deg": 98.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.45
+    },
+    {
+      "id": "P_055-3",
+      "junction": "P_055",
+      "rank": 55,
+      "region": "4_1",
+      "xy_m": [
+        1720.68,
+        -192.24
+      ],
+      "yaw_deg": 188.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.45
+    },
+    {
+      "id": "P_055-4",
+      "junction": "P_055",
+      "rank": 55,
+      "region": "4_1",
+      "xy_m": [
+        1735.19,
+        -201.86
+      ],
+      "yaw_deg": 279.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 366.45
+    },
+    {
+      "id": "P_056-1",
+      "junction": "P_056",
+      "rank": 56,
+      "region": "4_1",
+      "xy_m": [
+        1014.24,
+        -890.68
+      ],
+      "yaw_deg": 8.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.0
+    },
+    {
+      "id": "P_056-2",
+      "junction": "P_056",
+      "rank": 56,
+      "region": "4_1",
+      "xy_m": [
+        1000.38,
+        -881.36
+      ],
+      "yaw_deg": 98.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.0
+    },
+    {
+      "id": "P_056-3",
+      "junction": "P_056",
+      "rank": 56,
+      "region": "4_1",
+      "xy_m": [
+        990.64,
+        -895.02
+      ],
+      "yaw_deg": 189.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.0
+    },
+    {
+      "id": "P_056-4",
+      "junction": "P_056",
+      "rank": 56,
+      "region": "4_1",
+      "xy_m": [
+        1004.72,
+        -904.96
+      ],
+      "yaw_deg": 278.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.0
+    },
+    {
+      "id": "P_057-1",
+      "junction": "P_057",
+      "rank": 57,
+      "region": "4_1",
+      "xy_m": [
+        2071.37,
+        687.62
+      ],
+      "yaw_deg": 8.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.21
+    },
+    {
+      "id": "P_057-2",
+      "junction": "P_057",
+      "rank": 57,
+      "region": "4_1",
+      "xy_m": [
+        2057.55,
+        697.67
+      ],
+      "yaw_deg": 98.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.21
+    },
+    {
+      "id": "P_057-3",
+      "junction": "P_057",
+      "rank": 57,
+      "region": "4_1",
+      "xy_m": [
+        2047.85,
+        682.98
+      ],
+      "yaw_deg": 188.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.21
+    },
+    {
+      "id": "P_057-4",
+      "junction": "P_057",
+      "rank": 57,
+      "region": "4_1",
+      "xy_m": [
+        2062.04,
+        674.1
+      ],
+      "yaw_deg": 278.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.21
+    },
+    {
+      "id": "P_058-1",
+      "junction": "P_058",
+      "rank": 58,
+      "region": "4_1",
+      "xy_m": [
+        1917.97,
+        193.7
+      ],
+      "yaw_deg": 8.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.62
+    },
+    {
+      "id": "P_058-2",
+      "junction": "P_058",
+      "rank": 58,
+      "region": "4_1",
+      "xy_m": [
+        1904.49,
+        203.38
+      ],
+      "yaw_deg": 98.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.62
+    },
+    {
+      "id": "P_058-3",
+      "junction": "P_058",
+      "rank": 58,
+      "region": "4_1",
+      "xy_m": [
+        1894.32,
+        189.62
+      ],
+      "yaw_deg": 189.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.62
+    },
+    {
+      "id": "P_058-4",
+      "junction": "P_058",
+      "rank": 58,
+      "region": "4_1",
+      "xy_m": [
+        1908.38,
+        179.71
+      ],
+      "yaw_deg": 279.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.62
+    },
+    {
+      "id": "P_059-1",
+      "junction": "P_059",
+      "rank": 59,
+      "region": "4_1",
+      "xy_m": [
+        1591.85,
+        -796.73
+      ],
+      "yaw_deg": 7.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.29
+    },
+    {
+      "id": "P_059-2",
+      "junction": "P_059",
+      "rank": 59,
+      "region": "4_1",
+      "xy_m": [
+        1582.66,
+        -787.74
+      ],
+      "yaw_deg": 87.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.29
+    },
+    {
+      "id": "P_059-3",
+      "junction": "P_059",
+      "rank": 59,
+      "region": "4_1",
+      "xy_m": [
+        1568.46,
+        -802.07
+      ],
+      "yaw_deg": 187.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.29
+    },
+    {
+      "id": "P_059-4",
+      "junction": "P_059",
+      "rank": 59,
+      "region": "4_1",
+      "xy_m": [
+        1576.94,
+        -811.01
+      ],
+      "yaw_deg": 259.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.29
+    },
+    {
+      "id": "P_060-1",
+      "junction": "P_060",
+      "rank": 60,
+      "region": "4_1",
+      "xy_m": [
+        1020.31,
+        -305.37
+      ],
+      "yaw_deg": 8.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.85
+    },
+    {
+      "id": "P_060-2",
+      "junction": "P_060",
+      "rank": 60,
+      "region": "4_1",
+      "xy_m": [
+        1005.76,
+        -295.82
+      ],
+      "yaw_deg": 117.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.85
+    },
+    {
+      "id": "P_060-3",
+      "junction": "P_060",
+      "rank": 60,
+      "region": "4_1",
+      "xy_m": [
+        996.76,
+        -309.98
+      ],
+      "yaw_deg": 188.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.85
+    },
+    {
+      "id": "P_060-4",
+      "junction": "P_060",
+      "rank": 60,
+      "region": "4_1",
+      "xy_m": [
+        1010.82,
+        -319.27
+      ],
+      "yaw_deg": 279.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.85
+    },
+    {
+      "id": "P_061-1",
+      "junction": "P_061",
+      "rank": 61,
+      "region": "3_1",
+      "xy_m": [
+        -418.5,
+        -916.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.94
+    },
+    {
+      "id": "P_061-2",
+      "junction": "P_061",
+      "rank": 61,
+      "region": "3_1",
+      "xy_m": [
+        -430.5,
+        -904.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.94
+    },
+    {
+      "id": "P_061-3",
+      "junction": "P_061",
+      "rank": 61,
+      "region": "3_1",
+      "xy_m": [
+        -442.5,
+        -916.5
+      ],
+      "yaw_deg": 179.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.94
+    },
+    {
+      "id": "P_061-4",
+      "junction": "P_061",
+      "rank": 61,
+      "region": "3_1",
+      "xy_m": [
+        -430.5,
+        -928.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.94
+    },
+    {
+      "id": "P_062-1",
+      "junction": "P_062",
+      "rank": 62,
+      "region": "4_2",
+      "xy_m": [
+        1731.5,
+        -1555.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 358.96
+    },
+    {
+      "id": "P_062-2",
+      "junction": "P_062",
+      "rank": 62,
+      "region": "4_2",
+      "xy_m": [
+        1719.53,
+        -1543.5
+      ],
+      "yaw_deg": 89.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 358.96
+    },
+    {
+      "id": "P_062-3",
+      "junction": "P_062",
+      "rank": 62,
+      "region": "4_2",
+      "xy_m": [
+        1707.5,
+        -1555.5
+      ],
+      "yaw_deg": 179.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 358.96
+    },
+    {
+      "id": "P_062-4",
+      "junction": "P_062",
+      "rank": 62,
+      "region": "4_2",
+      "xy_m": [
+        1719.5,
+        -1567.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 358.96
+    },
+    {
+      "id": "P_063-1",
+      "junction": "P_063",
+      "rank": 63,
+      "region": "3_1",
+      "xy_m": [
+        -14.5,
+        7.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.42
+    },
+    {
+      "id": "P_063-2",
+      "junction": "P_063",
+      "rank": 63,
+      "region": "3_1",
+      "xy_m": [
+        -26.5,
+        -4.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.42
+    },
+    {
+      "id": "P_063-3",
+      "junction": "P_063",
+      "rank": 63,
+      "region": "3_1",
+      "xy_m": [
+        -14.5,
+        -16.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.42
+    },
+    {
+      "id": "P_063-4",
+      "junction": "P_063",
+      "rank": 63,
+      "region": "3_1",
+      "xy_m": [
+        -2.52,
+        -5.18
+      ],
+      "yaw_deg": 359.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.42
+    },
+    {
+      "id": "P_064-1",
+      "junction": "P_064",
+      "rank": 64,
+      "region": "4_2",
+      "xy_m": [
+        2652.07,
+        -1513.89
+      ],
+      "yaw_deg": 3.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.34
+    },
+    {
+      "id": "P_064-2",
+      "junction": "P_064",
+      "rank": 64,
+      "region": "4_2",
+      "xy_m": [
+        2639.69,
+        -1502.08
+      ],
+      "yaw_deg": 90.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.34
+    },
+    {
+      "id": "P_064-3",
+      "junction": "P_064",
+      "rank": 64,
+      "region": "4_2",
+      "xy_m": [
+        2628.16,
+        -1515.5
+      ],
+      "yaw_deg": 183.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.34
+    },
+    {
+      "id": "P_064-4",
+      "junction": "P_064",
+      "rank": 64,
+      "region": "4_2",
+      "xy_m": [
+        2640.04,
+        -1526.07
+      ],
+      "yaw_deg": 269.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.34
+    },
+    {
+      "id": "P_065-1",
+      "junction": "P_065",
+      "rank": 65,
+      "region": "3_1",
+      "xy_m": [
+        -310.5,
+        -809.7
+      ],
+      "yaw_deg": 0.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.31
+    },
+    {
+      "id": "P_065-2",
+      "junction": "P_065",
+      "rank": 65,
+      "region": "3_1",
+      "xy_m": [
+        -334.5,
+        -809.75
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.31
+    },
+    {
+      "id": "P_065-3",
+      "junction": "P_065",
+      "rank": 65,
+      "region": "3_1",
+      "xy_m": [
+        -323.18,
+        -821.73
+      ],
+      "yaw_deg": 269.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.31
+    },
+    {
+      "id": "P_066-1",
+      "junction": "P_066",
+      "rank": 66,
+      "region": "3_1",
+      "xy_m": [
+        186.5,
+        822.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.72
+    },
+    {
+      "id": "P_066-2",
+      "junction": "P_066",
+      "rank": 66,
+      "region": "3_1",
+      "xy_m": [
+        174.5,
+        834.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.72
+    },
+    {
+      "id": "P_066-3",
+      "junction": "P_066",
+      "rank": 66,
+      "region": "3_1",
+      "xy_m": [
+        162.5,
+        822.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.72
+    },
+    {
+      "id": "P_066-4",
+      "junction": "P_066",
+      "rank": 66,
+      "region": "3_1",
+      "xy_m": [
+        174.5,
+        810.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.72
+    },
+    {
+      "id": "P_067-1",
+      "junction": "P_067",
+      "rank": 67,
+      "region": "3_1",
+      "xy_m": [
+        -875.32,
+        201.83
+      ],
+      "yaw_deg": 66.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.04
+    },
+    {
+      "id": "P_067-2",
+      "junction": "P_067",
+      "rank": 67,
+      "region": "3_1",
+      "xy_m": [
+        -892.42,
+        194.26
+      ],
+      "yaw_deg": 157.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.04
+    },
+    {
+      "id": "P_067-3",
+      "junction": "P_067",
+      "rank": 67,
+      "region": "3_1",
+      "xy_m": [
+        -870.95,
+        184.38
+      ],
+      "yaw_deg": 336.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.04
+    },
+    {
+      "id": "P_068-1",
+      "junction": "P_068",
+      "rank": 68,
+      "region": "3_2",
+      "xy_m": [
+        -216.64,
+        -1178.56
+      ],
+      "yaw_deg": 89.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.09
+    },
+    {
+      "id": "P_068-2",
+      "junction": "P_068",
+      "rank": 68,
+      "region": "3_2",
+      "xy_m": [
+        -229.75,
+        -1190.53
+      ],
+      "yaw_deg": 180.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.09
+    },
+    {
+      "id": "P_068-3",
+      "junction": "P_068",
+      "rank": 68,
+      "region": "3_2",
+      "xy_m": [
+        -216.63,
+        -1202.44
+      ],
+      "yaw_deg": 269.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.09
+    },
+    {
+      "id": "P_069-1",
+      "junction": "P_069",
+      "rank": 69,
+      "region": "4_2",
+      "xy_m": [
+        2836.5,
+        -2470.47
+      ],
+      "yaw_deg": 0.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.04
+    },
+    {
+      "id": "P_069-2",
+      "junction": "P_069",
+      "rank": 69,
+      "region": "4_2",
+      "xy_m": [
+        2824.5,
+        -2458.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.04
+    },
+    {
+      "id": "P_069-3",
+      "junction": "P_069",
+      "rank": 69,
+      "region": "4_2",
+      "xy_m": [
+        2812.5,
+        -2470.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.04
+    },
+    {
+      "id": "P_069-4",
+      "junction": "P_069",
+      "rank": 69,
+      "region": "4_2",
+      "xy_m": [
+        2824.5,
+        -2482.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.04
+    },
+    {
+      "id": "P_070-1",
+      "junction": "P_070",
+      "rank": 70,
+      "region": "3_1",
+      "xy_m": [
+        -737.5,
+        -380.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.08
+    },
+    {
+      "id": "P_070-2",
+      "junction": "P_070",
+      "rank": 70,
+      "region": "3_1",
+      "xy_m": [
+        -749.5,
+        -368.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.08
+    },
+    {
+      "id": "P_070-3",
+      "junction": "P_070",
+      "rank": 70,
+      "region": "3_1",
+      "xy_m": [
+        -761.5,
+        -380.44
+      ],
+      "yaw_deg": 179.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.08
+    },
+    {
+      "id": "P_070-4",
+      "junction": "P_070",
+      "rank": 70,
+      "region": "3_1",
+      "xy_m": [
+        -749.5,
+        -392.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 371.08
+    },
+    {
+      "id": "P_071-1",
+      "junction": "P_071",
+      "rank": 71,
+      "region": "3_1",
+      "xy_m": [
+        749.5,
+        5.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.88
+    },
+    {
+      "id": "P_071-2",
+      "junction": "P_071",
+      "rank": 71,
+      "region": "3_1",
+      "xy_m": [
+        737.5,
+        -6.52
+      ],
+      "yaw_deg": 180.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.88
+    },
+    {
+      "id": "P_071-3",
+      "junction": "P_071",
+      "rank": 71,
+      "region": "3_1",
+      "xy_m": [
+        749.62,
+        -18.5
+      ],
+      "yaw_deg": 270.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.88
+    },
+    {
+      "id": "P_071-4",
+      "junction": "P_071",
+      "rank": 71,
+      "region": "3_1",
+      "xy_m": [
+        761.5,
+        -6.5
+      ],
+      "yaw_deg": 358.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.88
+    },
+    {
+      "id": "P_072-1",
+      "junction": "P_072",
+      "rank": 72,
+      "region": "3_1",
+      "xy_m": [
+        840.66,
+        -450.49
+      ],
+      "yaw_deg": 8.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.55
+    },
+    {
+      "id": "P_072-2",
+      "junction": "P_072",
+      "rank": 72,
+      "region": "3_1",
+      "xy_m": [
+        826.57,
+        -440.71
+      ],
+      "yaw_deg": 100.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.55
+    },
+    {
+      "id": "P_072-3",
+      "junction": "P_072",
+      "rank": 72,
+      "region": "3_1",
+      "xy_m": [
+        817.07,
+        -454.87
+      ],
+      "yaw_deg": 189.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.55
+    },
+    {
+      "id": "P_072-4",
+      "junction": "P_072",
+      "rank": 72,
+      "region": "3_1",
+      "xy_m": [
+        830.39,
+        -464.4
+      ],
+      "yaw_deg": 279.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.55
+    },
+    {
+      "id": "P_073-1",
+      "junction": "P_073",
+      "rank": 73,
+      "region": "3_1",
+      "xy_m": [
+        683.6,
+        -818.19
+      ],
+      "yaw_deg": 98.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.75
+    },
+    {
+      "id": "P_073-2",
+      "junction": "P_073",
+      "rank": 73,
+      "region": "3_1",
+      "xy_m": [
+        671.32,
+        -832.05
+      ],
+      "yaw_deg": 189.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.75
+    },
+    {
+      "id": "P_073-3",
+      "junction": "P_073",
+      "rank": 73,
+      "region": "3_1",
+      "xy_m": [
+        687.24,
+        -841.45
+      ],
+      "yaw_deg": 280.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.75
+    },
+    {
+      "id": "P_074-1",
+      "junction": "P_074",
+      "rank": 74,
+      "region": "3_2",
+      "xy_m": [
+        735.09,
+        -1055.44
+      ],
+      "yaw_deg": 9.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.72
+    },
+    {
+      "id": "P_074-2",
+      "junction": "P_074",
+      "rank": 74,
+      "region": "3_2",
+      "xy_m": [
+        721.26,
+        -1045.55
+      ],
+      "yaw_deg": 99.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.72
+    },
+    {
+      "id": "P_074-3",
+      "junction": "P_074",
+      "rank": 74,
+      "region": "3_2",
+      "xy_m": [
+        711.39,
+        -1059.21
+      ],
+      "yaw_deg": 188.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.72
+    },
+    {
+      "id": "P_074-4",
+      "junction": "P_074",
+      "rank": 74,
+      "region": "3_2",
+      "xy_m": [
+        725.18,
+        -1069.22
+      ],
+      "yaw_deg": 279.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 357.72
+    },
+    {
+      "id": "P_075-1",
+      "junction": "P_075",
+      "rank": 75,
+      "region": "3_1",
+      "xy_m": [
+        -738.5,
+        -915.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.72
+    },
+    {
+      "id": "P_075-2",
+      "junction": "P_075",
+      "rank": 75,
+      "region": "3_1",
+      "xy_m": [
+        -751.14,
+        -903.52
+      ],
+      "yaw_deg": 90.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.72
+    },
+    {
+      "id": "P_075-3",
+      "junction": "P_075",
+      "rank": 75,
+      "region": "3_1",
+      "xy_m": [
+        -762.5,
+        -915.47
+      ],
+      "yaw_deg": 179.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.72
+    },
+    {
+      "id": "P_075-4",
+      "junction": "P_075",
+      "rank": 75,
+      "region": "3_1",
+      "xy_m": [
+        -751.14,
+        -927.48
+      ],
+      "yaw_deg": 269.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.72
+    },
+    {
+      "id": "P_076-1",
+      "junction": "P_076",
+      "rank": 76,
+      "region": "3_1",
+      "xy_m": [
+        764.5,
+        821.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.34
+    },
+    {
+      "id": "P_076-2",
+      "junction": "P_076",
+      "rank": 76,
+      "region": "3_1",
+      "xy_m": [
+        752.5,
+        833.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.34
+    },
+    {
+      "id": "P_076-3",
+      "junction": "P_076",
+      "rank": 76,
+      "region": "3_1",
+      "xy_m": [
+        740.5,
+        821.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.34
+    },
+    {
+      "id": "P_076-4",
+      "junction": "P_076",
+      "rank": 76,
+      "region": "3_1",
+      "xy_m": [
+        752.5,
+        809.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.34
+    },
+    {
+      "id": "P_077-1",
+      "junction": "P_077",
+      "rank": 77,
+      "region": "4_2",
+      "xy_m": [
+        2854.2,
+        -1223.67
+      ],
+      "yaw_deg": 89.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.75
+    },
+    {
+      "id": "P_077-2",
+      "junction": "P_077",
+      "rank": 77,
+      "region": "4_2",
+      "xy_m": [
+        2840.36,
+        -1237.09
+      ],
+      "yaw_deg": 186.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.75
+    },
+    {
+      "id": "P_077-3",
+      "junction": "P_077",
+      "rank": 77,
+      "region": "4_2",
+      "xy_m": [
+        2854.2,
+        -1247.33
+      ],
+      "yaw_deg": 270.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.75
+    },
+    {
+      "id": "P_078-1",
+      "junction": "P_078",
+      "rank": 78,
+      "region": "3_1",
+      "xy_m": [
+        -647.21,
+        378.16
+      ],
+      "yaw_deg": 159.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.77
+    },
+    {
+      "id": "P_078-2",
+      "junction": "P_078",
+      "rank": 78,
+      "region": "3_1",
+      "xy_m": [
+        -639.14,
+        359.66
+      ],
+      "yaw_deg": 269.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.77
+    },
+    {
+      "id": "P_078-3",
+      "junction": "P_078",
+      "rank": 78,
+      "region": "3_1",
+      "xy_m": [
+        -625.4,
+        369.68
+      ],
+      "yaw_deg": 340.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.77
+    },
+    {
+      "id": "P_079-1",
+      "junction": "P_079",
+      "rank": 79,
+      "region": "4_2",
+      "xy_m": [
+        2854.2,
+        -1488.67
+      ],
+      "yaw_deg": 89.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.33
+    },
+    {
+      "id": "P_079-2",
+      "junction": "P_079",
+      "rank": 79,
+      "region": "4_2",
+      "xy_m": [
+        2840.3,
+        -1501.63
+      ],
+      "yaw_deg": 183.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.33
+    },
+    {
+      "id": "P_079-3",
+      "junction": "P_079",
+      "rank": 79,
+      "region": "4_2",
+      "xy_m": [
+        2854.2,
+        -1512.33
+      ],
+      "yaw_deg": 270.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.33
+    },
+    {
+      "id": "P_080-1",
+      "junction": "P_080",
+      "rank": 80,
+      "region": "3_1",
+      "xy_m": [
+        -945.5,
+        915.12
+      ],
+      "yaw_deg": 0.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.78
+    },
+    {
+      "id": "P_080-2",
+      "junction": "P_080",
+      "rank": 80,
+      "region": "3_1",
+      "xy_m": [
+        -957.5,
+        927.0
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.78
+    },
+    {
+      "id": "P_080-3",
+      "junction": "P_080",
+      "rank": 80,
+      "region": "3_1",
+      "xy_m": [
+        -957.46,
+        903.0
+      ],
+      "yaw_deg": 271.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 360.78
+    },
+    {
+      "id": "P_081-1",
+      "junction": "P_081",
+      "rank": 81,
+      "region": "4_2",
+      "xy_m": [
+        1653.5,
+        -2927.0
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 354.06
+    },
+    {
+      "id": "P_081-2",
+      "junction": "P_081",
+      "rank": 81,
+      "region": "4_2",
+      "xy_m": [
+        1641.5,
+        -2939.17
+      ],
+      "yaw_deg": 178.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 354.06
+    },
+    {
+      "id": "P_081-3",
+      "junction": "P_081",
+      "rank": 81,
+      "region": "4_2",
+      "xy_m": [
+        1653.82,
+        -2950.99
+      ],
+      "yaw_deg": 269.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 354.06
+    },
+    {
+      "id": "P_081-4",
+      "junction": "P_081",
+      "rank": 81,
+      "region": "4_2",
+      "xy_m": [
+        1665.5,
+        -2939.05
+      ],
+      "yaw_deg": 359.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 354.06
+    },
+    {
+      "id": "P_082-1",
+      "junction": "P_082",
+      "rank": 82,
+      "region": "3_2",
+      "xy_m": [
+        138.39,
+        -1151.86
+      ],
+      "yaw_deg": 8.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.38
+    },
+    {
+      "id": "P_082-2",
+      "junction": "P_082",
+      "rank": 82,
+      "region": "3_2",
+      "xy_m": [
+        124.51,
+        -1141.67
+      ],
+      "yaw_deg": 99.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.38
+    },
+    {
+      "id": "P_082-3",
+      "junction": "P_082",
+      "rank": 82,
+      "region": "3_2",
+      "xy_m": [
+        114.69,
+        -1155.63
+      ],
+      "yaw_deg": 189.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.38
+    },
+    {
+      "id": "P_082-4",
+      "junction": "P_082",
+      "rank": 82,
+      "region": "3_2",
+      "xy_m": [
+        128.88,
+        -1165.26
+      ],
+      "yaw_deg": 279.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.38
+    },
+    {
+      "id": "P_083-1",
+      "junction": "P_083",
+      "rank": 83,
+      "region": "4_2",
+      "xy_m": [
+        2136.5,
+        -2475.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 353.47
+    },
+    {
+      "id": "P_083-2",
+      "junction": "P_083",
+      "rank": 83,
+      "region": "4_2",
+      "xy_m": [
+        2124.78,
+        -2463.51
+      ],
+      "yaw_deg": 90.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 353.47
+    },
+    {
+      "id": "P_083-3",
+      "junction": "P_083",
+      "rank": 83,
+      "region": "4_2",
+      "xy_m": [
+        2112.5,
+        -2475.5
+      ],
+      "yaw_deg": 179.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 353.47
+    },
+    {
+      "id": "P_083-4",
+      "junction": "P_083",
+      "rank": 83,
+      "region": "4_2",
+      "xy_m": [
+        2124.5,
+        -2487.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 353.47
+    },
+    {
+      "id": "P_084-1",
+      "junction": "P_084",
+      "rank": 84,
+      "region": "4_2",
+      "xy_m": [
+        1185.5,
+        -2809.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.38
+    },
+    {
+      "id": "P_084-2",
+      "junction": "P_084",
+      "rank": 84,
+      "region": "4_2",
+      "xy_m": [
+        1173.5,
+        -2821.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.38
+    },
+    {
+      "id": "P_084-3",
+      "junction": "P_084",
+      "rank": 84,
+      "region": "4_2",
+      "xy_m": [
+        1185.5,
+        -2833.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.38
+    },
+    {
+      "id": "P_084-4",
+      "junction": "P_084",
+      "rank": 84,
+      "region": "4_2",
+      "xy_m": [
+        1197.49,
+        -2821.9
+      ],
+      "yaw_deg": 359.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 359.38
+    },
+    {
+      "id": "P_085-1",
+      "junction": "P_085",
+      "rank": 85,
+      "region": "4_2",
+      "xy_m": [
+        1398.5,
+        -2703.83
+      ],
+      "yaw_deg": 1.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.89
+    },
+    {
+      "id": "P_085-2",
+      "junction": "P_085",
+      "rank": 85,
+      "region": "4_2",
+      "xy_m": [
+        1386.5,
+        -2692.0
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.89
+    },
+    {
+      "id": "P_085-3",
+      "junction": "P_085",
+      "rank": 85,
+      "region": "4_2",
+      "xy_m": [
+        1374.5,
+        -2703.66
+      ],
+      "yaw_deg": 179.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.89
+    },
+    {
+      "id": "P_085-4",
+      "junction": "P_085",
+      "rank": 85,
+      "region": "4_2",
+      "xy_m": [
+        1386.5,
+        -2716.0
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 363.89
+    },
+    {
+      "id": "P_086-1",
+      "junction": "P_086",
+      "rank": 86,
+      "region": "4_2",
+      "xy_m": [
+        1198.5,
+        -2474.5
+      ],
+      "yaw_deg": 0.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.2
+    },
+    {
+      "id": "P_086-2",
+      "junction": "P_086",
+      "rank": 86,
+      "region": "4_2",
+      "xy_m": [
+        1186.5,
+        -2462.5
+      ],
+      "yaw_deg": 90.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.2
+    },
+    {
+      "id": "P_086-3",
+      "junction": "P_086",
+      "rank": 86,
+      "region": "4_2",
+      "xy_m": [
+        1174.5,
+        -2474.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.2
+    },
+    {
+      "id": "P_086-4",
+      "junction": "P_086",
+      "rank": 86,
+      "region": "4_2",
+      "xy_m": [
+        1186.5,
+        -2486.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.2
+    },
+    {
+      "id": "P_087-1",
+      "junction": "P_087",
+      "rank": 87,
+      "region": "4_1",
+      "xy_m": [
+        1057.46,
+        -534.59
+      ],
+      "yaw_deg": 8.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.12
+    },
+    {
+      "id": "P_087-2",
+      "junction": "P_087",
+      "rank": 87,
+      "region": "4_1",
+      "xy_m": [
+        1044.07,
+        -524.94
+      ],
+      "yaw_deg": 98.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.12
+    },
+    {
+      "id": "P_087-3",
+      "junction": "P_087",
+      "rank": 87,
+      "region": "4_1",
+      "xy_m": [
+        1033.83,
+        -538.75
+      ],
+      "yaw_deg": 189.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.12
+    },
+    {
+      "id": "P_087-4",
+      "junction": "P_087",
+      "rank": 87,
+      "region": "4_1",
+      "xy_m": [
+        1049.07,
+        -548.33
+      ],
+      "yaw_deg": 279.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.12
+    },
+    {
+      "id": "P_088-1",
+      "junction": "P_088",
+      "rank": 88,
+      "region": "4_1",
+      "xy_m": [
+        1204.45,
+        -112.5
+      ],
+      "yaw_deg": 91.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.34
+    },
+    {
+      "id": "P_088-2",
+      "junction": "P_088",
+      "rank": 88,
+      "region": "4_1",
+      "xy_m": [
+        1192.5,
+        -124.5
+      ],
+      "yaw_deg": 180.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.34
+    },
+    {
+      "id": "P_088-3",
+      "junction": "P_088",
+      "rank": 88,
+      "region": "4_1",
+      "xy_m": [
+        1204.5,
+        -136.5
+      ],
+      "yaw_deg": 270.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.34
+    },
+    {
+      "id": "P_088-4",
+      "junction": "P_088",
+      "rank": 88,
+      "region": "4_1",
+      "xy_m": [
+        1216.5,
+        -124.5
+      ],
+      "yaw_deg": 360.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.34
+    },
+    {
+      "id": "P_089-1",
+      "junction": "P_089",
+      "rank": 89,
+      "region": "4_1",
+      "xy_m": [
+        2126.95,
+        344.77
+      ],
+      "yaw_deg": 8.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.51
+    },
+    {
+      "id": "P_089-2",
+      "junction": "P_089",
+      "rank": 89,
+      "region": "4_1",
+      "xy_m": [
+        2113.33,
+        354.36
+      ],
+      "yaw_deg": 99.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.51
+    },
+    {
+      "id": "P_089-3",
+      "junction": "P_089",
+      "rank": 89,
+      "region": "4_1",
+      "xy_m": [
+        2103.32,
+        340.63
+      ],
+      "yaw_deg": 189.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.51
+    },
+    {
+      "id": "P_089-4",
+      "junction": "P_089",
+      "rank": 89,
+      "region": "4_1",
+      "xy_m": [
+        2117.3,
+        330.69
+      ],
+      "yaw_deg": 278.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.51
+    },
+    {
+      "id": "P_090-1",
+      "junction": "P_090",
+      "rank": 90,
+      "region": "4_1",
+      "xy_m": [
+        1256.31,
+        -502.08
+      ],
+      "yaw_deg": 8.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.4
+    },
+    {
+      "id": "P_090-2",
+      "junction": "P_090",
+      "rank": 90,
+      "region": "4_1",
+      "xy_m": [
+        1242.79,
+        -492.29
+      ],
+      "yaw_deg": 99.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.4
+    },
+    {
+      "id": "P_090-3",
+      "junction": "P_090",
+      "rank": 90,
+      "region": "4_1",
+      "xy_m": [
+        1232.67,
+        -506.19
+      ],
+      "yaw_deg": 189.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.4
+    },
+    {
+      "id": "P_090-4",
+      "junction": "P_090",
+      "rank": 90,
+      "region": "4_1",
+      "xy_m": [
+        1247.11,
+        -515.88
+      ],
+      "yaw_deg": 279.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 361.4
+    },
+    {
+      "id": "P_091-1",
+      "junction": "P_091",
+      "rank": 91,
+      "region": "4_1",
+      "xy_m": [
+        1442.35,
+        -472.31
+      ],
+      "yaw_deg": 9.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.46
+    },
+    {
+      "id": "P_091-2",
+      "junction": "P_091",
+      "rank": 91,
+      "region": "4_1",
+      "xy_m": [
+        1428.72,
+        -462.3
+      ],
+      "yaw_deg": 98.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.46
+    },
+    {
+      "id": "P_091-3",
+      "junction": "P_091",
+      "rank": 91,
+      "region": "4_1",
+      "xy_m": [
+        1418.68,
+        -476.24
+      ],
+      "yaw_deg": 189.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.46
+    },
+    {
+      "id": "P_091-4",
+      "junction": "P_091",
+      "rank": 91,
+      "region": "4_1",
+      "xy_m": [
+        1432.86,
+        -485.93
+      ],
+      "yaw_deg": 278.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.46
+    },
+    {
+      "id": "P_092-1",
+      "junction": "P_092",
+      "rank": 92,
+      "region": "4_1",
+      "xy_m": [
+        2298.39,
+        724.42
+      ],
+      "yaw_deg": 8.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.72
+    },
+    {
+      "id": "P_092-2",
+      "junction": "P_092",
+      "rank": 92,
+      "region": "4_1",
+      "xy_m": [
+        2284.62,
+        734.68
+      ],
+      "yaw_deg": 98.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.72
+    },
+    {
+      "id": "P_092-3",
+      "junction": "P_092",
+      "rank": 92,
+      "region": "4_1",
+      "xy_m": [
+        2274.86,
+        719.96
+      ],
+      "yaw_deg": 188.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.72
+    },
+    {
+      "id": "P_092-4",
+      "junction": "P_092",
+      "rank": 92,
+      "region": "4_1",
+      "xy_m": [
+        2289.06,
+        711.11
+      ],
+      "yaw_deg": 279.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.72
+    },
+    {
+      "id": "P_093-1",
+      "junction": "P_093",
+      "rank": 93,
+      "region": "4_1",
+      "xy_m": [
+        1417.82,
+        350.37
+      ],
+      "yaw_deg": 8.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.16
+    },
+    {
+      "id": "P_093-2",
+      "junction": "P_093",
+      "rank": 93,
+      "region": "4_1",
+      "xy_m": [
+        1404.09,
+        361.7
+      ],
+      "yaw_deg": 89.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.16
+    },
+    {
+      "id": "P_093-3",
+      "junction": "P_093",
+      "rank": 93,
+      "region": "4_1",
+      "xy_m": [
+        1404.09,
+        361.7
+      ],
+      "yaw_deg": 163.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.16
+    },
+    {
+      "id": "P_093-4",
+      "junction": "P_093",
+      "rank": 93,
+      "region": "4_1",
+      "xy_m": [
+        1404.25,
+        337.94
+      ],
+      "yaw_deg": 268.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.16
+    },
+    {
+      "id": "P_094-1",
+      "junction": "P_094",
+      "rank": 94,
+      "region": "4_1",
+      "xy_m": [
+        1845.35,
+        650.4
+      ],
+      "yaw_deg": 9.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.59
+    },
+    {
+      "id": "P_094-2",
+      "junction": "P_094",
+      "rank": 94,
+      "region": "4_1",
+      "xy_m": [
+        1831.62,
+        660.35
+      ],
+      "yaw_deg": 99.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.59
+    },
+    {
+      "id": "P_094-3",
+      "junction": "P_094",
+      "rank": 94,
+      "region": "4_1",
+      "xy_m": [
+        1821.65,
+        646.59
+      ],
+      "yaw_deg": 188.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.59
+    },
+    {
+      "id": "P_094-4",
+      "junction": "P_094",
+      "rank": 94,
+      "region": "4_1",
+      "xy_m": [
+        1835.88,
+        636.74
+      ],
+      "yaw_deg": 278.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 369.59
+    },
+    {
+      "id": "P_095-1",
+      "junction": "P_095",
+      "rank": 95,
+      "region": "4_1",
+      "xy_m": [
+        1762.45,
+        -299.53
+      ],
+      "yaw_deg": 7.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.22
+    },
+    {
+      "id": "P_095-2",
+      "junction": "P_095",
+      "rank": 95,
+      "region": "4_1",
+      "xy_m": [
+        1749.39,
+        -289.9
+      ],
+      "yaw_deg": 99.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.22
+    },
+    {
+      "id": "P_095-3",
+      "junction": "P_095",
+      "rank": 95,
+      "region": "4_1",
+      "xy_m": [
+        1738.83,
+        -303.77
+      ],
+      "yaw_deg": 189.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.22
+    },
+    {
+      "id": "P_095-4",
+      "junction": "P_095",
+      "rank": 95,
+      "region": "4_1",
+      "xy_m": [
+        1753.48,
+        -313.49
+      ],
+      "yaw_deg": 279.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 365.22
+    },
+    {
+      "id": "P_096-1",
+      "junction": "P_096",
+      "rank": 96,
+      "region": "4_1",
+      "xy_m": [
+        2163.35,
+        115.4
+      ],
+      "yaw_deg": 9.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.92
+    },
+    {
+      "id": "P_096-2",
+      "junction": "P_096",
+      "rank": 96,
+      "region": "4_1",
+      "xy_m": [
+        2150.08,
+        125.42
+      ],
+      "yaw_deg": 98.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.92
+    },
+    {
+      "id": "P_096-3",
+      "junction": "P_096",
+      "rank": 96,
+      "region": "4_1",
+      "xy_m": [
+        2139.65,
+        111.6
+      ],
+      "yaw_deg": 189.2,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.92
+    },
+    {
+      "id": "P_096-4",
+      "junction": "P_096",
+      "rank": 96,
+      "region": "4_1",
+      "xy_m": [
+        2154.37,
+        101.85
+      ],
+      "yaw_deg": 280.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 367.92
+    },
+    {
+      "id": "P_097-1",
+      "junction": "P_097",
+      "rank": 97,
+      "region": "4_1",
+      "xy_m": [
+        2145.41,
+        230.27
+      ],
+      "yaw_deg": 8.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.28
+    },
+    {
+      "id": "P_097-2",
+      "junction": "P_097",
+      "rank": 97,
+      "region": "4_1",
+      "xy_m": [
+        2131.88,
+        240.72
+      ],
+      "yaw_deg": 99.7,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.28
+    },
+    {
+      "id": "P_097-3",
+      "junction": "P_097",
+      "rank": 97,
+      "region": "4_1",
+      "xy_m": [
+        2121.71,
+        226.6
+      ],
+      "yaw_deg": 189.6,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.28
+    },
+    {
+      "id": "P_097-4",
+      "junction": "P_097",
+      "rank": 97,
+      "region": "4_1",
+      "xy_m": [
+        2135.74,
+        217.04
+      ],
+      "yaw_deg": 278.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.28
+    },
+    {
+      "id": "P_098-1",
+      "junction": "P_098",
+      "rank": 98,
+      "region": "4_1",
+      "xy_m": [
+        1417.0,
+        581.78
+      ],
+      "yaw_deg": 7.9,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.1
+    },
+    {
+      "id": "P_098-2",
+      "junction": "P_098",
+      "rank": 98,
+      "region": "4_1",
+      "xy_m": [
+        1405.12,
+        592.5
+      ],
+      "yaw_deg": 89.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.1
+    },
+    {
+      "id": "P_098-3",
+      "junction": "P_098",
+      "rank": 98,
+      "region": "4_1",
+      "xy_m": [
+        1393.07,
+        580.47
+      ],
+      "yaw_deg": 180.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.1
+    },
+    {
+      "id": "P_098-4",
+      "junction": "P_098",
+      "rank": 98,
+      "region": "4_1",
+      "xy_m": [
+        1405.22,
+        568.5
+      ],
+      "yaw_deg": 268.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 370.1
+    },
+    {
+      "id": "P_099-1",
+      "junction": "P_099",
+      "rank": 99,
+      "region": "4_1",
+      "xy_m": [
+        1236.42,
+        -385.4
+      ],
+      "yaw_deg": 8.5,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.7
+    },
+    {
+      "id": "P_099-2",
+      "junction": "P_099",
+      "rank": 99,
+      "region": "4_1",
+      "xy_m": [
+        1223.36,
+        -375.9
+      ],
+      "yaw_deg": 99.4,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.7
+    },
+    {
+      "id": "P_099-3",
+      "junction": "P_099",
+      "rank": 99,
+      "region": "4_1",
+      "xy_m": [
+        1212.82,
+        -389.71
+      ],
+      "yaw_deg": 189.3,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.7
+    },
+    {
+      "id": "P_099-4",
+      "junction": "P_099",
+      "rank": 99,
+      "region": "4_1",
+      "xy_m": [
+        1227.81,
+        -399.4
+      ],
+      "yaw_deg": 278.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 362.7
+    },
+    {
+      "id": "P_100-1",
+      "junction": "P_100",
+      "rank": 100,
+      "region": "4_1",
+      "xy_m": [
+        1936.23,
+        79.33
+      ],
+      "yaw_deg": 8.1,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.25
+    },
+    {
+      "id": "P_100-2",
+      "junction": "P_100",
+      "rank": 100,
+      "region": "4_1",
+      "xy_m": [
+        1922.67,
+        88.69
+      ],
+      "yaw_deg": 98.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.25
+    },
+    {
+      "id": "P_100-3",
+      "junction": "P_100",
+      "rank": 100,
+      "region": "4_1",
+      "xy_m": [
+        1912.65,
+        74.91
+      ],
+      "yaw_deg": 188.8,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.25
+    },
+    {
+      "id": "P_100-4",
+      "junction": "P_100",
+      "rank": 100,
+      "region": "4_1",
+      "xy_m": [
+        1927.16,
+        65.13
+      ],
+      "yaw_deg": 279.0,
+      "near_m": 5.0,
+      "far_m": 40.0,
+      "half_fov_deg": 20.0,
+      "ground_z_m": 368.25
+    }
+  ],
+  "read_model": {
+    "note": "假设参数，不是真实设备标定值。读牌概率 = (1-ProbeMissRate) × 距离 × 偏轴 × 斜向 × 车速",
+    "full_read_distance_m": 20.0,
+    "far_distance_factor": 0.6,
+    "edge_off_axis_factor": 0.85,
+    "max_oblique_factor": 0.7,
+    "full_read_speed_kmh": 60.0,
+    "fast_speed_kmh": 120.0,
+    "fast_speed_factor": 0.75
+  },
+  "coordinate_metadata": {
+    "system": "UE_WORLD_METRES",
+    "unit": "m",
+    "bounds_m": [
+      -1000,
+      -3000,
+      3000,
+      1000
+    ],
+    "yaw_convention": "0 deg = +X; 90 deg = +Y"
+  },
+  "source": {
+    "package": "CityTrafficVideo_20261105",
+    "file": "CityCalibration/TrafficProbes_v1/probes_v2.json"
+  }
+}

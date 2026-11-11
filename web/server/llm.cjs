@@ -655,6 +655,7 @@ class LlmController {
     this.executionTimeoutMs = executionTimeoutMs;
     this.plan = null;
     this.planning = false;
+    this.switchingBackend = false;
     this.generation = 0;
     this.resetting = false;
     this.resetError = null;
@@ -721,11 +722,52 @@ class LlmController {
   }
 
   handle(request, response, url) {
+    if (url.pathname === '/api/llm/backend') return this.handleBackend(request, response);
     if (url.pathname === '/api/llm/plan') return this.handlePlan(request, response);
     if (url.pathname === '/api/llm/mission') return this.handleMission(request, response);
     if (url.pathname === '/api/llm/image') return this.handleImage(request, response, url);
     if (url.pathname === '/api/llm/reset') return this.handleReset(request, response);
     send(response, 404, {error: '接口不存在'});
+  }
+
+  async handleBackend(request, response) {
+    if (!['GET', 'POST'].includes(request.method)) {
+      response.setHeader('Allow', 'GET, POST'); send(response, 405, {error: '请求方法错误。'}); return;
+    }
+    if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}`) {
+      send(response, 403, {error: '请从本地地图页面切换模型。'}); return;
+    }
+    if (this.closed) { send(response, 503, {error: '执行服务已停止。'}); return; }
+    const changing = request.method === 'POST';
+    if (changing && request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+      send(response, 415, {error: '请使用 JSON 请求。'}); return;
+    }
+    let locked = false;
+    try {
+      let data = {};
+      if (changing) {
+        if (this.planning || this.switchingBackend || this.resetting || this.resetError)
+          throw requestError('请等待当前操作或复位完成后再切换模型。', 409);
+        this.executor.assertIdle();
+        this.switchingBackend = locked = true;
+        const chunks = []; let size = 0;
+        for await (const chunk of request) {
+          size += chunk.length;
+          if (size > 1024) throw requestError('配置内容过长。', 413);
+          chunks.push(chunk);
+        }
+        try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+        catch { throw requestError('请提交有效 JSON。', 400); }
+        if (!data || Object.keys(data).join(',') !== 'backend' || !['openai', 'ollama'].includes(data.backend))
+          throw requestError('backend 仅支持 openai 或 ollama。', 400);
+      }
+      const result = await this.runtime.request('model_backend', data, {channel: 'model-config', timeoutMs: 10000});
+      send(response, 200, result);
+    } catch (error) {
+      send(response, error.statusCode || (error.errorType === 'ValueError' ? 400 : 503), {error: error.message});
+    } finally {
+      if (locked) this.switchingBackend = false;
+    }
   }
 
   async handlePlan(request, response) {
@@ -740,7 +782,7 @@ class LlmController {
     }
     try {
       if (this.resetting || this.resetError) throw requestError('请先等待无人机复位完成；复位失败时点击新任务重试。', 409);
-      if (this.planning) throw requestError('已有任务正在规划，请等待完成。', 409);
+      if (this.planning || this.switchingBackend) throw requestError('正在规划或切换模型，请等待完成。', 409);
       this.executor.assertIdle();
     } catch (error) { send(response, error.statusCode || 409, {error: error.message}); return; }
     this.planning = true;
@@ -817,6 +859,7 @@ class LlmController {
     }
     request.resume();
     if (this.closed) { send(response, 503, {error: '执行服务已停止。'}); return; }
+    if (this.switchingBackend) { send(response, 409, {error: '正在切换模型，请稍候。'}); return; }
     void this.beginReset();
     send(response, 202, this.snapshot());
   }

@@ -7,6 +7,9 @@
   const followupForm = $('llm-followup-form'), followupInput = $('llm-followup-input');
   const followupSubmit = $('llm-followup-submit'), newTask = $('llm-new-task');
   const status = $('llm-status'), resultPanel = $('llm-result');
+  const modelSelect = $('llm-model-select'), modelInfo = $('llm-model-info');
+  const modelRetry = $('llm-model-retry');
+  let modelBackend = null, modelPending = false;
   const flightButtons = [...document.querySelectorAll('[data-flight-setting]')];
   const flightDialog = $('llm-flight-dialog'), flightValue = $('llm-flight-value');
   const flightFields = {
@@ -176,10 +179,14 @@
   // 根据规划与飞行状态锁定输入，防止刷新或重复点击再次派发。
   function controls() {
     for (const element of [submit, input, followupSubmit, followupInput, ...flightButtons])
-      element.disabled = pending || checking || flying || resetting || resetFailed;
+      element.disabled = pending || checking || flying || resetting || resetFailed || modelPending || !modelBackend;
+    const modelLocked = modelPending || pending || checking || flying || resetting || resetFailed;
+    modelSelect.disabled = modelLocked || !modelBackend;
+    modelSelect.setAttribute('aria-busy', String(modelPending));
+    modelRetry.disabled = modelLocked;
     if (flightDialog.open && flightButtons.some(button => button.disabled)) flightDialog.close();
     newTask.hidden = false;
-    newTask.disabled = resetting;
+    newTask.disabled = resetting || modelPending;
     newTask.textContent = resetting ? '正在复位…' : '新任务';
     followupForm.hidden = !needsClarification || flying || resetting || resetFailed;
   }
@@ -195,6 +202,44 @@
       return data;
     } finally { clearTimeout(timer); }
   }
+
+  function showBackend(data) {
+    modelBackend = data.backend;
+    modelInfo.textContent = data.model +
+      (data.vision_model !== data.model ? `；视觉：${data.vision_model}` : '');
+    modelInfo.dataset.error = 'false';
+  }
+
+  async function updateBackend(backend) {
+    modelPending = true; controls();
+    modelInfo.textContent = backend ? '正在切换模型…' : '正在读取模型…';
+    modelInfo.dataset.error = 'false';
+    modelRetry.hidden = true;
+    try {
+      showBackend(await missionRequest('/api/llm/backend', backend ? {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({backend})
+      } : {}));
+    } catch (error) {
+      // 切换可能已写入但响应丢失，重新读取实际选择后再允许提交任务。
+      if (backend) {
+        try { showBackend(await missionRequest('/api/llm/backend')); }
+        catch { modelBackend = null; }
+      }
+      const current = modelBackend ? `当前${modelBackend === 'ollama' ? '本地' : '云端'}模型；` : '';
+      modelInfo.textContent = current + (error.statusCode === 404 ? '请重启网页服务并刷新，以加载模型切换功能。' : error.message);
+      modelInfo.dataset.error = 'true';
+    } finally {
+      modelPending = false;
+      modelSelect.value = modelBackend || '';
+      modelRetry.hidden = modelInfo.dataset.error !== 'true';
+      controls();
+    }
+  }
+  modelSelect.onchange = () => {
+    if (modelSelect.disabled || modelSelect.value === modelBackend) return;
+    void updateBackend(modelSelect.value);
+  };
+  modelRetry.onclick = () => { if (!modelRetry.disabled) void updateBackend(); };
 
   // 展示真实巡查任务状态。
   function showMission(data) {
@@ -308,7 +353,7 @@
   }
 
   async function plan(source, button) {
-    if (pending || checking || flying || resetting || resetFailed) return;
+    if (pending || checking || flying || resetting || resetFailed || modelPending || !modelBackend) return;
     const current = generation;
     const instruction = source.value.trim();
     if (!instruction) { setStatus('error', '请先输入任务描述。'); source.focus(); return; }
@@ -453,5 +498,5 @@
       }
     } finally { controls(); }
   };
-  controls(); void pollMission();
+  controls(); void pollMission(); void updateBackend();
 })();

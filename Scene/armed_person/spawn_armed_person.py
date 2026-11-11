@@ -17,7 +17,7 @@ except ImportError:
 
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    __package__ = "Abnormal.armed_person"
+    __package__ = "Scene.armed_person"
 
 
 def spawn_armed_person(position) -> str:

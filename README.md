@@ -10,17 +10,18 @@
 ├─ requirements.txt
 ├─ Map/
 │  ├─ roads/                  车道、巡查道路与分层飞行路网
-│  ├─ objects/                建筑与任务点
+│  ├─ objects/                建筑、任务点与探头布设
 │  └─ zones/                  功能区与模型目录
 ├─ UAV/
 │  ├─ API/                    无人机飞行、巡查与复位接口
 │  ├─ runtime/                AirSim 通信、状态读取与飞行执行
 │  └─ utils/                  路径与速度规划
-├─ Abnormal/
-│  ├─ __init__.py             异常场景接口导出
+├─ Scene/
+│  ├─ __init__.py             仿真场景接口导出
 │  ├─ vehicle/                异常车辆生成与行为控制
 │  ├─ armed_person/           持刀人员生成
-│  └─ patient/                病人生成
+│  ├─ patient/                病人生成
+│  └─ probe/                  探头布设与过车记录读取
 ├─ llm/
 │  ├─ __init__.py             Python 包入口
 │  ├─ .env                    本地模型配置
@@ -81,6 +82,7 @@ zones/functional_zones.json    城市功能区与设施边界
 zones/zone_catalog.json        供模型读取的区域目录
 objects/buildings.json        建筑轮廓与高度
 objects/task_points.json      任务点与道路接入信息
+objects/traffic_probes.json   交通探头位置与感知范围
 ```
 
 `zones/zone_catalog.json` 是供模型读取的静态目录，由同目录下的脚本生成：
@@ -97,8 +99,8 @@ python Map/zones/generate_catalog.py
 
 具体细节参见[llm/README.md](llm/README.md)。
 
-## 5 异常场景`Abnormal`
+## 5 仿真场景`Scene`
 
-提供异常行为的生成和操控接口。
+提供异常行为的生成和操控，以及交通探头信息获取接口。
 
-具体情况见[Abnormal/README.md](Abnormal/README.md)。
+具体情况见[Scene/README.md](Scene/README.md)。

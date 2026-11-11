@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>城市无人机巡查平台</title>
   <link rel="stylesheet" href="./css/styles.css?v=20261102-flight-settings">
-  <script src="./js/map.js?v=20261028-roads" defer></script>
+  <script src="./js/map.js?v=20261110-probes" defer></script>
   <script src="./js/airsim.js" defer></script>
   <script src="./js/llm.js?v=20261102-flight-settings" defer></script>
   <script src="./js/abnormal.js" defer></script>
@@ -17,7 +17,7 @@
   </header>
   <main>
     <section class="map-panel" aria-label="交互标定地图">
-      <canvas id="map" aria-label="滚轮缩放，拖动平移，点击区域查看详情"></canvas>
+      <canvas id="map" aria-label="滚轮缩放，拖动平移，点击区域或探头查看详情"></canvas>
       <div class="map-tools">
         <button id="fit" type="button">全图</button>
         <button id="zoom-in" type="button" aria-label="放大">＋</button>
@@ -25,7 +25,7 @@
       </div>
       <div id="loading" role="status">正在读取标定数据…</div>
       <div id="coords">X — · Y — m</div>
-      <div class="map-key" aria-label="地图符号图例"><span class="native">道路拓扑</span><span class="drone">无人机</span></div>
+      <div class="map-key" aria-label="地图符号图例"><span class="native">道路拓扑</span><span class="probe">交通探头</span><span class="drone">无人机</span></div>
     </section>
     <aside>
       <div class="sidebar-tabs" role="tablist" aria-label="右侧工具切换">
@@ -35,9 +35,9 @@
       </div>
       <div id="map-tools-panel" class="sidebar-content" role="tabpanel" aria-labelledby="map-tools-tab">
       <section id="zones-panel">
-        <h2>查找区域与任务点</h2>
+        <h2>查找区域、任务点与探头</h2>
         <label class="sr-only" for="search">名称或编号</label>
-        <input id="search" type="search" placeholder="搜索医院、学校、基地或编号" disabled>
+        <input id="search" type="search" placeholder="搜索名称、探头编号或路口编号" disabled>
         <div id="results" class="results" aria-live="polite"></div>
         <label class="field" for="category">功能区类型</label>
         <select id="category" disabled><option value="">全部类型</option></select>
@@ -50,9 +50,10 @@
           <label><input id="layer-zones" type="checkbox" checked>功能区</label>
           <label title="叠加道路分段，不显示寻路连接线"><input id="layer-roads" type="checkbox" checked>道路拓扑</label>
           <label><input id="layer-buildings" type="checkbox" disabled>建筑轮廓</label>
-          <label><input id="layer-drones" type="checkbox" checked>实时无人机</label>
-          <label><input id="layer-trails" type="checkbox" checked>飞行轨迹</label>
+          <label><input id="layer-probes" type="checkbox" checked>交通探头</label>
+          <label><input id="layer-probe-coverage" type="checkbox">探头感知范围</label>
         </div>
+        <p id="probe-stats" class="muted"></p>
         <label class="field" for="point-mode">任务点</label>
         <select id="point-mode" disabled>
           <option value="verified">仅静态核验点（372）</option>
@@ -74,12 +75,22 @@
       </section>
       <section id="object-panel">
         <div class="section-heading"><h2>选中对象</h2><button id="export" disabled>导出 JSON</button></div>
-        <div id="object-detail" class="object-detail">点击地图中的地块或任务点，查看坐标与用途。</div>
+        <div id="object-detail" class="object-detail">点击地图中的地块、任务点或探头，查看详情。</div>
       </section>
       </div>
       <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab" hidden>
         <div class="section-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" title="终止当前任务、复位全部无人机并清除轨迹">新任务</button></div>
         <p class="muted llm-intro">输入任务后自动规划并开始 AirSim 搜索，沿路拍照并识别异常。</p>
+        <div class="llm-model-settings">
+          <label for="llm-model-select">模型服务</label>
+          <select id="llm-model-select" aria-describedby="llm-model-info" disabled>
+            <option value="" disabled selected>请选择</option>
+            <option value="openai">云端模型</option>
+            <option value="ollama">本地模型</option>
+          </select>
+          <p id="llm-model-info" class="muted" role="status" aria-live="polite">正在读取模型配置…</p>
+          <button id="llm-model-retry" type="button" hidden>重新读取</button>
+        </div>
         <div class="llm-flight-settings" role="group" aria-label="飞行参数设置">
           <button type="button" data-flight-setting="max_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>最大飞行高度</span><strong><span id="llm-max-height-value">60</span> <small>米</small></strong></button>
           <button type="button" data-flight-setting="flight_speed" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>飞行速度</span><strong><span id="llm-flight-speed-value">30</span> <small>米/秒</small></strong></button>
