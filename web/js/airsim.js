@@ -5,6 +5,23 @@
   const container = document.getElementById('drone-cameras');
   const selector = document.getElementById('camera-drone');
   const status = document.getElementById('airsim-status');
+  const panel = document.getElementById('uav-camera-panel');
+  const expand = document.getElementById('camera-expand');
+  const dialog = document.getElementById('camera-dialog');
+  const panelParent = panel.parentNode, panelNext = panel.nextSibling;
+  expand.onclick = () => {
+    if (dialog.open) { dialog.close(); return; }
+    // 移动原面板，保留实时画布、视频流和无人机选择状态。
+    dialog.append(panel);
+    expand.textContent = '还原'; expand.title = '还原实时画面（Esc）';
+    expand.setAttribute('aria-expanded', 'true');
+    dialog.showModal(); expand.focus();
+  };
+  dialog.addEventListener('close', () => {
+    panelParent.insertBefore(panel, panelNext);
+    expand.textContent = '放大'; expand.title = '放大实时画面';
+    expand.setAttribute('aria-expanded', 'false'); expand.focus();
+  });
   let selected = selector.value;
   let stateRequest = null, timer, generation = 0;
   let stream = null;

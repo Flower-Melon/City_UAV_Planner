@@ -3,11 +3,48 @@
 from contextlib import redirect_stdout
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+
+def get_backend():
+    """读取网页选择的模型后端，不向浏览器返回密钥。"""
+    from llm.utils.client import read_settings
+
+    settings = read_settings()
+    backend = settings.get("LLM_BACKEND", "openai").strip().lower()
+    if backend not in ("openai", "ollama"):
+        raise ValueError("LLM_BACKEND 仅支持 openai 或 ollama")
+    prefix = "OLLAMA" if backend == "ollama" else "OPENAI"
+    default_model = "qwen3.5:4b-q4_K_M" if backend == "ollama" else "gpt-4.1-mini"
+    model = settings.get(f"{prefix}_MODEL", default_model).strip()
+    if not model:
+        raise ValueError(f"{prefix}_MODEL 不能为空")
+    return {"backend": backend, "model": model,
+            "vision_model": settings.get(f"{prefix}_VISION_MODEL", "").strip() or model}
+
+
+def set_backend(backend):
+    """保存网页选择的模型后端。"""
+    from dotenv import set_key
+    from llm.utils.client import ENV_PATH, read_settings
+
+    if backend not in ("openai", "ollama"):
+        raise ValueError("backend 仅支持 openai 或 ollama")
+    if "LLM_BACKEND" in os.environ and os.environ["LLM_BACKEND"].strip().lower() != backend:
+        raise ValueError("启动环境中的 LLM_BACKEND 正在覆盖配置，请先移除该环境变量再切换。")
+    settings = read_settings()
+    if backend == "openai" and not settings.get("OPENAI_API_KEY", "").strip():
+        raise ValueError("请先在 llm/.env 填写 OPENAI_API_KEY，再切换云端模型。")
+    prefix = "OLLAMA" if backend == "ollama" else "OPENAI"
+    if f"{prefix}_MODEL" in settings and not settings[f"{prefix}_MODEL"].strip():
+        raise ValueError(f"{prefix}_MODEL 不能为空")
+    set_key(ENV_PATH, "LLM_BACKEND", backend)
+    return get_backend()
 
 
 def region_directory(value):
@@ -23,7 +60,7 @@ def region_directory(value):
 
 
 class PythonBridge:
-    """复用模型连接，提供规划、搜索监控、病人定位和药品投递。"""
+    """复用模型连接，提供规划、搜索监控和异常人物任务。"""
 
     def __init__(self):
         self.client = None
@@ -35,9 +72,10 @@ class PythonBridge:
         if not isinstance(request, dict):
             raise ValueError("请求必须是 JSON 对象")
         operation = request.get("operation")
+        if operation in ("deliver_medicine", "respond_armed_person"):
+            if not isinstance(request.get("person_id"), str) or not request["person_id"]:
+                raise ValueError("人物任务需要person_id")
         if operation == "model_backend":
-            from llm.utils.settings import get_backend, set_backend
-
             return set_backend(request["backend"]) if "backend" in request else get_backend()
         if operation == "traffic_start":
             from web.utils.traffic_pipeline import start_session
@@ -82,16 +120,51 @@ class PythonBridge:
             return AirSimFleet().read()
         if operation == "reset":
             from UAV.API.reset_uav import reset_uav
+            from UAV.API.deliver_medicine import _Delivery
+            from UAV.API.respond_armed_person import _Response
+            from UAV.runtime.airsim_client import AirSimClient
+
             reset_uav()
-            if request.get("reset_delivery"):
-                from UAV.API.deliver_medicine import _Delivery
-                from UAV.runtime.airsim_client import AirSimClient
-                with AirSimClient() as client:
-                    delivery = _Delivery(client)
-                    state = delivery.read()
-                    if state and state.get("state") != "idle":
-                        delivery.command("reset")
+            # 同时清理历史或手动演示留下的部件，不依赖当前网页的任务记录。
+            with AirSimClient() as client:
+                _Delivery(client).command("reset")
+                _Response(client).command("reset")
             return {"reset": True}
+        if operation == "respond_armed_person":
+            from UAV.API.respond_armed_person import respond_armed_person
+            from web.utils.people_state import get_person_state
+            if "drone_id" in request:
+                raise ValueError("网页处置不接受drone_id，必须自动选择空闲机")
+            flight = request.get("flight")
+            if not isinstance(flight, dict) or set(flight) != {"max_height", "flight_speed"}:
+                raise ValueError("投网处置需要max_height和flight_speed")
+            drone_id = None
+
+            class ResponseHandler(logging.Handler):
+                def emit(self, record):
+                    nonlocal drone_id
+                    selected = getattr(record, "selected_drone_id", None)
+                    if selected is not None:
+                        drone_id = selected
+                        if on_event is not None:
+                            on_event({"type": "drone_selected", "drone_id": drone_id})
+                    phase = getattr(record, "response_phase", None)
+                    if phase is not None and on_event is not None:
+                        on_event({"type": "response_phase", "phase": phase})
+
+            logger = logging.getLogger(respond_armed_person.__module__)
+            handler = ResponseHandler()
+            previous_level = logger.level
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            try:
+                respond_armed_person(None, request["person_id"], **flight)
+            finally:
+                logger.removeHandler(handler)
+                logger.setLevel(previous_level)
+                handler.close()
+            return {"resolved": True, "drone_id": drone_id, "person_id": request["person_id"],
+                    "target_position": get_person_state(request["person_id"])["position_m"]}
         if operation == "deliver_medicine":
             from UAV.API.deliver_medicine import deliver_medicine
             if "drone_id" in request:
@@ -100,7 +173,7 @@ class PythonBridge:
             if not isinstance(flight, dict) or set(flight) != {"max_height", "flight_speed"}:
                 raise ValueError("药品投递需要max_height和flight_speed")
             drone_id = None
-            target_position = request.get("target_position")
+            target_position = None
 
             class RescueHandler(logging.Handler):
                 def emit(self, record):
@@ -110,6 +183,9 @@ class PythonBridge:
                         drone_id = selected
                         if on_event is not None:
                             on_event({"type": "drone_selected", "drone_id": drone_id})
+                    patient_position = getattr(record, "patient_position_m", None)
+                    if patient_position is not None and on_event is not None:
+                        on_event({"type": "patient_position_selected", "target_position": list(patient_position)})
                     actual = getattr(record, "delivery_position_m", None)
                     if actual is not None:
                         target_position = list(actual)
@@ -122,13 +198,13 @@ class PythonBridge:
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
             try:
-                deliver_medicine(None, request.get("target_position"), **flight,
-                                 zone_id=request.get("zone_id"), delivery_radius_m=5.0)
+                deliver_medicine(None, request["person_id"], **flight)
             finally:
                 logger.removeHandler(handler)
                 logger.setLevel(previous_level)
                 handler.close()
-            return {"delivered": True, "drone_id": drone_id, "target_position": target_position}
+            return {"delivered": True, "drone_id": drone_id, "target_position": target_position,
+                    "person_id": request["person_id"]}
         if operation == "monitor":
             from UAV.API.monitor_area import monitor_area
 
@@ -199,6 +275,11 @@ class PythonBridge:
                 logger.setLevel(previous_level)
                 handler.close()
             return {"completed": True, "capture_directory": capture_directory, "drone_id": drone_id}
+        if operation == "demo_target":
+            from web.utils.people_state import get_demo_target
+
+            person = get_demo_target(request.get("kind"))
+            return {"person_id": person["person_id"], "target_position": person["position_m"]}
         if operation in ("vision", "locate_patient", "locate_target"):
             image_path = request.get("image_path")
             if not isinstance(image_path, str) or not image_path:

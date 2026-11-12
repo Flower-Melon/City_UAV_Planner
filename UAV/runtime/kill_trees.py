@@ -94,9 +94,17 @@ def _capture_component(unreal, world, vehicle):
     return captures[0]
 
 
+def _valid_capture(unreal, capture):
+    try:
+        return capture is not None and unreal.SystemLibrary.is_valid(capture)
+    except Exception:
+        # UE4.27 对上一轮 Play 已销毁的 Python 包装对象会直接抛出转换异常。
+        return False
+
+
 def _refresh(unreal, world, state):
     capture = state["capture"]
-    if not unreal.SystemLibrary.is_valid(capture):
+    if not _valid_capture(unreal, capture):
         raise RuntimeError("下视相机已失效，请重新启动任务")
     # 取图前或监控机到位后扫描，覆盖飞行途中流式加载的分块和新组件。
     # StaticMeshComponent 查询包含 ISM/HISM，不能隐藏其共用的分块 Actor。
@@ -118,7 +126,7 @@ def _dispatch(request):
     session, operation = request["session"], request["operation"]
     # Play 结束后对象失效，不把上一次仿真的所有权带入新场景。
     for key, state in list(_sessions.items()):
-        if not unreal.SystemLibrary.is_valid(state["capture"]):
+        if not _valid_capture(unreal, state["capture"]):
             del _sessions[key]
     if operation == "close":
         state = _sessions.get(session)

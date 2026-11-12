@@ -20,8 +20,9 @@ web/
 │  ├─ abnormal.cjs            异常场景接口
 │  └─ python.cjs              启动 Python 进程并收发请求
 ├─ utils/                     Python 桥接工具
-│  ├─ python_bridge.py        Python 功能调用入口
+│  ├─ python_bridge.py        Python 功能调用入口、网页模型后端的读取与保存
 │  ├─ vision_pipeline.py      巡查人员识别、异常标注与地面定位
+│  ├─ people_state.py         人物实时位置与演示目标查询
 │  ├─ traffic_pipeline.py     高空车辆取图、跟踪测速与超速证据
 │  ├─ airsim_bridge.py        从 AirSim 采集无人机状态和画面
 │  └─ unreal_bridge.py        UE 内的异常目标观测与跟随取景
@@ -71,4 +72,4 @@ output/000001/                  一个区域的高低空联合任务
    └─ 000123.annotated.jpg      超速标注图
 ```
 
-`task.json` 保存任务关联信息，不作为完成标记；低空巡查结束后，高空监控仍可继续更新。`search/` 和 `monitor/` 的产物随对应流程运行生成。
+`task.json` 保存任务关联信息，不作为完成标记；低空巡查结束后，高空监控仍可继续更新。`search/` 和 `monitor/` 的产物随对应流程运行生成。ck

@@ -106,12 +106,12 @@
         entry = {card, signature: null}; shownAnomalies.set(key, entry);
       }
       const card = entry.card;
-      // 按首次曝光时间排序；更早一帧较晚完成分析时，更新原卡片而不新增。
+      // 按任务顺序和照片编号排序；更新已登记目标的卡片。
       $('llm-anomalies').append(card);
       if (entry.signature === signature) continue;
       entry.signature = signature;
       const heading = document.createElement('p'); heading.className = 'llm-anomaly-heading';
-      heading.textContent = `${key} · ${record.drone_id} · 首次图像 ${record.image} · ${record.zone_id}`;
+      heading.textContent = `${target.person_id || key} · ${record.drone_id} · 首次图像 ${record.image} · ${record.zone_id}`;
       const button = document.createElement('button'); button.type = 'button';
       button.className = 'llm-anomaly-open'; button.setAttribute('aria-label', `放大异常照片 ${record.image}`);
       button.append(annotatedImage(record));
@@ -280,14 +280,30 @@
         (rescue.target_position ? `；落点 [${rescue.target_position.map(value => value.toFixed(1)).join(', ')}] 米` : '') +
         (rescue.error ? `：${rescue.error}` : '')).join('\n');
       const delivering = rescues.some(rescue => ['dispatching', 'delivering'].includes(rescue.status));
+      const responseLabels = {queued: '等待前一目标处置', dispatching: '正在派机', responding: '抵近并执行投网',
+        resolved: '投网处置完成，保持悬停', failed: '失败', uncertain: '执行状态未确认', stopped: '已停止'};
+      const responses = mission.responses || [];
+      const phaseLabels = {approaching: '抵近目标', threat: '持刀威胁', following: '跑开与无人机跟随',
+        confronting: '转身对抗', netting: '投网与倒地', resolved: '处置完成'};
+      if (responses.length) $('llm-queue').textContent += '\n持刀人员处置：\n' + responses.map(response =>
+        `${response.response_id} · ${response.zone_id} · ${response.image} → ${response.drone_id || '尚未分配'}（${response.status === 'responding' && phaseLabels[response.phase] || responseLabels[response.status] || response.status}）` +
+        (response.person_id ? `；人物 ${response.person_id}` : '') +
+        (response.error ? `：${response.error}` : '')).join('\n');
+      const responding = responses.some(response => ['queued', 'dispatching', 'responding'].includes(response.status));
       const messages = {running: mission.tasks.some(task => task.status === 'analyzing') ?
         '巡查机已返航，正在完成照片分析和监控机到位确认。' : '搜索执行中 · 巡查机沿路拍照，监控机飞往区域中心高空悬停。',
         completed: '搜索已完成 · 巡查机已返航降落，监控机保持高空悬停。',
-        failed: '任务执行失败。' + (mission.tasks.find(task => task.error)?.error || rescues.find(rescue => rescue.error)?.error || '')};
+        failed: '任务执行失败。' + (mission.tasks.find(task => task.error)?.error || rescues.find(rescue => rescue.error)?.error ||
+          responses.find(response => response.error)?.error || '')};
       if (mission.status === 'running' && delivering)
         messages.running = '任务执行中 · 已发现病人，救援无人机正在执行药品投递。';
       if (mission.status === 'completed' && rescues.length)
         messages.completed = '巡查及药品救援已完成 · 救援机和监控机保持悬停。';
+      if (mission.status === 'running' && responding)
+        messages.running = delivering ? '任务执行中 · 药品投递与持刀人员投网处置正在进行。' :
+          '任务执行中 · 已发现持刀人员，处置无人机正在抵近并投网。';
+      if (mission.status === 'completed' && responses.length)
+        messages.completed = '巡查及异常目标处置已完成 · 任务无人机保持悬停。';
       if (mission.traffic?.active && ['completed', 'failed'].includes(mission.status))
         messages[mission.status] += ' 高空车辆测速继续运行，点击「新任务」结束并复位。';
       setStatus(mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready', messages[mission.status] || '正在确认执行状态…');

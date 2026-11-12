@@ -1,4 +1,4 @@
-"""挂载药箱，按分层飞行图飞至指定地面投递点，完成绞盘投递后悬停。"""
+"""向指定病人投递药品，完成绞盘投递后悬停。"""
 
 import json
 import logging
@@ -14,14 +14,16 @@ if not __package__:
     __package__ = "UAV.API"
 
 from .fly_to_point import _world_position
+from web.utils.people_state import get_person_state
 from ..runtime.airsim_client import AirSimClient
 from ..runtime.airsim_state import WorldFrame, editor_log, vehicle_name
 from ..runtime.flight_control import FlightControl, hold_position, vehicle_lock
 from ..utils.plan_flight_path import NoPathError, _clear_path, _flight_graph, _positive, _xyz, plan_flight_path
-from ..utils.select_UAV import _reserve_UAV
+from ..utils.select_UAV import _reserve_nearest_UAV
 
 _DELIVERY_LOCK = threading.Lock()  # UE 插件只有一个 medkit_01。
 _HOVER_HEIGHT = 15.0
+_DELIVERY_RADIUS = 5.0
 _POSITION_TOLERANCE = 0.75
 logger = logging.getLogger(__name__)
 
@@ -149,31 +151,30 @@ def _delivery_site(frame, start, requested, cap, speed, radius):
     raise NoPathError(f"{scope}没有满足建筑净空、地面高差及最大高度{cap:g}米限制的可达投递点")
 
 
-def deliver_medicine(drone_id, target_position, max_height, flight_speed=25.0, *, zone_id=None,
-                     delivery_radius_m=0.0) -> None:
-    """向 UE 世界地面 XYZ（米）投递药箱；在离地15米处完成动画后悬停。
+def deliver_medicine(drone_id, person_id, max_height, flight_speed=25.0) -> None:
+    """向指定病人投递药箱；在离地15米处完成动画后悬停。
 
-    与 fly_to_point 使用相同的四个入参，但目标 Z 表示落点地面高度。
-    drone_id为None时，按zone_id自动选择并占用一架落地空闲机。
-    delivery_radius_m默认0，精确投递；大于0时允许在指定水平半径内
-    选择同一地面附近的开阔落点，实际地面高度与指定点相差不超过1米。
+    person_id指定病人，落点按其实时地面位置确定，必要时在周围5米内选择可达落点。
+    drone_id=None时自动选择离病人最近的落地空闲机。
     不推进病人事件、不切换镜头、不返航；失败时制动并抛出异常。
     """
-    target = _xyz(target_position, "地面投递点")
+    if not isinstance(person_id, str) or not re.fullmatch(r"patient_[0-9]+", person_id):
+        raise ValueError("病人ID应为patient_编号")
     cap = _positive(max_height, "最大离地高度")
     speed = _positive(flight_speed, "飞行速度")
     if cap < _HOVER_HEIGHT:
         raise ValueError("最大离地高度不得低于15米")
-    if (isinstance(delivery_radius_m, bool) or not isinstance(delivery_radius_m, (int, float))
-            or not math.isfinite(delivery_radius_m) or delivery_radius_m < 0):
-        raise ValueError("投递点搜索半径必须为非负有限数值")
-    requested = target
     if not _DELIVERY_LOCK.acquire(blocking=False):
         raise RuntimeError("已有药品投递任务，当前插件仅支持一个药箱")
     try:
         with AirSimClient() as client:
+            person = get_person_state(person_id, client=client)
+            if person["kind"] != "patient":
+                raise ValueError("药品投递目标必须是病人")
+            requested = _xyz(person["position_m"], "病人真实位置")
+            logger.info("病人实时位置已确定", extra={"patient_position_m": list(requested)})
             if drone_id is None:
-                name, lock = _reserve_UAV(zone_id)
+                name, lock = _reserve_nearest_UAV(requested)
             else:
                 name = vehicle_name(drone_id, client.call("listVehicles"))
                 lock = vehicle_lock(name)
@@ -191,7 +192,7 @@ def deliver_medicine(drone_id, target_position, max_height, flight_speed=25.0, *
                 pickup = (*world[:2], max(world[2], ground + 3.0))
                 if not _clear_path([world, pickup], 1.0, 1.0):
                     raise RuntimeError("挂箱升空路径与建筑净空冲突")
-                target, hover = _delivery_site(frame, pickup, requested, cap, speed, delivery_radius_m)
+                target, hover = _delivery_site(frame, pickup, requested, cap, speed, _DELIVERY_RADIUS)
                 logger.info("药品投递落点已确定", extra={
                     "delivery_position_m": list(target), "requested_position_m": list(requested),
                 })
@@ -215,6 +216,9 @@ def deliver_medicine(drone_id, target_position, max_height, flight_speed=25.0, *
                 # 最终竖直段保持规划坐标，用低速位置控制完成下降和投递对位。
                 flight.fly_route(route[:approach + 1])
                 _align(flight, hover, route[approach])
+                current = get_person_state(person_id, client=client)
+                if math.dist(current["position_m"], requested) > 1.0:
+                    raise RuntimeError("病人已离开投递点，停止投递")
                 delivery.command(f"drop {target[2]:.6f}")
                 delivery.wait("delivered", flight, hover, 90.0)
             except BaseException:
@@ -238,5 +242,12 @@ def deliver_medicine(drone_id, target_position, max_height, flight_speed=25.0, *
 
 
 if __name__ == "__main__":
-    # 修改地面投递点后，可直接运行本文件；需先在UE中进入Play。
-    deliver_medicine("UAV_01", (2270.4, 121.3, 368.0), max_height=60.0, flight_speed=8.0)
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--person_id", help="病人ID，例如patient_01",default="patient_01")
+    parser.add_argument("--drone", help="指定无人机；省略时自动选择离病人最近的空闲机")
+    parser.add_argument("--max-height", type=float, default=60.0)
+    parser.add_argument("--flight-speed", type=float, default=25.0)
+    args = parser.parse_args()
+    deliver_medicine(args.drone, args.person_id, args.max_height, args.flight_speed)

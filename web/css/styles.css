@@ -61,6 +61,14 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .camera-heading h2 { margin: 0; }
 .camera-controls { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 #camera-drone { width: auto; padding: 4px 8px; }
+.camera-controls button { padding: 4px 8px; }
+.camera-dialog { width: min(94vw, 1600px); height: 94dvh; max-height: 94dvh; padding: 0; border: 1px solid #adc3d0; border-radius: 10px; color: #18334a; overflow: hidden; }
+.camera-dialog::backdrop { background: #061521bb; }
+.camera-dialog .camera-panel { height: 100%; display: flex; flex-direction: column; border-top: 0; }
+.camera-dialog .camera-grid { flex: 1; min-height: 0; max-width: none; }
+.camera-dialog .drone-card { height: 100%; display: flex; flex-direction: column; }
+.camera-dialog .camera-view { flex: 1; min-height: 0; aspect-ratio: auto; }
+.camera-dialog .drone-heading, .camera-dialog .drone-position { flex-shrink: 0; }
 #airsim-status { width: 100%; font-size: 11px; color: #647b8a; }
 #airsim-status[data-online="true"] { color: #15815d; }
 .camera-grid { max-width: 480px; }
@@ -115,12 +123,15 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .llm-model-settings p { grid-column: 2; margin: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 #llm-model-retry { grid-column: 2; justify-self: start; padding: 2px 0; border: 0; background: transparent; color: #147ba4; font-size: 11px; }
 #llm-model-info[data-error="true"] { color: #b5402b; }
-.llm-flight-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.llm-flight-settings button { padding: 9px 6px; text-align: left; background: #f5f9fc; border-color: #c7d8e2; }
-.llm-flight-settings button > span { display: block; font-size: 11px; color: #617887; }
-.llm-flight-settings strong { display: block; margin-top: 3px; font-size: 19px; font-weight: 600; overflow-wrap: anywhere; }
-.llm-flight-settings small { font-size: 11px; font-weight: 400; color: #617887; }
-.llm-flight-hint { margin: 6px 0 14px; }
+.llm-flight-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid #dce5eb; border-radius: 10px; background: #f8fafc; }
+.llm-flight-settings button { position: relative; min-width: 0; padding: 11px 14px; border: 0; border-radius: 0; text-align: left; background: transparent; transition: background-color .15s; }
+.llm-flight-settings button + button::before { content: ''; position: absolute; left: 0; top: 13px; bottom: 13px; width: 1px; background: #dce5eb; }
+.llm-flight-settings button:hover:not(:disabled) { background: #edf4f8; }
+.llm-flight-settings button:focus-visible { outline-offset: -3px; }
+.llm-flight-settings button > span { display: block; font-size: 11px; line-height: 1.5; color: #647b8a; }
+.llm-flight-settings strong { display: flex; align-items: baseline; gap: 5px; margin-top: 4px; font-size: 22px; line-height: 1.25; font-weight: 600; font-variant-numeric: tabular-nums; }
+.llm-flight-settings small { font-size: 11px; font-weight: 400; white-space: nowrap; color: #748694; }
+.llm-flight-hint { margin: 8px 2px 14px; font-size: 11px; line-height: 1.5; color: #748694; }
 .llm-flight-dialog { width: min(90vw, 360px); padding: 20px; border: 1px solid #adc3d0; border-radius: 10px; color: #18334a; }
 .llm-flight-dialog::backdrop { background: #06152199; }
 .llm-flight-dialog input { width: 100%; padding: 9px 10px; border: 1px solid #c7d8e2; border-radius: 7px; color: #18334a; }

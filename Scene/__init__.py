@@ -2,7 +2,8 @@
 
 from importlib import import_module
 
-__all__ = ["spawn_vehicle", "set_vehicle_behavior", "spawn_armed_person", "spawn_patient", "ProbeMonitor"]
+__all__ = ["spawn_vehicle", "set_vehicle_behavior", "spawn_armed_person",
+           "spawn_patient", "ProbeMonitor"]
 
 
 def __getattr__(name):

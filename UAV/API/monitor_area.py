@@ -5,6 +5,7 @@ import math
 from numbers import Real
 from pathlib import Path
 import sys
+import time
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -12,25 +13,51 @@ if not __package__:
 
 from ..runtime.airsim_client import AirSimClient
 from ..runtime.airsim_state import WorldFrame, vector, vehicle_name
-from ..runtime.flight_control import FlightControl, vehicle_lock
+from ..runtime.flight_control import FlightControl, _action, vehicle_lock
 from ..runtime.kill_trees import CameraTreeFilter
 from ..utils.plan_search_path import search_scope
 from ..utils.select_UAV import _reserve_UAV
 
 DEFAULT_MONITOR_HEIGHT = 200.0
+CLIMB_SPEED = 15.0
 FLIGHT_SPEED = 25.0
 logger = logging.getLogger(__name__)
 
 
-def monitor_area(zone_id, drone_id=None, flight_height=DEFAULT_MONITOR_HEIGHT) -> None:
-    """原地升降到指定高度，再保持该高度直线飞到区域中心并悬停。
+def _climb(flight, height):
+    """连续上升到高度门槛后减速，允许过冲，不校验或回拉位置。"""
+    client, name, scale = flight.client, flight.name, flight.frame.scale
+    target_z = -height / scale
+    local = vector(client.call("simGetVehiclePose", name)["position"])
+    if local[2] <= target_z:
+        return local
+    deadline = time.monotonic() + max(30.0, (local[2] - target_z) * scale / CLIMB_SPEED * 4 + 15)
+    while local[2] > target_z:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"{name}快速爬升超时")
+        _action(client, "moveByVelocity", 0.0, 0.0, -CLIMB_SPEED / scale,
+                0.5, 0, {"is_rate": True, "yaw_or_rate": 0.0}, name, timeout=5)
+        local = vector(client.call("simGetVehiclePose", name)["position"])
+    # 零速度制动只消除惯性，不用高度闭环把过冲的无人机降回目标高度。
+    while True:
+        _action(client, "moveByVelocity", 0.0, 0.0, 0.0,
+                0.5, 0, {"is_rate": True, "yaw_or_rate": 0.0}, name, timeout=5)
+        velocity = vector(client.call("getMultirotorState", name)["kinematics_estimated"]["linear_velocity"])
+        if math.hypot(*velocity) * scale <= flight.stop_speed_tolerance:
+            return vector(client.call("simGetVehiclePose", name)["position"])
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"{name}快速爬升后制动超时")
 
-    flight_height是相对无人机起飞原点的高度，默认200米。
+
+def monitor_area(zone_id, drone_id=None, flight_height=DEFAULT_MONITOR_HEIGHT) -> None:
+    """快速爬升到监控高度门槛，再保持实际高度直线飞到区域中心并悬停。
+
+    flight_height是相对无人机起飞原点的最低监控高度，默认200米，允许爬升过冲。
     drone_id为None时从当前可用机队选取一架；指定ID时可将已有
     悬停监控机转往下一区域，但不能接管仍持有任务锁的无人机。
-    不规划路网；按原地升降、直线前进两段执行。接近目标提前减速，
-    到达附近或越过终点后制动，不折返追点。使用FlightControl的全局
-    到达容差和制动参数，完成后保留API控制权。下视RGB相机隐藏
+    爬升设定速度为15米/秒，不分段对位；高度已足够时直接转场。
+    不规划路网；水平飞行接近目标提前减速，到达附近或越过终点后制动，
+    不折返追点，使用FlightControl的全局到达容差，完成后保留API控制权。下视RGB相机隐藏
     树木，到位返回后仍保留此设置，供后续监控取图使用。
     """
     if (isinstance(flight_height, bool) or not isinstance(flight_height, Real)
@@ -59,20 +86,13 @@ def monitor_area(zone_id, drone_id=None, flight_height=DEFAULT_MONITOR_HEIGHT) -
             tree_filter.start(reclaim_stale=True)
             frame = WorldFrame(client)
             world, local, origin = frame.vehicle(name)
-            altitude = origin[2] + height
             flight = FlightControl(client, frame, name, origin)
             flight.prepare(world, local)
 
-            logger.info("%s：原地升至相对起飞点 %.1f 米", name, height)
-            # 先原地升降，稳定后以当前位置为起点生成唯一的直线航段。
-            # XY不变的升降段不需要接入任何路网或寻路函数。
-            start = vector(client.call("simGetVehiclePose", name)["position"])
-            start = (origin[0] + start[0] * frame.scale,
-                     origin[1] + start[1] * frame.scale,
-                     origin[2] - start[2] * frame.scale)
-            flight.fly_route([(*start, 2.0), (*start[:2], altitude, 2.0)])
-            flight.stop()
-            local = vector(client.call("simGetVehiclePose", name)["position"])
+            logger.info("%s：以 %.1f 米/秒快速爬升至相对起飞点至少 %.1f 米", name, CLIMB_SPEED, height)
+            local = _climb(flight, height)
+            altitude = origin[2] - local[2] * frame.scale
+            flight.z = local[2]
             start = (origin[0] + local[0] * frame.scale,
                      origin[1] + local[1] * frame.scale, altitude)
             target = (center.x, center.y, altitude)
@@ -91,7 +111,7 @@ def monitor_area(zone_id, drone_id=None, flight_height=DEFAULT_MONITOR_HEIGHT) -
             tree_filter.refresh()
             logger.info("监控无人机已到位悬停", extra={
                 "monitor_position_m": list(actual),
-                "monitor_height_m": height,
+                "monitor_height_m": actual[2] - origin[2],
             })
         except BaseException:
             if flight is not None:

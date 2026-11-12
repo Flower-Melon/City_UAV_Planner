@@ -1,6 +1,7 @@
 """按区域与 AirSim 实时状态选机；每个区域返回一架可用无人机的名称。"""
 
 from pathlib import Path
+import math
 import sys
 
 from shapely.geometry import Point
@@ -47,6 +48,20 @@ def _reserve_UAV(zone_id):
             if lock.acquire(blocking=False):
                 return name, lock
             # 其他飞行API可能刚取得该机任务锁，重新读取状态并选机。
+
+
+def _reserve_nearest_UAV(position):
+    """按目标实时位置选择并占用最近的落地空闲机。"""
+    with vehicle_lock("__select_UAV__"):
+        candidates = sorted(
+            (math.dist(drone["position_m"], position), drone["name"])
+            for drone in AirSimFleet().read() if drone["available"]
+        )
+        for _, name in candidates:
+            lock = vehicle_lock(name)
+            if lock.acquire(blocking=False):
+                return name, lock
+    raise RuntimeError("当前没有可用无人机（需落地、静止且未被任务占用）")
 
 
 if __name__ == "__main__":

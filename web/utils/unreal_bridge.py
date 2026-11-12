@@ -205,7 +205,8 @@ def execute(data):
             row.update(behavior=item.motion.behavior, active_behavior=item.motion.active_behavior,
                        speed_m_s=item.motion.speed)
         else:
-            row["action"] = item.action
+            row["action"] = (item.animation.get_editor_property("action_index")
+                             if getattr(item, "external", False) else item.action)
         records.append(row)
     return {"connected": True, "targets": records, "session": _session, "camera_error": _camera_error}
 

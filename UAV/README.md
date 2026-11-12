@@ -131,49 +131,49 @@ output/temp/
 | `image` | 与 `frame.json` 同目录的图片文件名，如 `"000001.jpg"` |
 | `position_m` | UE 世界坐标 `[X, Y, Z]`，单位米 |
 | `edge_id` | 拍摄位置所在道路，对应 `Map/roads/uav_road_network.json` 的边 ID |
+| `camera_orientation_ned` | 拍照时的相机姿态四元数 |
+| `camera_fov_deg` | 相机水平视场角，单位度 |
 
 ### 1.4 deliver_medicine
 
-在当前位置上方挂载药箱，调用 `utils.plan_flight_path` 按分层飞行路网规划最短代价路线，飞至地面投递点上方15米。低速对位并悬停后，下放药箱、着地脱钩并收绳，全部完成后返回，无人机留在落点上空悬停。
+向指定病人投递药品。按病人ID读取实时地面位置，必要时在周围5米内选择可达落点；无人机在落点上方15米悬停，下放药箱、脱钩并收绳，完成后保持悬停。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
-| `drone_id` | `int` 或 `str` | 无人机编号，`1` 或 `"UAV_01"` |
-| `target_position` | `(x, y, z)` 或 `[x, y, z]` | 药箱落点的UE世界坐标，单位米；**Z为地面世界高度**，脚本自动加15米作为无人机悬停高度；落点应选择开阔地面 |
-| `max_height` | `float` | 导航最大离地高度，单位米，至少15米；相对沿途当地地面 |
-| `flight_speed` | `float` | 巡航速度上限，单位米/秒，大于 `0`，默认 `25.0`；拐弯及接近终点时自动降速 |
+| `drone_id` | `int`、`str` 或 `None` | 无人机编号或名称；`None` 时自动选择离病人最近的落地空闲机 |
+| `person_id` | `str` | 病人ID，例如 `"patient_01"` |
+| `max_height` | `float` | 最大离地高度，至少15米 |
+| `flight_speed` | `float` | 巡航速度上限，米/秒，默认25.0 |
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
-| 返回值 | `None` | 同步完成投递及收绳后返回，保留API控制权，不自动返航或降落 |
+| 返回值 | `None` | 同步完成投递及收绳后返回，无人机保持悬停，不自动返航或降落 |
 
 入参样例与调用：
 
 ```python
 from UAV.API import deliver_medicine
 
-drone_id = "UAV_01"
-target_position = (2270.4, 121.3, 368.0)
-max_height = 60.0
-flight_speed = 8.0
-result = deliver_medicine(drone_id, target_position, max_height, flight_speed)
+deliver_medicine("UAV_01", "patient_01", max_height=60.0, flight_speed=8.0)
+# 自动选机：
+deliver_medicine(None, "patient_02", max_height=60.0, flight_speed=8.0)
 ```
 
 出参样例：
 
 ```python
-None  # result；药箱已着地并收绳，无人机在落点上空悬停
+None  # 药箱已着地并收绳，无人机在落点上空悬停。
 ```
 
 ### 1.5 monitor_area
 
-飞往目标区域几何中心的正上方并悬停。
+以设定速度15米/秒连续爬升到监控高度，允许过冲，不逐段对位；随后保持实际到达的高度飞往区域几何中心上空悬停。当前高度已足够时直接转场。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
 | `zone_id` | `str` | `Map/zones/functional_zones.json` 中真实的区域ID，如 `"F-SCHOOL-1"` |
 | `drone_id` | `int`、`str` 或 `None` | 无人机编号或名称，默认 `None`，从当前可用无人机中自动选取一架；指定ID时可将已悬停的监控机转往下一区域 |
-| `flight_height` | `float` | 相对无人机起飞原点的高度，单位米，大于0，默认 `200.0`，默认值在 `monitor_area.py` 中设置 |
+| `flight_height` | `float` | 相对无人机起飞原点的最低监控高度，单位米，大于0，默认 `200.0`，允许爬升过冲，默认值在 `monitor_area.py` 中设置 |
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
@@ -192,6 +192,37 @@ monitor_area("F-SCHOOL-2", drone_id="UAV_02", flight_height=200.0)
 
 ```python
 None  # 无人机已到区域中心上空悬停
+```
+
+### 1.6 respond_armed_person
+
+执行持刀人员投网处置演示：无人机抵近 → 人物持刀威胁 → 跑开与无人机跟随 → 转身对抗 → 投网、扔刀倒地。人物动作随演示自动触发，完成后无人机保持悬停；失败时抛出异常。
+
+| 入参 | 类型 | 含义 |
+|---|---|---|
+| `drone_id` | `int`、`str` 或 `None` | 无人机编号或名称；`None` 时自动选择离目标最近的落地空闲机 |
+| `person_id` | `str` | 持刀人员ID，例如 `"armed_person_01"` |
+| `max_height` | `float` | 最大离地高度，至少15米 |
+| `flight_speed` | `float` | 巡航速度上限，米/秒，默认25.0 |
+
+| 出参 | 类型 | 含义 |
+|---|---|---|
+| 返回值 | `None` | 同步完成演示后返回，无人机保持悬停，不自动返航或降落 |
+
+入参样例与调用：
+
+```python
+from UAV.API import respond_armed_person
+
+respond_armed_person("UAV_03", "armed_person_01", max_height=60.0, flight_speed=8.0)
+# 自动选机：
+respond_armed_person(None, "armed_person_02", max_height=60.0, flight_speed=8.0)
+```
+
+出参样例：
+
+```python
+None  # 投网处置演示已完成，无人机保持悬停。
 ```
 
 ## 2 utils

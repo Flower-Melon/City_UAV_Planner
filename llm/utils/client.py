@@ -1,10 +1,19 @@
 """规划与视觉共用的云端/Ollama 客户端、响应适配和错误提示。"""
 
 import json
+import os
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
-from .settings import read_settings
+from dotenv import dotenv_values
+
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+
+
+def read_settings():
+    """读取模型配置，已有环境变量优先。"""
+    return {**dotenv_values(ENV_PATH), **os.environ}
 
 
 # 读取 llm/.env 与环境变量，创建基础 OpenAI SDK 客户端。

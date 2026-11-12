@@ -124,8 +124,6 @@ class SearchCapture:
                     "position_m": position, "edge_id": sample["edge_id"],
                     "camera_orientation_ned": response["camera_orientation"],
                     "camera_fov_deg": self.camera_fov,
-                    # 纳秒时间戳保存为字符串，避免网页JSON解析损失整数精度。
-                    "capture_time_ns": str(response.get("time_stamp") or ""),
                 }
                 frames = [*self.records.get("frame.json", []), frame]
                 self.write_records(self.capture_directory / "frame.json", frames)

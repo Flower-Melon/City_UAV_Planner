@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>城市无人机巡查平台</title>
-  <link rel="stylesheet" href="./css/styles.css?v=20261102-flight-settings">
+  <link rel="stylesheet" href="./css/styles.css?v=20261111-camera-zoom-2">
   <script src="./js/map.js?v=20261110-probes" defer></script>
-  <script src="./js/airsim.js" defer></script>
+  <script src="./js/airsim.js?v=20261111-camera-zoom" defer></script>
   <script src="./js/llm.js?v=20261102-flight-settings" defer></script>
-  <script src="./js/abnormal.js" defer></script>
+  <script src="./js/abnormal.js?v=20261111-camera-zoom" defer></script>
 </head>
 <body>
   <header>
@@ -92,11 +92,11 @@
           <button id="llm-model-retry" type="button" hidden>重新读取</button>
         </div>
         <div class="llm-flight-settings" role="group" aria-label="飞行参数设置">
-          <button type="button" data-flight-setting="max_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>最大飞行高度</span><strong><span id="llm-max-height-value">60</span> <small>米</small></strong></button>
-          <button type="button" data-flight-setting="flight_speed" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>飞行速度</span><strong><span id="llm-flight-speed-value">30</span> <small>米/秒</small></strong></button>
-          <button type="button" data-flight-setting="flight_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>巡查高度</span><strong><span id="llm-flight-height-value">15</span> <small>米</small></strong></button>
+          <button type="button" data-flight-setting="max_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>高度上限</span><strong><span id="llm-max-height-value">60</span><small>米</small></strong></button>
+          <button type="button" data-flight-setting="flight_speed" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>飞行速度</span><strong><span id="llm-flight-speed-value">30</span><small>米/秒</small></strong></button>
+          <button type="button" data-flight-setting="flight_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>巡查高度</span><strong><span id="llm-flight-height-value">15</span><small>米</small></strong></button>
         </div>
-        <p class="muted llm-flight-hint">点击数值设置，应用于本批全部任务；执行期间不可修改。</p>
+        <p class="muted llm-flight-hint">点击修改 · 本批任务通用 · 执行中锁定</p>
         <form id="llm-form">
           <label class="field" for="llm-instruction">任务描述</label>
           <textarea id="llm-instruction" rows="4" maxlength="4000" required placeholder="例如：搜索地图东边的学校（自动选择无人机）"></textarea>
@@ -158,7 +158,7 @@
         </section>
       </div>
       <section id="abnormal-camera-panel" class="camera-panel" aria-label="异常目标实时监控" hidden>
-        <div class="camera-heading"><h2>异常目标视角</h2><span class="muted">独立跟随镜头</span></div>
+        <div class="camera-heading"><h2>异常目标视角</h2><div class="camera-controls"><span class="muted">独立跟随镜头</span><button id="abnormal-camera-expand" type="button" aria-haspopup="dialog" aria-controls="abnormal-camera-dialog" aria-expanded="false" title="放大实时画面">放大</button></div></div>
         <div class="camera-view"><img id="abnormal-image" alt="所选异常目标的仿真实时画面" hidden><div id="abnormal-camera-message" class="camera-placeholder" role="status">选择一个已生成目标以查看画面</div></div>
       </section>
       <section id="uav-camera-panel" class="camera-panel" aria-label="无人机实时监控">
@@ -166,13 +166,15 @@
           <h2>无人机视角</h2>
           <div class="camera-controls"><label class="sr-only" for="camera-drone">选择无人机</label><select id="camera-drone">
             <option>UAV_01</option><option>UAV_02</option><option>UAV_03</option><option>UAV_04</option><option>UAV_05</option>
-          </select></div>
+          </select><button id="camera-expand" type="button" aria-haspopup="dialog" aria-controls="camera-dialog" aria-expanded="false" title="放大实时画面">放大</button></div>
           <span id="airsim-status" role="status">正在连接 AirSim…</span>
         </div>
         <div id="drone-cameras" class="camera-grid"></div>
       </section>
     </aside>
   </main>
+  <dialog id="camera-dialog" class="camera-dialog" aria-label="放大的无人机实时监控"></dialog>
+  <dialog id="abnormal-camera-dialog" class="camera-dialog" aria-label="放大的异常目标实时监控"></dialog>
   <dialog id="llm-flight-dialog" class="llm-flight-dialog" aria-labelledby="llm-flight-title" aria-describedby="llm-flight-help">
     <form id="llm-flight-form">
       <h2 id="llm-flight-title">设置飞行参数</h2>

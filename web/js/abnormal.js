@@ -2,6 +2,23 @@
 
 (() => {
   const $ = id => document.getElementById(id);
+  const panel = $('abnormal-camera-panel');
+  const expand = $('abnormal-camera-expand');
+  const dialog = $('abnormal-camera-dialog');
+  const panelParent = panel.parentNode, panelNext = panel.nextSibling;
+  expand.onclick = () => {
+    if (dialog.open) { dialog.close(); return; }
+    // 移动原面板，保持跟随镜头持续刷新。
+    dialog.append(panel);
+    expand.textContent = '还原'; expand.title = '还原实时画面（Esc）';
+    expand.setAttribute('aria-expanded', 'true');
+    dialog.showModal(); expand.focus();
+  };
+  dialog.addEventListener('close', () => {
+    panelParent.insertBefore(panel, panelNext);
+    expand.textContent = '放大'; expand.title = '放大实时画面';
+    expand.setAttribute('aria-expanded', 'false'); expand.focus();
+  });
   const names = {vehicle: '异常车辆', armed_person: '持刀人员', patient: '病人'};
   const modes = {mixed: '混合', cruise: '正常巡航', surge: '突然加速', weave: '蛇形行驶', countersteer: '反打方向', brake: '急刹减速', wrong_way: '逆向行驶', stop: '停止'};
   const actions = ['原地停留', '步行', '奔跑', '持刀威胁', '痛苦', '倒地中', '躺卧'];

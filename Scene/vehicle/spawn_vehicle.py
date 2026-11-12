@@ -110,7 +110,18 @@ def request(client, operation, _controller=None, _module_name="city_abnormal_run
             "    r._source_stamp=stamp",
             "r.dispatch(" + repr(str(source)) + "," + repr(str(result)) + ")",
         ])
-        code = "exec(" + repr(bootstrap) + ")"
+        # 加载阶段也要回传错误，否则脚本版本冲突等异常会被误报为等待超时。
+        bootstrap = "try:\n" + "\n".join("    " + line for line in bootstrap.splitlines()) + "\n" + "\n".join([
+            "except Exception as error:",
+            "    import json,traceback,unreal",
+            "    from pathlib import Path",
+            "    target=Path(" + repr(str(result)) + ")",
+            "    temporary=target.with_suffix('.tmp')",
+            "    temporary.write_text(json.dumps({'ok':False,'error':str(error)},ensure_ascii=True),encoding='utf-8')",
+            "    os.replace(str(temporary),str(target))",
+            "    unreal.log_warning(traceback.format_exc())",
+        ])
+        code = "exec(" + ascii(bootstrap) + ")"
         try:
             accepted = client.call("simRunConsoleCommand", "py " + code, timeout=45)
         except OSError as error:

@@ -148,6 +148,7 @@ def _spawn_person(position, kind):
 
 # 下方代码由 UE 直接加载；普通 Python 调用时不会创建任何场景对象。
 _people = {}
+_demo_targets = {}
 _pending = {}
 _reserved_names = set()
 _tick_handle = None
@@ -290,6 +291,7 @@ class Person:
         self.collapse_length = collapse_length
         self.weapon = None
         self.error = None
+        self.external = False
         actor.set_actor_tick_enabled(True)
         capsule = actor.get_editor_property("capsule_component")
         capsule.set_capsule_size(30, 88, True)
@@ -318,7 +320,7 @@ class Person:
         self.animation.set_editor_property("ground_speed", speed * 100.0)
 
     def step(self, dt):
-        if self.error:
+        if self.error or self.external:
             return
         self.age += dt
         if self.kind == "patient":
@@ -481,6 +483,8 @@ def _prepare(data):
 def _release(name):
     person = _pending.pop(name, None) or _people.pop(name, None)
     if person is not None:
+        if _demo_targets.get(person.kind) == name:
+            _demo_targets.pop(person.kind)
         if person.weapon is not None and _valid(person.weapon):
             person.weapon.destroy_actor()
         if _valid(person.actor):
@@ -492,6 +496,7 @@ def _tick(delta):
     context = _context()
     if context is None or not _valid(context.world):
         _people.clear()
+        _demo_targets.clear()
         _pending.clear()
     for name, person in list(_people.items()):
         if not _valid(person.actor):
@@ -519,7 +524,7 @@ def _tick(delta):
                 unreal.log_error("CITY_SCRIPT_PERSON {} stopped: {}".format(name, traceback.format_exc()))
         _accumulator -= 1.0 / 60
     for name, person in list(_people.items()):
-        if person.error is None:
+        if person.error is None and not person.external:
             try:
                 person.update_weapon()
             except Exception as error:
@@ -539,6 +544,7 @@ def _execute(data):
             unreal.unregister_slate_post_tick_callback(_tick_handle)
             _tick_handle = None
         _people.clear()
+        _demo_targets.clear()
         _pending.clear()
         _surface_cache.clear()
         _world_key, _game_world = key, context.world
@@ -564,6 +570,7 @@ def _execute(data):
         component.set_mobility(unreal.ComponentMobility.MOVABLE)
         person.update_weapon()
     _people[name] = person
+    _demo_targets[person.kind] = name
     _pending.pop(name)
     if _tick_handle is None:
         _last_time = unreal.GameplayStatics.get_time_seconds(context.world)
