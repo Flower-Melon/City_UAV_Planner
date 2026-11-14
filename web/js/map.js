@@ -115,6 +115,7 @@ let zoneParts = [], pointRecords = [], colors = new Map(), categoryNames = new M
 let ready = false, buildingRequest;
 let liveDrones = [];
 let abnormalTargets = [], abnormalSelected = null, pickHandler = null, pendingPoint = null;
+let trafficTargets = [];
 const abnormalColors = {vehicle: '#df542f', armed_person: '#914ac5', patient: '#138b80'};
 const worldSize = 4000;
 const visuals = new CityMapVisuals();
@@ -165,7 +166,8 @@ async function prepareGeometry() {
     const polygons = feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates] : feature.geometry.coordinates;
     const parts = [];
     for (const rings of polygons) {
-      const record = {feature, bounds: boundsOf(rings[0]), path: polygonPath(rings)};
+      const record = {feature, bounds: boundsOf(rings[0]), path: polygonPath(rings),
+        exterior: rings[0], spawnPath: polygonPath([rings[0]])};
       parts.push(record); zoneIndex.insert(record); zoneParts.push(record);
     }
     groups.set(feature.id, parts);
@@ -305,14 +307,16 @@ function drawProbes() {
 }
 function drawAbnormal() {
   const {scale} = state;
+  drawTraffic();
   for (const target of abnormalTargets) {
+    const color = abnormalColors[target.kind];
     const [x, y] = target.position_m;
     ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale);
     if (target.id === abnormalSelected) {
       ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2);
       ctx.fillStyle = '#ffffffbb'; ctx.fill(); ctx.strokeStyle = '#18334a'; ctx.lineWidth = 2; ctx.stroke();
     }
-    ctx.fillStyle = abnormalColors[target.kind] || '#df542f'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.fillStyle = color; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     ctx.beginPath();
     if (target.kind === 'vehicle') {
       ctx.rotate(target.yaw_rad || 0); ctx.rect(-8, -5, 16, 10); ctx.fill(); ctx.stroke();
@@ -325,13 +329,37 @@ function drawAbnormal() {
     ctx.font = `600 ${12 / scale}px system-ui`; ctx.textAlign = 'left'; ctx.lineJoin = 'round';
     const label = `${{vehicle: '异常车', armed_person: '持刀人员', patient: '病人'}[target.kind]} ${target.id.split('_').pop()}`;
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 / scale; ctx.strokeText(label, x + 16 / scale, y - 8 / scale);
-    ctx.fillStyle = abnormalColors[target.kind]; ctx.fillText(label, x + 16 / scale, y - 8 / scale);
+    ctx.fillStyle = color; ctx.fillText(label, x + 16 / scale, y - 8 / scale);
   }
   if (pendingPoint) {
     const [x, y] = pendingPoint, r = 12 / scale;
     ctx.strokeStyle = '#df542f'; ctx.lineWidth = 2 / scale; ctx.setLineDash([4 / scale, 3 / scale]);
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke();
+  }
+}
+
+function recentTrafficEvents(target) {
+  return (target.recent_events || (target.events.length ? target.events : target.confirmed_evidence)).slice(-2);
+}
+
+function drawTraffic() {
+  const {scale} = state;
+  for (const target of trafficTargets) {
+    // 仅保留最近两次记录点，不连接观测点，也不代替实时车辆。
+    for (const event of recentTrafficEvents(target)) {
+      const [x, y] = event.position_m;
+      const probe = event.source === 'probe', color = probe ? '#ad803c' : '#bc4b43';
+      ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale);
+      ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffffd9'; ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+      const label = probe ? '路口监测点' : '超速记录点';
+      ctx.font = '600 11px "Microsoft YaHei", sans-serif'; ctx.textAlign = 'left'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.strokeText(label, 13, 17);
+      ctx.fillStyle = color; ctx.fillText(label, 13, 17);
+      ctx.restore();
+    }
   }
 }
 function zoom(factor, x = state.width / 2, y = state.height / 2) {
@@ -343,6 +371,30 @@ function worldAt(event) {
   const box = canvas.getBoundingClientRect();
   return [(event.clientX - box.left - state.ox) / state.scale, (event.clientY - box.top - state.oy) / state.scale];
 }
+// 与生成端保持一致：内部选所在街区，道路选最近街区，等距时按ID排序。
+function spawnZoneAt([x, y]) {
+  let best = null, nearest = Infinity;
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  for (const part of zoneParts) {
+    if (part.feature.properties.category === 'transport') continue;
+    let distance = 0;
+    if (!ctx.isPointInPath(part.spawnPath, x, y)) {
+      distance = Infinity;
+      for (let i = 1; i < part.exterior.length; i++) {
+        const [ax, ay] = part.exterior[i - 1], [bx, by] = part.exterior[i];
+        const dx = bx - ax, dy = by - ay, length = dx * dx + dy * dy;
+        const t = length ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / length)) : 0;
+        distance = Math.min(distance, (x - ax - t * dx) ** 2 + (y - ay - t * dy) ** 2);
+      }
+    }
+    if (distance < nearest || distance === nearest && (!best || part.feature.id < best.id)) {
+      nearest = distance; best = part.feature;
+    }
+  }
+  ctx.restore();
+  return best;
+}
+
 function hitAt(x, y) {
   const radius = 8 / state.scale;
   if ($('layer-probes').checked) {
@@ -366,6 +418,7 @@ function hitAt(x, y) {
 const statusNames = {static_verified: '静态核验通过', reference_only: '仅定位参考'};
 function showFeature(feature, center = false) {
   state.selected = feature; const target = $('object-detail'); target.replaceChildren();
+  window.dispatchEvent(new CustomEvent('map:selection', {detail: {feature}}));
   $('export').disabled = !feature;
   if (!feature) { target.textContent = '此处没有可选功能区、可见任务点或探头。'; schedule(); return; }
   const title = document.createElement('strong'); title.textContent = feature.properties.name; target.append(title);
@@ -469,7 +522,7 @@ canvas.onpointerup = event => {
     const target = abnormalTargets.map(target => ({target, distance: Math.hypot(target.position_m[0] - point[0], target.position_m[1] - point[1])}))
       .filter(hit => hit.distance * state.scale < 15).sort((a, b) => a.distance - b.distance)[0]?.target;
     if (target) window.dispatchEvent(new CustomEvent('abnormal:select', {detail: {id: target.id}}));
-    else showFeature(hitAt(...point));
+    else showFeature(!$('abnormal-panel').hidden ? spawnZoneAt(point) : hitAt(...point));
   }
 };
 canvas.onpointercancel = () => { state.drag = null; };
@@ -509,11 +562,37 @@ async function initialize() {
 background = new Image(); background.src = './assets/town12.png'; background.onload = schedule;
 background.onerror = () => { $('loading').textContent = '无法读取 assets/town12.png，请保留完整的 web 文件夹。'; };
 window.liveMap = {
+  setTraffic(records) { trafficTargets = records; schedule(); },
+  centerTraffic(id) {
+    const target = trafficTargets.find(t => t.target_id === id);
+    if (!target || !ready) return;
+    const vehicle = abnormalTargets.find(t => t.kind === 'vehicle' && t.id === id);
+    const events = recentTrafficEvents(target);
+    const points = [vehicle?.position_m, ...events.map(event => event.position_m)].filter(Boolean);
+    if (!points.length) return;
+    const bounds = CityMapVisuals.bounds(points);
+    state.scale = Math.min(5, state.width / (bounds[2] - bounds[0] + 160), state.height / (bounds[3] - bounds[1] + 160));
+    state.ox = state.width / 2 - (bounds[0] + bounds[2]) / 2 * state.scale;
+    state.oy = state.height / 2 - (bounds[1] + bounds[3]) / 2 * state.scale;
+    schedule();
+  },
   setAbnormal(records, selectedId) {
     abnormalTargets = records.filter(target => Array.isArray(target.position_m) && target.position_m.length === 3 && target.position_m.every(Number.isFinite));
     abnormalSelected = selectedId; schedule();
   },
   setPickHandler(handler) { pickHandler = handler; canvas.classList.toggle('picking', !!handler); },
+  spawnZoneAt,
+  getZone: id => zones?.features.find(zone => zone.id === id),
+  selectedZone() {
+    const feature = state.selected;
+    if (!feature) return null;
+    return feature.geometry.type === 'Point' ? spawnZoneAt(feature.geometry.coordinates)
+      : feature.properties.category !== 'transport' ? feature : null;
+  },
+  selectZone(id) {
+    const feature = zones?.features.find(zone => zone.id === id);
+    if (feature) showFeature(feature);
+  },
   setPendingPoint(point) { pendingPoint = point; schedule(); },
   centerTarget(id) {
     const target = abnormalTargets.find(target => target.id === id);

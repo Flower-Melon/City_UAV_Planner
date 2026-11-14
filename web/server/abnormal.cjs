@@ -10,7 +10,7 @@ function sendJSON(response, status, data) {
 }
 
 const abnormalKinds = new Set(['vehicle', 'armed_person', 'patient']);
-const abnormalBehaviors = new Set(['cruise', 'surge', 'weave', 'brake', 'wrong_way', 'mixed', 'stop']);
+const abnormalBehaviors = new Set(['speeding', 'wrong_way', 'mixed']);
 const validAbnormalId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
 const abnormalError = message => Object.assign(Error(message), {statusCode: 400});
 
@@ -69,9 +69,10 @@ module.exports = class AbnormalController {
         const data = await readAbnormalBody(request);
         if (route === 'spawn') {
           if (!abnormalKinds.has(data.kind)) throw abnormalError('请选择异常类型');
-          if (!Array.isArray(data.position) || data.position.length !== 2 ||
+          if (typeof data.zone_id !== 'string' || !data.zone_id.trim()) throw abnormalError('请选择目标所属街区');
+          if (data.position !== undefined && (!Array.isArray(data.position) || data.position.length !== 2 ||
               !data.position.every(value => typeof value === 'number' && Number.isFinite(value)) ||
-              data.position[0] < -1000 || data.position[0] > 3000 || data.position[1] < -3000 || data.position[1] > 1000)
+              data.position[0] < -1000 || data.position[0] > 3000 || data.position[1] < -3000 || data.position[1] > 1000))
             throw abnormalError('请点击地图范围内的位置');
         } else if (!validAbnormalId(data.target_id)) throw abnormalError('无效的目标编号');
         if ((route === 'behavior' || data.kind === 'vehicle') && !abnormalBehaviors.has(data.behavior)) throw abnormalError('无效的车辆行为');

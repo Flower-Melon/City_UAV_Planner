@@ -201,6 +201,8 @@ def execute(data):
         row = {"id": name, "kind": kind,
                "position_m": [(p.x + origin.x) / 100, (p.y + origin.y) / 100, (p.z + origin.z) / 100],
                "yaw_rad": math.radians(item.actor.get_actor_rotation().yaw), "error": item.error}
+        row.update(zone_id=item.route["zone_id"] if kind == "vehicle" else item.zone_id,
+                   zone_name=item.route["zone_name"] if kind == "vehicle" else item.zone_name)
         if kind == "vehicle":
             row.update(behavior=item.motion.behavior, active_behavior=item.motion.active_behavior,
                        speed_m_s=item.motion.speed)

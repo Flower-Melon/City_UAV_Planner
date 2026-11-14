@@ -17,7 +17,8 @@ const identity = createHash('sha256').update('town12-live-viewer-v9-abnormal:' +
 const revisionHash = createHash('sha256');
 for (const relative of ['web/serve.cjs', 'web/server/llm.cjs', 'web/server/python.cjs',
   'web/server/airsim.cjs',
-  'web/utils/python_bridge.py', 'UAV/API/reset_uav.py'])
+  'web/utils/python_bridge.py', 'web/utils/traffic_pipeline.py', 'web/utils/vehicle_fusion.py',
+  'UAV/API/reset_uav.py'])
   revisionHash.update(relative).update(fs.readFileSync(path.join(root, relative)));
 const revision = revisionHash.digest('hex');
 const preferredPort = 8765;

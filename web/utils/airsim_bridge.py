@@ -208,7 +208,9 @@ class Monitor:
                             trail.append([stamp, position[0], position[1]])
                         with self.lock:
                             record = self.records[name]
-                            record.update(position_m=position, updated_at=stamp, trail=list(trail), available=available)
+                            record.update(position_m=position, updated_at=stamp, trail=list(trail), available=available,
+                                          airborne=type(landed) is int and landed == 1,
+                                          speed_m_s=math.hypot(*velocity) * scale if anchor else None)
                             # 停止或只有微小漂移时保留最后移动方向，避免箭头抖动。
                             if course is not None:
                                 record["course_rad"] = course

@@ -21,7 +21,7 @@
 │  ├─ vehicle/                异常车辆生成与行为控制
 │  ├─ armed_person/           持刀人员生成
 │  ├─ patient/                病人生成
-│  └─ probe/                  探头布设与过车记录读取
+│  └─ probe/                  交通探头过车记录查询
 ├─ llm/
 │  ├─ __init__.py             Python 包入口
 │  ├─ .env                    本地模型配置

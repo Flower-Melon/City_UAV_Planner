@@ -14,8 +14,8 @@ from PIL import Image
 MODEL_DIR = Path(__file__).resolve().parent
 DEFAULT_WEIGHTS = MODEL_DIR / "weights.pt"
 DEFAULT_OUTPUT_DIR = MODEL_DIR.parents[1] / "output" / "yolov26"
-CONFIDENCE_THRESHOLD = 0.8
-IMAGE_SIZE = 640
+CONFIDENCE_THRESHOLD = 0.7
+IMAGE_SIZE = 1280
 DEFAULT_DEVICE = "0"
 TARGET_CLASSES = {"person"}
 
@@ -120,8 +120,8 @@ class YoloPredictor:
 
 if __name__ == "__main__":
     # 直接运行时修改以下参数；命令行传参可覆盖这些设置。
-    image_path = MODEL_DIR.parents[1] / "output/000002/yolo_detection/000003.annotated.jpg"
-    conf = 0.25
+    image_path = MODEL_DIR.parents[1] / "output/000017/search/capture/000036.jpg"
+    conf = 0.7
     device = "0"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image_path", nargs="?", type=Path, default=image_path)

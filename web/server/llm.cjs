@@ -200,17 +200,18 @@ class MissionExecutor {
       const task = queue.shift();
       task.status = 'running'; this.mission.executed = true;
       let finished = false;
-      const analysis = this.analyzeTask(task, () => finished, workerId).catch(error => {
-        task.vision.status = 'failed'; task.vision.error = error.message;
-      });
+      let analysis = Promise.resolve();
       const monitoring = this.startMonitor(task, workerId, monitorDroneId);
       try {
-        // 先确认监控机已占用，再启动巡查选机；两条航线仍并行飞行。
+        // 仅等监控机选定并占用，避免两端选到同一架；两机并行飞行。
         await monitoring.selected;
         monitorDroneId = task.monitor.drone_id;
         if (previousMonitor) previousMonitor.status = 'relocated';
         previousMonitor = task.monitor;
         if (this.closed || this.uncertain) throw Error('任务已停止，未启动区域巡查。');
+        analysis = this.analyzeTask(task, () => finished, workerId).catch(error => {
+          task.vision.status = 'failed'; task.vision.error = error.message;
+        });
         const result = await this.runtime.request('search', {
           target: structuredClone(task.target),
           output_directory: task.output_directory,
@@ -225,6 +226,7 @@ class MissionExecutor {
         task.status = 'analyzing';
       } catch (error) {
         Object.assign(task, {status: 'failed', error_type: error.errorType || error.name, error: error.message});
+        if (task.vision.status === 'queued') task.vision.status = 'skipped';
         this.uncertain ||= !!error.uncertain;
         failed = true;
       } finally {
@@ -276,6 +278,7 @@ class MissionExecutor {
   }
 
   async startTraffic(task, workerId) {
+    if (task.monitor.status !== 'hovering') throw Error('监控无人机尚未就位，不能启动车辆监测。');
     await this.stopTraffic(workerId);
     const {mission_id: missionId, traffic_settings: settings} = this.mission;
     if (this.closed) throw Error('测速服务已停止。');
@@ -319,6 +322,7 @@ class MissionExecutor {
           state.frames = result.frames;
           state.unlocated_count = result.unlocated_count || 0;
           state.status = result.status;
+          state.fusion = result.fusion;
           state.vehicles = result.vehicles.map(vehicle => {
             if (!Number.isSafeInteger(vehicle.track_id) || vehicle.track_id < 1 ||
                 vehicle.speed_kmh !== null && (!Number.isFinite(vehicle.speed_kmh) || vehicle.speed_kmh < 0))
@@ -501,10 +505,11 @@ class MissionExecutor {
     let result;
     try {
       result = await this.runtime.request('demo_target', {
-        kind: detection.status
+        kind: detection.status, zone_id: task.target.zone_id
       }, {channel: `location:${workerId}`, timeoutMs: this.timeoutMs});
       if (this.closed) return;
       if (typeof result?.person_id !== 'string' || !new RegExp(`^${detection.status}_[0-9]+$`).test(result.person_id) ||
+          result.zone_id !== task.target.zone_id ||
           !Array.isArray(result.target_position) || result.target_position.length !== 3 ||
           !result.target_position.every(Number.isFinite))
         throw Error('未返回有效人物身份和真实地面坐标。');
@@ -668,6 +673,8 @@ class MissionExecutor {
     mission.traffic = {active: this.trafficActive,
       frames: mission.tasks.reduce((sum, task) => sum + task.monitor.traffic.frames, 0),
       alerts: mission.tasks.flatMap(task => task.monitor.traffic.alerts),
+      targets: mission.tasks.flatMap(task => (task.monitor.traffic.fusion?.targets || [])
+        .map(target => ({...target, task_id: task.task_id, drone_id: task.monitor.drone_id}))),
       errors: mission.tasks.filter(task => task.monitor.traffic.error)
         .map(task => ({task_id: task.task_id, error: task.monitor.traffic.error}))};
     const summaries = mission.tasks.map(task => task.vision);

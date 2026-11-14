@@ -61,12 +61,8 @@ class AirSimClient:
 
 
 _VEHICLE_SETTINGS = {
-    "cruise_speed_kmh": 75.0,
-    "surge_speed_kmh": 104.4,
-    "brake_speed_kmh": 36.0,
-    "wrong_way_speed_kmh": 75.0,
-    "weave_amplitude_m": 3.0,
-    "weave_period_s": 5.0,
+    "speeding_speed_kmh": 104.4,
+    "wrong_way_offset_m": 3.0,
     "wheelbase_m": 2.7,
     "acceleration_m_s2": 5.5,
     "braking_m_s2": 8.5,
@@ -242,11 +238,17 @@ class RoadGraph:
                     heapq.heappush(queue, (candidate, end))
         return None
 
-    def loop(self, position):
-        point = Point(position_xy(position))
-        # 点击仅指定目标区域：内部点击选择所在的地块，外部点击选择最近的地块。
-        zone, polygon = min(self.zones, key=lambda item: (
-            item[1].distance(point), item[0]["id"]))
+    def loop(self, position=None, *, zone_id=None):
+        if zone_id is not None:
+            parts = [item for item in self.zones if item[0]["id"] == zone_id]
+            if not parts:
+                raise ValueError("所选街区不存在或不支持生成车辆")
+            zone, polygon = max(parts, key=lambda item: item[1].area)
+            point = polygon.representative_point()
+        else:
+            point = Point(position_xy(position))
+            zone, polygon = min(self.zones, key=lambda item: (
+                item[1].distance(point), item[0]["id"]))
         outgoing, turns = self._perimeter_graph(polygon)
         # 在目标地块的全部外围车道中选择出生点，不要求参考点落在道路上。
         # 车道至少长 6 米，以便出生点离两端各留出 3 米。
@@ -298,16 +300,18 @@ def road_graph():
                      json.loads(ZONES.read_text(encoding="utf-8")))
 
 
-def spawn_vehicle(position) -> str:
-    """position 为 UE 世界 (x, y) 米制参考坐标；返回可供 AirSim 查询的唯一车辆 ID。
+def spawn_vehicle(position=None, *, zone_id=None) -> str:
+    """按街区zone_id或参考坐标position生成，返回可供AirSim查询的唯一车辆ID。
 
-    每次调用新增一辆车，在参考点所在或最近地块的外围车道自动选择出生点，初始停车。
+    同一街区最多一辆异常车，在街区外围车道自动选择出生点，默认超速行驶。
+    指定zone_id时直接绑定该街区，无需position；仅指定position时取所在或最近地块。
     仅生成网页地图上的顺时针闭环；地块外围路网无法顺时针闭环时抛出异常。
     返回前已确认车辆在运行中的 UE 世界生成并注册控制器。
     """
-    position = position_xy(position)
+    if position is not None:
+        position = position_xy(position)
     settings = _VEHICLE_SETTINGS.copy()
-    route = road_graph().loop(position)
+    route = road_graph().loop(position, zone_id=zone_id)
     with AirSimClient(timeout=45) as client:
         prepared = request(client, "prepare", route=route, settings=settings)
         name = prepared["vehicle_id"]

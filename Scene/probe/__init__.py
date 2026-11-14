@@ -1,5 +1,5 @@
-"""独立的交通探头信息接口。"""
+"""交通探头过车记录查询。"""
 
-from .monitor import ProbeMonitor
+from .get_probe_records import get_probe_records
 
-__all__ = ["ProbeMonitor"]
+__all__ = ["get_probe_records"]

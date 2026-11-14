@@ -278,8 +278,9 @@ class PythonBridge:
         if operation == "demo_target":
             from web.utils.people_state import get_demo_target
 
-            person = get_demo_target(request.get("kind"))
-            return {"person_id": person["person_id"], "target_position": person["position_m"]}
+            person = get_demo_target(request.get("kind"), request.get("zone_id"))
+            return {"person_id": person["person_id"], "zone_id": person["zone_id"],
+                    "target_position": person["position_m"]}
         if operation in ("vision", "locate_patient", "locate_target"):
             image_path = request.get("image_path")
             if not isinstance(image_path, str) or not image_path:
@@ -302,13 +303,22 @@ class PythonBridge:
             return self.vision(path)
         if operation == "abnormal_spawn":
             from Scene import spawn_vehicle, spawn_armed_person, spawn_patient, set_vehicle_behavior
+            from Scene import get_zone, zone_at
+
+            zone = get_zone(request.get("zone_id"))
             factories = {"vehicle": spawn_vehicle, "armed_person": spawn_armed_person, "patient": spawn_patient}
             kind = request["kind"]
-            name = factories[kind](request["position"])
-            result = {"target_id": name}
+            if kind == "vehicle":
+                name = spawn_vehicle(zone_id=zone["id"])
+            else:
+                position = request.get("position")
+                if position is not None and zone_at(position)["id"] != zone["id"]:
+                    raise ValueError("生成位置与所选街区不一致，请重新选点")
+                name = factories[kind](position, zone_id=zone["id"])
+            result = {"target_id": name, "zone_id": zone["id"], "zone_name": zone["properties"]["name"]}
             if kind == "vehicle":
                 try:
-                    set_vehicle_behavior(name, request.get("behavior", "surge"))
+                    set_vehicle_behavior(name, request.get("behavior", "speeding"))
                 except Exception as error:
                     result["warning"] = "车辆已生成，但设置行为失败：" + str(error)
             return result

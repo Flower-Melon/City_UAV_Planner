@@ -28,9 +28,7 @@
   let resetting = false, resetFailed = false, generation = 0, planningController = null;
   let visionMission = null;
   const shownAnomalies = new Map();
-  const shownSpeeding = new Set();
   let trafficMission = null;
-
   function showFlight(settings) {
     for (const [key, field] of Object.entries(flightFields)) {
       if (typeof settings[key] !== 'number' || !Number.isFinite(settings[key])) continue;
@@ -134,46 +132,21 @@
   function showTraffic(execution) {
     const traffic = execution?.traffic;
     $('llm-traffic').hidden = !traffic;
-    if (!traffic) return;
+    if (!traffic) { window.liveMap?.setTraffic([]); return; }
     if (trafficMission !== execution.mission_id) {
-      trafficMission = execution.mission_id; shownSpeeding.clear();
-      $('llm-speeding-alerts').replaceChildren();
+      trafficMission = execution.mission_id;
+      window.trafficView.clear();
     }
-    $('llm-speeding-count').textContent = traffic.alerts.length;
-    $('llm-traffic-status').textContent = `限速 ${execution.traffic_settings.speed_limit_kmh} km/h · 已处理 ${traffic.frames} 帧` +
-      (traffic.active ? ' · 持续监测中' : ' · 监测未运行');
-    const error = traffic.errors[0]?.error;
+    const count = (traffic.targets || []).filter(t => t.status === 'confirmed').length;
+    $('llm-speeding-count').textContent = count;
+    $('llm-speeding-count').hidden = !count;
+    const waiting = !traffic.active && execution.tasks.some(t => ['queued', 'flying'].includes(t.monitor.status));
+    const starting = execution.tasks.some(t => t.monitor.traffic.status === 'starting');
+    $('llm-traffic-status').textContent = waiting ? '等待就位' : starting ? '正在启动' : traffic.active ? '监测中' : '已结束';
+    window.trafficView.render(execution);
+    const error = traffic.errors[0]?.error || execution.tasks.find(t => t.monitor.traffic.fusion?.error)?.monitor.traffic.fusion.error;
     $('llm-traffic-error').hidden = !error;
-    $('llm-traffic-error').textContent = error || '';
-    const states = {queued: '等待到位', starting: '准备监测', running: '测速中', paused: '仿真暂停',
-      stabilizing: '等待悬停稳定', timing_unstable: '取图时间不稳定，暂停测速', retrying: '正在重试',
-      stopped: '已停止', failed: '监测失败'};
-    const rows = execution.tasks.map(task => {
-      const state = task.monitor.traffic;
-      const row = document.createElement('p');
-      row.textContent = `${task.monitor.drone_id || task.target.zone_id} · ${states[state.status] || state.status}` +
-        (state.vehicles.length ? '：' + state.vehicles.map(vehicle => `车辆 ${vehicle.track_id} ` +
-          (vehicle.speed_kmh === null ? '积累轨迹中' : `${vehicle.speed_kmh.toFixed(1)} km/h`)).join('；') : '') +
-        (state.unlocated_count ? `；${state.unlocated_count} 辆车暂无法测速` : '');
-      return row;
-    });
-    $('llm-vehicle-speeds').replaceChildren(...rows);
-    for (const record of traffic.alerts) {
-      const key = `${record.task_id}:${record.event_id}`;
-      if (shownSpeeding.has(key)) continue;
-      shownSpeeding.add(key);
-      const card = document.createElement('article'); card.className = 'llm-anomaly-card';
-      const heading = document.createElement('p'); heading.className = 'llm-anomaly-heading';
-      heading.textContent = `${record.drone_id} · ${record.zone_id} · 车辆 ${record.track_id}`;
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'llm-anomaly-open';
-      button.setAttribute('aria-label', '放大超速车辆证据'); button.append(annotatedImage(record));
-      const description = document.createElement('p'); description.textContent = record.description;
-      button.onclick = () => {
-        const caption = document.createElement('p'); caption.textContent = record.description;
-        $('llm-image-detail').replaceChildren(annotatedImage(record), caption); $('llm-image-dialog').showModal();
-      };
-      card.append(heading, button, description); $('llm-speeding-alerts').append(card);
-    }
+    $('llm-traffic-error').textContent = error ? '部分监控暂不可用' : '';
   }
 
   // 根据规划与飞行状态锁定输入，防止刷新或重复点击再次派发。
@@ -291,7 +264,8 @@
         (response.error ? `：${response.error}` : '')).join('\n');
       const responding = responses.some(response => ['queued', 'dispatching', 'responding'].includes(response.status));
       const messages = {running: mission.tasks.some(task => task.status === 'analyzing') ?
-        '巡查机已返航，正在完成照片分析和监控机到位确认。' : '搜索执行中 · 巡查机沿路拍照，监控机飞往区域中心高空悬停。',
+        '巡查机已返航，正在完成照片分析。' : mission.tasks.some(task => task.monitor.status === 'flying')
+          ? '人员巡查进行中 · 车辆监测等待监控机就位。' : '人员巡查与车辆监测正在进行。',
         completed: '搜索已完成 · 巡查机已返航降落，监控机保持高空悬停。',
         failed: '任务执行失败。' + (mission.tasks.find(task => task.error)?.error || rescues.find(rescue => rescue.error)?.error ||
           responses.find(response => response.error)?.error || '')};
@@ -305,7 +279,7 @@
       if (mission.status === 'completed' && responses.length)
         messages.completed = '巡查及异常目标处置已完成 · 任务无人机保持悬停。';
       if (mission.traffic?.active && ['completed', 'failed'].includes(mission.status))
-        messages[mission.status] += ' 高空车辆测速继续运行，点击「新任务」结束并复位。';
+        messages[mission.status] += ' 空地联合车辆监测继续运行，点击「新任务」结束并复位。';
       setStatus(mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready', messages[mission.status] || '正在确认执行状态…');
       newTask.hidden = false;
       if (resultPanel.hidden && data.plan) {
@@ -347,9 +321,6 @@
       tab.tabIndex = active ? 0 : -1;
       $(tab.getAttribute('aria-controls')).hidden = !active;
     }
-    const abnormal = selected.id === 'abnormal-tab';
-    $('uav-camera-panel').hidden = abnormal;
-    $('abnormal-camera-panel').hidden = !abnormal;
     window.dispatchEvent(new CustomEvent('sidebar:change', {detail: {panel: selected.getAttribute('aria-controls')}}));
   }
   for (const [index, tab] of tabs.entries()) {
@@ -475,8 +446,8 @@
     $('llm-answer-heading').textContent = '模型回答';
     $('llm-vision').hidden = true; $('llm-anomalies').replaceChildren();
     shownAnomalies.clear(); visionMission = null;
-    $('llm-traffic').hidden = true; $('llm-speeding-alerts').replaceChildren();
-    shownSpeeding.clear(); trafficMission = null;
+    $('llm-traffic').hidden = true; trafficMission = null;
+    window.trafficView.clear();
     input.value = ''; followupInput.value = ''; form.hidden = false;
     if ($('llm-image-dialog').open) $('llm-image-dialog').close();
     input.focus();

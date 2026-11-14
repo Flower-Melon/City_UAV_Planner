@@ -11,6 +11,7 @@ web/
 │  ├─ map.js                  地图交互
 │  ├─ airsim.js               无人机实时监控
 │  ├─ llm.js                  自然语言任务、异常照片和红框展示
+│  ├─ traffic.js              空地联合取证面板、抓拍放大与路口记录展示
 │  └─ abnormal.js             异常场景交互
 ├─ css/                       页面样式
 │  └─ styles.css              页面外观
@@ -23,7 +24,8 @@ web/
 │  ├─ python_bridge.py        Python 功能调用入口、网页模型后端的读取与保存
 │  ├─ vision_pipeline.py      巡查人员识别、异常标注与地面定位
 │  ├─ people_state.py         人物实时位置与演示目标查询
-│  ├─ traffic_pipeline.py     高空车辆取图、跟踪测速与超速证据
+│  ├─ traffic_pipeline.py     高空车辆取图、跟踪测速与空地数据接入
+│  ├─ vehicle_fusion.py       单街区车辆身份关联、时间窗口研判
 │  ├─ airsim_bridge.py        从 AirSim 采集无人机状态和画面
 │  └─ unreal_bridge.py        UE 内的异常目标观测与跟随取景
 └─ assets/                    静态素材
@@ -39,10 +41,6 @@ web/
 | `server/` | 后端部分，处理网页请求。 |
 | `utils/` | 脚本工具，连接 Python 功能与仿真环境。 |
 | `assets/` | 存放页面素材。 |
-
-## 区域搜索与高空监控
-
-网页确认搜索区域后，由 `server/llm.cjs` 同时调度 `UAV/API/search_area.py` 和 `UAV/API/monitor_area.py`。每组分别使用一架巡查机与一架监控机，至少需要两架可用无人机；监控机占用确认后再启动巡查选机，两机并行飞行。
 
 ## 输出目录
 
@@ -65,7 +63,7 @@ output/000001/                  一个区域的高低空联合任务
 │     ├─ 000001.json            单张原图的各目标判断与YOLO框
 │     └─ abnormal/              异常红框图片，与巡查原图同名
 └─ monitor/                     高空车辆测速
-   ├─ latest.json               最新测速状态（持续更新至停止监测）
+   ├─ latest.json               最新测速与fusion联合研判（持续更新至停止监测）
    ├─ capture/                  仅保存触发超速证据的原图
    │  └─ 000123.jpg
    ├─ 000123.json               对应帧的超速记录

@@ -21,15 +21,16 @@ def get_people_state(*, client=None):
     return _read_people(client)
 
 
-def _read_people(client, person_id=None, kind=None):
+def _read_people(client, person_id=None, kind=None, zone_id=None):
     from Scene.vehicle.spawn_vehicle import request
     from UAV.runtime.airsim_client import AirSimClient
 
     if client is None:
         with AirSimClient() as connection:
-            return _read_people(connection, person_id, kind)
+            return _read_people(connection, person_id, kind, zone_id)
     return request(client, "snapshot", _controller=Path(__file__).resolve(),
-                   _module_name="city_people_state", _registry="_targets", person_id=person_id, kind=kind)
+                   _module_name="city_people_state", _registry="_targets",
+                   person_id=person_id, kind=kind, zone_id=zone_id)
 
 
 def get_person_state(person_id, *, client=None):
@@ -42,14 +43,16 @@ def get_person_state(person_id, *, client=None):
     return people[0]
 
 
-def get_demo_target(kind, *, client=None):
-    """返回该类别最近生成的演示人物及其实时位置。"""
+def get_demo_target(kind, zone_id, *, client=None):
+    """返回指定街区该类别的唯一演示人物及其实时位置。"""
     if kind not in ("patient", "armed_person"):
         raise ValueError("人物类别必须为patient或armed_person")
-    return _read_people(client, kind=kind)["people"][0]
+    if not isinstance(zone_id, str) or not zone_id:
+        raise ValueError("需要人物所属街区zone_id")
+    return _read_people(client, kind=kind, zone_id=zone_id)["people"][0]
 
 
-def _snapshot(person_id=None, kind=None):
+def _snapshot(person_id=None, kind=None, zone_id=None):
     import unreal
 
     world = unreal.EditorLevelLibrary.get_game_world()
@@ -60,9 +63,9 @@ def _snapshot(person_id=None, kind=None):
     # 网页创建的人物已按ID登记，单人查询直接读取其Actor，不重新按名称扫描。
     module = sys.modules.get("city_abnormal_people_api")
     if kind is not None:
-        person_id = getattr(module, "_demo_targets", {}).get(kind)
+        person_id = getattr(module, "_demo_targets", {}).get((zone_id, kind))
         if person_id is None:
-            raise RuntimeError(f"尚未登记{kind}演示目标，请先生成对应人物")
+            raise RuntimeError(f"街区{zone_id}尚未登记{kind}演示目标，请先生成对应人物")
     person = getattr(module, "_people", {}).get(person_id) if person_id else None
     registered = (person is not None and unreal.SystemLibrary.is_valid(person.actor)
                   and person.actor.get_world() == world)
@@ -79,7 +82,8 @@ def _snapshot(person_id=None, kind=None):
         position = [(p.x + origin.x) / 100, (p.y + origin.y) / 100, (p.z + origin.z - half) / 100]
         if not all(math.isfinite(v) for v in position):
             continue
-        people.append({"person_id": ids[0],
+        owner = getattr(module, "_people", {}).get(ids[0])
+        people.append({"person_id": ids[0], "zone_id": owner.zone_id if owner is not None else None,
                        "kind": "armed_person" if ids[0].startswith("armed_person_") else "patient",
                        "position_m": position})
     if kind is not None and not people:
@@ -94,7 +98,7 @@ def dispatch(source, result):
         data = json.loads(Path(source).read_text(encoding="utf-8"))
         if data["operation"] != "snapshot":
             raise ValueError("不支持的人物查询操作")
-        response = {"ok": True, "result": _snapshot(data.get("person_id"), data.get("kind"))}
+        response = {"ok": True, "result": _snapshot(data.get("person_id"), data.get("kind"), data.get("zone_id"))}
     except Exception as error:
         response = {"ok": False, "error": str(error)}
         unreal.log_warning(traceback.format_exc())

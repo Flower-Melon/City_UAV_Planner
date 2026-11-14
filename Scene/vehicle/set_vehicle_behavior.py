@@ -23,15 +23,15 @@ if __name__ == "__main__" and not __package__:
     __package__ = "Scene.vehicle"
 
 
-BEHAVIORS = ("cruise", "surge", "weave", "brake", "wrong_way", "mixed", "stop")
+BEHAVIORS = ("speeding", "wrong_way", "mixed")
 
 
 def set_vehicle_behavior(vehicle_id, behavior) -> None:
     """设置指定车辆的行为，确认指令生效后返回 None；不等待车辆完成加减速。
 
     vehicle_id: spawn_vehicle 返回的 ID。
-    behavior: cruise / surge / weave / brake / wrong_way / mixed / stop。
-    mixed 从巡航开始，按原场景状态机随机切换异常驾驶动作；其他模式保持至下次调用。
+    behavior: speeding（超速）/ wrong_way（逆向超速）/ mixed（持续超速、偶尔逆行）。
+    mixed 从顺向超速开始，间隔18至30秒短暂逆行4至7秒，逆行时保持相同目标车速。
     速度仍受弯道、道路净空和交通限制。
     未知 ID、未由本接口管理的对象、无效行为或通信失败均抛出异常。
     """
@@ -110,7 +110,7 @@ class Motion:
         self.settings = settings
         self.xy, self.yaw = self.loop.sample(0)
         self.progress = self.speed = self.acceleration = self.steering = 0.0
-        self.behavior = "stop"
+        self.behavior = "speeding"
         self.behavior_seconds = 0.0
         self.safe_offset = 0.0
         self.guard = "None"
@@ -118,104 +118,34 @@ class Motion:
         self._reset_mixed()
 
     def _reset_mixed(self):
-        self._mixed_mode = "cruise"
-        self._mixed_next_mode = 1.3
-        self._mixed_next_decision = self._mixed_next_lateral = 0.0
-        self._mixed_decisions = 0
-        self._mixed_last_sign = 1
-        self._mixed_pending = (self.settings["cruise_speed_kmh"] / 3.6, 0.0)
-        self._mixed_intent = self._mixed_pending
+        self._mixed_mode = "speeding"
+        self._mixed_next_mode = self._random.uniform(18.0, 30.0)
 
     @property
     def active_behavior(self):
         return self._mixed_mode if self.behavior == "mixed" else self.behavior
 
     def set_behavior(self, behavior):
+        if behavior not in BEHAVIORS:
+            raise ValueError("不支持的车辆行为 " + str(behavior))
         self.behavior = behavior
         self.behavior_seconds = 0.0
         if behavior == "mixed":
             self._reset_mixed()
 
     def _advance_mixed(self):
-        """对应原异常车 ChooseIntent：保留状态转移、持续时间及反应延迟。"""
-        rng, s, now = self._random, self.settings, self.behavior_seconds
-        amplitude = s["weave_amplitude_m"]
-        if now < self._mixed_next_mode:
-            if self._mixed_mode in ("weave", "surge") and now >= self._mixed_next_lateral:
-                if rng.random() < 0.9:
-                    self._mixed_last_sign *= -1
-                self._mixed_pending = (self._mixed_pending[0],
-                                       self._mixed_last_sign * amplitude * rng.uniform(0.85, 1.0))
-                self._mixed_next_decision = now + rng.uniform(0.15, 0.4)
-                self._mixed_next_lateral = now + rng.uniform(1.8, 3.2)
-        else:
-            previous, roll = self._mixed_mode, rng.random()
-            if self._mixed_decisions == 0:
-                mode = "weave"
-            elif previous == "weave":
-                mode = "countersteer"
-            elif previous == "brake":
-                mode = "surge"
-            elif previous == "countersteer":
-                mode = "surge" if roll < 0.78 else "cruise"
-            elif previous == "surge":
-                mode = "brake" if roll < 0.12 else "wrong_way" if roll < 0.42 else "weave"
-            elif previous == "wrong_way":
-                mode = "cruise" if roll < 0.5 else "surge"
-            else:
-                mode = "weave" if roll < 0.7 else "surge"
-
-            center, heading = self.loop.sample(self.progress)
-            lateral = -(self.xy[0] - center[0]) * math.sin(heading) + (self.xy[1] - center[1]) * math.cos(heading)
-            if mode == "countersteer" and abs(lateral) > 0.5:
-                self._mixed_last_sign = -1 if lateral > 0 else 1
-            else:
-                self._mixed_last_sign *= -1
-            duration = rng.uniform(6.0, 10.0)
-            speed = s["cruise_speed_kmh"] * rng.uniform(0.95, 1.1) / 3.6
-            offset = 0.0
-            if mode == "weave":
-                offset = self._mixed_last_sign * amplitude * rng.uniform(0.85, 1.0)
-                duration = rng.uniform(8.0, 13.0)
-            elif mode == "countersteer":
-                offset = self._mixed_last_sign * amplitude * rng.uniform(0.9, 1.0)
-                duration = rng.uniform(2.5, 4.0)
-            elif mode == "surge":
-                speed = s["surge_speed_kmh"] * rng.uniform(0.9, 1.0) / 3.6
-                offset = self._mixed_last_sign * amplitude * rng.uniform(0.8, 1.0)
-            elif mode == "brake":
-                speed = s["brake_speed_kmh"] * rng.uniform(0.85, 1.0) / 3.6
-                offset = lateral * 0.6
-                duration = rng.uniform(1.0, 1.7)
-            elif mode == "cruise":
-                duration = rng.uniform(1.4, 2.5)
-            elif mode == "wrong_way":
-                speed = s["cruise_speed_kmh"] * rng.uniform(1.0, 1.2) / 3.6
-                offset = -amplitude
-                duration = rng.uniform(8.0, 16.0)
-            self._mixed_mode = mode
-            self._mixed_pending = (speed, offset)
-            self._mixed_next_decision = now + rng.uniform(0.15, 0.4)
-            self._mixed_next_lateral = now + rng.uniform(1.8, 3.2)
-            self._mixed_next_mode = now + duration
-            self._mixed_decisions += 1
-
-        if now >= self._mixed_next_decision:
-            self._mixed_intent = self._mixed_pending
-        return self._mixed_intent
+        """保持超速，间隔18至30秒短暂逆行4至7秒。"""
+        now = self.behavior_seconds
+        if now >= self._mixed_next_mode:
+            self._mixed_mode = "wrong_way" if self._mixed_mode == "speeding" else "speeding"
+            duration = (4.0, 7.0) if self._mixed_mode == "wrong_way" else (18.0, 30.0)
+            self._mixed_next_mode = now + self._random.uniform(*duration)
+        return self._mixed_mode
 
     def intention(self):
-        if self.behavior == "mixed":
-            return self._advance_mixed()
-        s = self.settings
-        speed = {"stop": 0.0, "cruise": s["cruise_speed_kmh"], "surge": s["surge_speed_kmh"],
-                 "weave": s["cruise_speed_kmh"], "brake": s["brake_speed_kmh"],
-                 "wrong_way": s["wrong_way_speed_kmh"]}[self.behavior] / 3.6
-        offset = 0.0
-        if self.behavior == "weave":
-            offset = s["weave_amplitude_m"] * math.sin(2 * math.pi * self.behavior_seconds / s["weave_period_s"])
-        elif self.behavior == "wrong_way":
-            offset = -s["weave_amplitude_m"]
+        mode = self._advance_mixed() if self.behavior == "mixed" else self.behavior
+        speed = self.settings["speeding_speed_kmh"] / 3.6
+        offset = -self.settings["wrong_way_offset_m"] if mode == "wrong_way" else 0.0
         return speed, offset
 
     def steering_for(self, dt, speed_cap, offset):
@@ -437,7 +367,7 @@ class Vehicle:
         self.centering_remaining = max(0.0, self.centering_remaining - travel)
         if distance(self.trail[-1][0], model.xy) >= 0.2:
             self.trail.append((model.xy, model.yaw, model.steering))
-        if model.guard in ("Road", "StaticObstacle") and model.behavior != "stop" and travel < 0.002:
+        if model.guard in ("Road", "StaticObstacle") and travel < 0.002:
             self.blocked_seconds += dt
         else:
             self.blocked_seconds = 0.0
@@ -507,7 +437,7 @@ class Vehicle:
             speed = min(speed, 3.0)
         self.speed_cap = model.loop.curve_limit(model.progress, model.speed,
                                                  settings["lateral_acceleration_m_s2"], speed)
-        # 道路和车身支撑限制横摆幅度；不把人行道作为可行驶区域。
+        # 道路和车身支撑限制车道偏移；不把人行道作为可行驶区域。
         offsets = sorted(set([desired, 0.0] + [i * 0.5 for i in range(-6, 7)]),
                          key=lambda offset: (abs(offset - desired), abs(offset), offset))
         stopping = model.speed * model.speed / (2 * settings["braking_m_s2"]) + model.speed * 0.6 + 4
@@ -540,13 +470,8 @@ class Vehicle:
         model = self.motion
         if self.error:
             return
-        if model.behavior == "stop":
-            self.recovery_remaining = 0.0
         if self.recovery_remaining > 0:
             self.recover(dt)
-            return
-        if model.behavior == "stop" and model.speed == 0:
-            model.behavior_seconds += dt
             return
         self.plan_timer -= dt
         if self.plan_timer <= 0:
@@ -648,13 +573,16 @@ def _tick(delta):
             except Exception as error:
                 vehicle.error = str(error)
                 vehicle.motion.speed = vehicle.motion.acceleration = 0.0
-                vehicle.motion.behavior = "stop"
                 unreal.log_error("CITY_SCRIPT_VEHICLE {} stopped: {}".format(name, traceback.format_exc()))
         _accumulator -= 1.0 / 60
 
 
 def _prepare(data, world):
     route, settings = data["route"], data["settings"]
+    occupied = any(vehicle.route["zone_id"] == route["zone_id"] and valid(vehicle.actor)
+                   for vehicle in _vehicles.values())
+    if occupied or any(pending[0]["zone_id"] == route["zone_id"] for pending in _pending.values()):
+        raise ValueError(f"{route['zone_name']}已有异常车辆，请先移除原目标")
     model = Motion(route["points"], settings)
     z = _context.footprint(model.xy, model.yaw)
     if z is None:
@@ -722,8 +650,6 @@ def _execute(data):
     vehicle = _vehicles[name]
     if operation == "behavior":
         behavior = data["behavior"]
-        if behavior not in BEHAVIORS:
-            raise ValueError("不支持的车辆行为 " + str(behavior))
         if vehicle.error:
             raise RuntimeError("车辆运行时已停止：" + vehicle.error)
         vehicle.motion.set_behavior(behavior)

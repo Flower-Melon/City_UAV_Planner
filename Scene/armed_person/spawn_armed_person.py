@@ -20,13 +20,14 @@ if __name__ == "__main__" and not __package__:
     __package__ = "Scene.armed_person"
 
 
-def spawn_armed_person(position) -> str:
-    """输入 UE 世界 (x, y) 米制坐标，返回唯一 armed_person_ID。
+def spawn_armed_person(position=None, *, zone_id=None) -> str:
+    """按街区zone_id随机生成，或在position附近生成，返回唯一armed_person_ID。
 
-    在 100 米内选择可用临街人行道，自动贴地，并在同一人行道短段闭环巡游。
-    站立、走、跑和威胁按原场景概率切换。每次新增目标，失败时抛出异常。
+    指定position时在100米内选点；仅指定zone_id时随机选择街区人行道。
+    自动贴地并在同一人行道短段巡游，出生点及巡游段与病人保持30米间距。
+    站立、走、跑和威胁按原场景概率切换。同一街区最多一名持刀人员。
     """
-    return _spawn_person(position, "armed_person")
+    return _spawn_person(position, "armed_person", zone_id=zone_id)
 
 
 @lru_cache(maxsize=1)
@@ -73,50 +74,75 @@ def _patrol_points(line, along):
     return _loop_patrol(_patrol_legs(line, along))
 
 
-def _candidates(position, kind):
-    from shapely.geometry import Point
+def _candidates(position, kind, zone_id=None):
+    from shapely.geometry import Point, shape
+    from .. import get_zone, zone_at
 
-    point = Point(position)
+    automatic = position is None
+    zone = get_zone(zone_id) if automatic or zone_id is not None else zone_at(position)
+    geometry = shape(zone["geometry"])
+    point = geometry.representative_point() if automatic else Point(position)
     records, index = _sidewalks()
     choices = []
-    for i in index.query(point.buffer(100)):
+    for i in index.query((geometry if automatic else point).buffer(100)):
         edge_id, line = records[int(i)]
-        if line.distance(point) > 100:
+        if not automatic and line.distance(point) > 100:
             continue
-        center = line.project(point)
-        for offset in (0, 1.5, -1.5, 3, -3, 6, -6, 12, -12, 18, -18, 24, -24):
-            along = max(0.8, min(line.length - 0.8, center + offset))
+        if automatic:
+            count = max(1, math.ceil((line.length - 1.6) / 8.0))
+            step = (line.length - 1.6) / count
+            samples = [0.8 + (n + random.random()) * step for n in range(count)]
+        else:
+            center = line.project(point)
+            samples = [max(0.8, min(line.length - 0.8, center + offset))
+                       for offset in (0, 1.5, -1.5, 3, -3, 6, -6, 12, -12, 18, -18, 24, -24)]
+        for along in samples:
             xy = list(line.interpolate(along).coords[0])
             distance = point.distance(Point(xy))
-            if distance > 100:
+            if not automatic and distance > 100:
+                continue
+            if zone_at(xy)["id"] != zone["id"]:
                 continue
             a = line.interpolate(max(0, along - 0.1))
             b = line.interpolate(min(line.length, along + 0.1))
             legs = _patrol_legs(line, along) if kind == "armed_person" else []
+            # 从出生点向两侧裁剪，日常巡游不进入其他街区所属的人行道。
+            for leg in legs:
+                for step, route_xy in enumerate(leg):
+                    if zone_at(route_xy)["id"] != zone["id"]:
+                        del leg[step:]
+                        break
             route = _loop_patrol(legs)
-            if kind == "armed_person" and not route:
+            length = sum(math.hypot(a[0] - b[0], a[1] - b[1]) for leg in legs for a, b in zip(leg, leg[1:]))
+            if kind == "armed_person" and length < 4:
                 continue
             choices.append((distance, edge_id, along, {"xy": xy, "yaw": math.atan2(b.y - a.y, b.x - a.x),
-                                                       "route": route, "patrol_legs": legs}))
-    choices.sort(key=lambda entry: entry[:3])
+                                                       "route": route, "patrol_legs": legs,
+                                                       "zone_id": zone["id"], "zone_name": zone["properties"]["name"]}))
+    if automatic:
+        random.shuffle(choices)
+    else:
+        choices.sort(key=lambda entry: entry[:3])
     result, seen = [], set()
     for _, _, _, candidate in choices:
         key = tuple(round(v, 3) for v in candidate["xy"])
         if key not in seen:
             seen.add(key)
             result.append(candidate)
-        if len(result) == 48:
+        if len(result) == (96 if automatic else 48):
             break
     if not result:
-        raise ValueError("指定地点 100 米内没有合适的临街人行道")
+        scope = "街区内" if automatic else "选点100米内"
+        raise ValueError(f"{zone['properties']['name']}：{scope}没有属于该街区的合适人行道")
     return result
 
 
-def _spawn_person(position, kind):
+def _spawn_person(position, kind, *, zone_id=None):
     from ..vehicle.spawn_vehicle import AirSimClient, position_xy, request
 
-    position = position_xy(position)
-    candidates = _candidates(position, kind)
+    if position is not None:
+        position = position_xy(position)
+    candidates = _candidates(position, kind, zone_id)
     controller = Path(__file__).resolve()
 
     def command(client, operation, **parameters):
@@ -164,6 +190,7 @@ _CAPSULE_HALF_HEIGHT_M = 0.88
 # 脚本禁用了 CharacterMovement，必须自己保留正常角色贴地时的胶囊间隙。
 # 胶囊恰好接触 HISM 人行道时，UE sweep 会报告初始穿透，阻止所有横向移动。
 _GROUND_CLEARANCE_M = 0.025
+_PERSON_SEPARATION_M = 30.0
 
 
 def _base():
@@ -282,6 +309,7 @@ def _safe_patrol_route(candidate, ground):
 class Person:
     def __init__(self, actor, kind, candidate, z, mesh_asset, animation_class, collapse_length):
         self.actor, self.kind = actor, kind
+        self.zone_id, self.zone_name = candidate["zone_id"], candidate["zone_name"]
         self.xy, self.yaw, self.z = tuple(candidate["xy"]), candidate["yaw"], z
         self.route = candidate["route"]
         self.route_index = 1
@@ -422,11 +450,33 @@ def _new_person(world, name, candidate, kind, z, mesh, animation, collapse):
         raise
 
 
+def _route_distance(point, route):
+    """点到巡游折线的距离，避免人物走动后再次靠近病人。"""
+    best = math.inf
+    for a, b in zip(route, route[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = dx * dx + dy * dy
+        t = max(0.0, min(1.0, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length)) if length else 0.0
+        best = min(best, math.hypot(point[0] - a[0] - t * dx, point[1] - a[1] - t * dy))
+    return best
+
+
 def _prepare(data):
     world = _context().world
     kind = data["kind"]
     if kind not in ("armed_person", "patient"):
         raise ValueError("不支持的人物类型")
+    zone_id = data["candidates"][0]["zone_id"]
+    for person in (*_people.values(), *_pending.values()):
+        if person.zone_id == zone_id and person.kind == kind and _valid(person.actor):
+            label = "病人" if kind == "patient" else "持刀人员"
+            raise ValueError(f"{person.zone_name}已有{label}，请先移除原目标")
+    neighbors = []
+    origin = _context().origin()
+    for person in (*_people.values(), *_pending.values()):
+        if person.zone_id == zone_id and _valid(person.actor):
+            p = person.actor.get_actor_location()
+            neighbors.append((person, (p.x / 100 + origin[0], p.y / 100 + origin[1])))
     mesh, animation = unreal.load_asset(_SKELETON), unreal.load_class(None, _ANIMATION)
     collapse = unreal.load_asset(_COLLAPSE)
     if mesh is None or animation is None or collapse is None:
@@ -450,6 +500,14 @@ def _prepare(data):
     _reserved_names.add(name)
     for candidate in data["candidates"]:
         xy, yaw = candidate["xy"], candidate["yaw"]
+        if any(math.hypot(xy[0] - feet[0], xy[1] - feet[1]) < _PERSON_SEPARATION_M for _, feet in neighbors):
+            continue
+        if kind == "armed_person":
+            if any(_route_distance(feet, candidate["route"]) < _PERSON_SEPARATION_M for _, feet in neighbors):
+                continue
+        elif any(not person.external and _route_distance(xy, person.route) < _PERSON_SEPARATION_M
+                 for person, _ in neighbors):
+            continue
         z = _support(xy, yaw, patient=kind == "patient")
         if z is None or not _clear(xy, z, patient=kind == "patient", yaw=yaw):
             continue
@@ -477,14 +535,15 @@ def _prepare(data):
         except Exception:
             _release(name)
             raise
-    raise ValueError("指定地点 100 米内没有平整、净空足够且未被占用的人行道落点")
+    raise ValueError("没有满足人员间距、地面平整和净空要求的人行道落点，请调整位置后重试")
 
 
 def _release(name):
     person = _pending.pop(name, None) or _people.pop(name, None)
     if person is not None:
-        if _demo_targets.get(person.kind) == name:
-            _demo_targets.pop(person.kind)
+        key = (person.zone_id, person.kind)
+        if _demo_targets.get(key) == name:
+            _demo_targets.pop(key)
         if person.weapon is not None and _valid(person.weapon):
             person.weapon.destroy_actor()
         if _valid(person.actor):
@@ -570,7 +629,7 @@ def _execute(data):
         component.set_mobility(unreal.ComponentMobility.MOVABLE)
         person.update_weapon()
     _people[name] = person
-    _demo_targets[person.kind] = name
+    _demo_targets[(person.zone_id, person.kind)] = name
     _pending.pop(name)
     if _tick_handle is None:
         _last_time = unreal.GameplayStatics.get_time_seconds(context.world)

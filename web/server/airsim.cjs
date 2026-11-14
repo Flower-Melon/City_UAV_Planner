@@ -123,24 +123,52 @@ module.exports = class AirsimController {
     this.updateUe();
   }
 
-  // CityNPC 视频输出：本机 TCP，UE 发 [u32 头长][头 JSON][u32 图长][JPEG]，网页服务回一行 JSON 选择无人机与模式。
+  // UE当前只有一个采集相机；收到对应帧后切换到下一架，并按帧内身份分发。
+  selectUeCamera(advance = false) {
+    const ue = this.ue;
+    if (!ue?.wanted.length) return;
+    const index = ue.wanted.findIndex(item => item.camera === ue.camera);
+    const wanted = ue.wanted[advance ? (index + 1) % ue.wanted.length : Math.max(0, index)];
+    const fps = ue.wanted.some(item => item.fps === 0) ? 0 : Math.max(...ue.wanted.map(item => item.fps));
+    const control = JSON.stringify({drone: wanted.camera, mode: wanted.mode, fps}) + '\n';
+    ue.camera = wanted.camera;
+    if (ue.control !== control) {
+      ue.control = control; ue.switchedAt = Date.now();
+      if (ue.connected) ue.socket.write(control);
+    }
+  }
+
   updateUe() {
     const clients = [...this.streams];
     if (!clients.length) {
-      if (this.ue) { const old = this.ue; this.ue = null; old.socket.destroy(); }
+      if (this.ue) {
+        const old = this.ue; this.ue = null;
+        clearInterval(old.watchdog); old.socket.destroy();
+      }
       return;
     }
-    const wanted = clients[clients.length - 1];
-    const control = JSON.stringify({drone: wanted.camera, mode: wanted.mode, fps: wanted.fps}) + '\n';
+    const cameras = new Map();
+    for (const client of clients) {
+      const previous = cameras.get(client.camera);
+      cameras.set(client.camera, {camera: client.camera,
+        mode: client.mode === 'capture' || previous?.mode === 'capture' ? 'capture' : 'off',
+        fps: client.fps === 0 || previous?.fps === 0 ? 0 : Math.max(client.fps, previous?.fps || 0)});
+    }
+    const wanted = [...cameras.values()];
     if (this.ue) {
-      if (this.ue.control !== control && this.ue.connected) this.ue.socket.write(control);
-      this.ue.control = control;
+      this.ue.wanted = wanted; this.selectUeCamera();
       return;
     }
     const socket = net.createConnection({host: '127.0.0.1', port: UE_VIDEO_PORT});
-    const ue = this.ue = {socket, control, connected: false, buffer: Buffer.alloc(0)};
+    const ue = this.ue = {socket, wanted, control: null, camera: null, switchedAt: Date.now(),
+      connected: false, buffer: Buffer.alloc(0)};
+    this.selectUeCamera();
     socket.setNoDelay(true);
     socket.on('connect', () => { ue.connected = true; socket.write(ue.control); });
+    ue.watchdog = setInterval(() => {
+      if (this.ue === ue && Date.now() - ue.switchedAt > 1000) this.selectUeCamera(true);
+    }, 500);
+    ue.watchdog.unref();
     socket.on('data', chunk => {
       ue.buffer = Buffer.concat([ue.buffer, chunk]);
       for (;;) {
@@ -153,12 +181,14 @@ module.exports = class AirsimController {
         try { head = JSON.parse(ue.buffer.subarray(4, 4 + headLength).toString('utf8')); } catch {}
         const jpeg = Buffer.from(ue.buffer.subarray(8 + headLength, 8 + headLength + imageLength));
         ue.buffer = ue.buffer.subarray(8 + headLength + imageLength);
+        this.frames.set(head.drone, {data: jpeg, updated_at: head.t || Date.now(), width: head.w, height: head.h});
         this.broadcast(head.drone, jpeg, head.t || Date.now());
+        if (this.ue === ue && head.drone === ue.camera && ue.wanted.length > 1) this.selectUeCamera(true);
       }
     });
     const retry = () => {
       if (this.ue !== ue) return;
-      this.ue = null;
+      this.ue = null; clearInterval(ue.watchdog); socket.destroy();
       setTimeout(() => this.updateUe(), 2000).unref();
     };
     socket.on('error', retry);

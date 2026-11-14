@@ -55,6 +55,10 @@ def start_session(drone_id, zone_id, directory, speed_limit_kmh=60.0):
             raise RuntimeError('监控无人机仍有飞行任务，无法开始测速')
         session['lock'] = lock
         session['log_path'] = editor_log()
+        from web.utils.vehicle_fusion import VehicleFusion
+        # 使用探头现成的评估字段辅助单车演示的身份归属，车牌仍来自实际读牌记录。
+        client.call('simRunConsoleCommand', 'citynpc.ProbeTruthFields 1')
+        session['fusion'] = VehicleFusion(zone_id, session['log_path'], speed_limit_kmh)
         frame = WorldFrame(client)
         _, _, session['origin'] = frame.vehicle(name)
         session['scale'] = frame.scale
@@ -71,9 +75,14 @@ def start_session(drone_id, zone_id, directory, speed_limit_kmh=60.0):
 
 
 def step_session(session):
-    """处理一帧，返回车辆速度和新增超速证据。"""
+    """处理一帧，同时读取本街区探头并更新联合判别。"""
     # 单次取图/推理失败不销毁轨迹；下次有效曝光按仿真时间淘汰过期观测。
-    return _step_session(session)
+    report = _step_session(session)
+    context = geometry_request(session['client'], 'fusion_context', log_path=session['log_path'])
+    report['fusion'] = session['fusion'].step(context, report['vehicles'], report['alerts'],
+                                             report.get('simulation_time_s'))
+    _write_json(session['directory'] / 'latest.json', report)
+    return report
 
 
 def close_session(session):
@@ -118,7 +127,6 @@ def _step_session(session):
     alerts = _save_evidence(session, image, exposure, speeding) if speeding else []
     report = {'status': 'running', 'frames': session['frames'], 'vehicles': vehicles, 'alerts': alerts,
               'unlocated_count': len(detections) - len(localized), **exposure}
-    _write_json(session['directory'] / 'latest.json', report)
     return report
 
 
@@ -178,7 +186,7 @@ def _update_tracks(session, detections, timestamp_s, *, time_uncertainty_s=0.0):
         """detections需包含position_m；只对连续、无歧义的观测生成超速事件。"""
         if not math.isfinite(timestamp_s) or timestamp_s < 0:
             raise ValueError("拍摄时间无效")
-        if not math.isfinite(time_uncertainty_s) or not 0 <= time_uncertainty_s <= 0.15:
+        if not math.isfinite(time_uncertainty_s) or not 0 <= time_uncertainty_s <= 1.0:
             raise ValueError("拍摄时间误差过大")
         if session['last_track_time'] is not None and timestamp_s <= session['last_track_time']:
             _reset_tracks(session)
@@ -290,13 +298,13 @@ def _read_frame(session):
     if session['clock_rate'] is None:
         return (None, {'status': 'timing_unstable'})
     timestamp, uncertainty = _frame_time(session, stamp)
-    if uncertainty > 0.15:
+    if uncertainty > _timing_tolerance(session):
         _sync_clock(session)
         if session['clock_rate'] is None:
             return (None, {'status': 'timing_unstable'})
         timestamp, uncertainty = _frame_time(session, stamp)
-        if uncertainty > 0.15:
-            return (None, {'status': 'timing_unstable'})
+        if uncertainty > _timing_tolerance(session):
+            return (None, {'status': 'timing_unstable', 'time_uncertainty_s': uncertainty})
     raw = response.get('image_data_uint8')
     if isinstance(raw, str):
         raw = raw.encode('utf-8', 'surrogateescape')
@@ -340,7 +348,7 @@ def _sync_clock(session):
         elapsed = current['simulation_time_s'] - previous['simulation_time_s']
         changed = (dt <= 0 or elapsed <= 0 or current['dilation'] != previous['dilation'])
         if not changed and session['clock_rate'] is not None:
-            changed = abs(elapsed - dt * session['clock_rate']) > 0.15
+            changed = abs(elapsed - dt * session['clock_rate']) > max(0.15, current['error_s'] + previous['error_s'])
     if changed:
         _reset_tracks(session)
         session['road_cache'].clear()
@@ -359,6 +367,11 @@ def _sync_clock(session):
     session['clock_anchor'] = current
     session['clock_synced_at'] = time.monotonic()
     return changed
+
+
+def _timing_tolerance(session):
+    # 低帧率时允许一帧量级的曝光误差，误差仍进入测速下界计算。
+    return min(1.0, max(0.15, session['clock_anchor']['frame_delta_s'] * 1.5))
 
 
 def _frame_time(session, stamp):
@@ -519,6 +532,7 @@ def _save_evidence(session, image, exposure, speeding):
         draw.line([tuple(p) for p in target['bbox_xyxyxyxy']] + [tuple(target['bbox_xyxyxyxy'][0])], fill='red', width=3)
         draw.text((max(0, x1), max(0, y1 - 24)), label, fill='red', font=font)
         alerts.append({
+            **exposure, 'camera_position_m': exposure['position_m'],
             'event_id': f"vehicle_{target['track_id']}", 'track_id': target['track_id'],
             'image': filename, 'source_image': f'capture/{filename}',
             'speed_kmh': target['speed_kmh'], 'speed_limit_kmh': target['speed_limit_kmh'],
@@ -526,7 +540,6 @@ def _save_evidence(session, image, exposure, speeding):
             'position_m': target['position_m'], 'trajectory': target['trajectory'],
             'description': f"车辆 {target['track_id']} 车速 {target['speed_kmh']:.1f} km/h，限速 {target['speed_limit_kmh']:g} km/h",
             'detections': [{'status': 'speeding', 'label': label, 'bbox': box}],
-            **exposure,
         })
     annotated.save(session['directory'] / (stem + '.annotated.jpg'), quality=95)
     _write_json(session['directory'] / (stem + '.json'), {'alerts': alerts})
@@ -546,6 +559,15 @@ def _dispatch(request):
     world = unreal.EditorLevelLibrary.get_game_world()
     if world is None:
         raise RuntimeError('请先启动UE Play仿真')
+    if request['operation'] == 'fusion_context':
+        import sys
+        module = sys.modules.get('city_abnormal_runtime')
+        targets = []
+        for name, item in getattr(module, '_vehicles', {}).items():
+            if unreal.SystemLibrary.is_valid(item.actor) and item.actor.get_world() == world:
+                targets.append({'id': name, 'zone_id': item.route['zone_id'],
+                                'route': item.route['points']})
+        return {'simulation_time_s': unreal.GameplayStatics.get_time_seconds(world), 'targets': targets}
     if request['operation'] == 'clock':
         import time
         return {'simulation_time_s': unreal.GameplayStatics.get_time_seconds(world),

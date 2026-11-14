@@ -4,11 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>城市无人机巡查平台</title>
-  <link rel="stylesheet" href="./css/styles.css?v=20261111-camera-zoom-2">
-  <script src="./js/map.js?v=20261110-probes" defer></script>
-  <script src="./js/airsim.js?v=20261111-camera-zoom" defer></script>
-  <script src="./js/llm.js?v=20261102-flight-settings" defer></script>
-  <script src="./js/abnormal.js?v=20261111-camera-zoom" defer></script>
+  <link rel="stylesheet" href="./css/styles.css?v=20261114-monitor-desk">
+  <script src="./js/map.js?v=20261114-original-vehicle-marker" defer></script>
+  <script src="./js/airsim.js?v=20261114-fleet" defer></script>
+  <script src="./js/traffic.js?v=20261114-monitor-desk" defer></script>
+  <script src="./js/llm.js?v=20261114-monitor-desk" defer></script>
+  <script src="./js/abnormal.js?v=20261114-vehicle-modes" defer></script>
 </head>
 <body>
   <header>
@@ -27,13 +28,15 @@
       <div id="coords">X — · Y — m</div>
       <div class="map-key" aria-label="地图符号图例"><span class="native">道路拓扑</span><span class="probe">交通探头</span><span class="drone">无人机</span></div>
     </section>
-    <aside>
+    <aside aria-label="巡查工作台">
+      <div class="workspace-heading"><div><span class="workspace-eyebrow">巡查控制台</span><strong>工作台</strong></div><span class="workspace-note">规划 · 监控 · 处置</span></div>
       <div class="sidebar-tabs" role="tablist" aria-label="右侧工具切换">
-        <button id="map-tools-tab" type="button" role="tab" aria-selected="true" aria-controls="map-tools-panel">地图工具</button>
-        <button id="llm-tab" type="button" role="tab" aria-selected="false" aria-controls="llm-panel" tabindex="-1">LLM助手</button>
-        <button id="abnormal-tab" type="button" role="tab" aria-selected="false" aria-controls="abnormal-panel" tabindex="-1">异常场景</button>
+        <button id="llm-tab" type="button" role="tab" aria-selected="true" aria-controls="llm-panel">任务</button>
+        <button id="fleet-tab" type="button" role="tab" aria-selected="false" aria-controls="uav-camera-panel" tabindex="-1">机队 <span id="fleet-tab-count" class="tab-count" hidden>0</span></button>
+        <button id="abnormal-tab" type="button" role="tab" aria-selected="false" aria-controls="abnormal-panel" tabindex="-1">场景</button>
+        <button id="map-tools-tab" type="button" role="tab" aria-selected="false" aria-controls="map-tools-panel" tabindex="-1">地图</button>
       </div>
-      <div id="map-tools-panel" class="sidebar-content" role="tabpanel" aria-labelledby="map-tools-tab">
+      <div id="map-tools-panel" class="sidebar-content" role="tabpanel" aria-labelledby="map-tools-tab" hidden>
       <section id="zones-panel">
         <h2>查找区域、任务点与探头</h2>
         <label class="sr-only" for="search">名称或编号</label>
@@ -78,53 +81,40 @@
         <div id="object-detail" class="object-detail">点击地图中的地块、任务点或探头，查看详情。</div>
       </section>
       </div>
-      <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab" hidden>
-        <div class="section-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" title="终止当前任务、复位全部无人机并清除轨迹">新任务</button></div>
-        <p class="muted llm-intro">输入任务后自动规划并开始 AirSim 搜索，沿路拍照并识别异常。</p>
-        <div class="llm-model-settings">
-          <label for="llm-model-select">模型服务</label>
-          <select id="llm-model-select" aria-describedby="llm-model-info" disabled>
-            <option value="" disabled selected>请选择</option>
-            <option value="openai">云端模型</option>
-            <option value="ollama">本地模型</option>
-          </select>
-          <p id="llm-model-info" class="muted" role="status" aria-live="polite">正在读取模型配置…</p>
-          <button id="llm-model-retry" type="button" hidden>重新读取</button>
-        </div>
-        <div class="llm-flight-settings" role="group" aria-label="飞行参数设置">
-          <button type="button" data-flight-setting="max_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>高度上限</span><strong><span id="llm-max-height-value">60</span><small>米</small></strong></button>
-          <button type="button" data-flight-setting="flight_speed" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>飞行速度</span><strong><span id="llm-flight-speed-value">30</span><small>米/秒</small></strong></button>
-          <button type="button" data-flight-setting="flight_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>巡查高度</span><strong><span id="llm-flight-height-value">15</span><small>米</small></strong></button>
-        </div>
-        <p class="muted llm-flight-hint">点击修改 · 本批任务通用 · 执行中锁定</p>
-        <form id="llm-form">
-          <label class="field" for="llm-instruction">任务描述</label>
-          <textarea id="llm-instruction" rows="4" maxlength="4000" required placeholder="例如：搜索地图东边的学校（自动选择无人机）"></textarea>
-          <button id="llm-submit" type="submit">规划并开始搜索 <span aria-hidden="true">→</span></button>
+      <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab">
+        <div class="section-heading llm-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" title="终止当前任务、复位全部无人机并清除轨迹">新任务</button></div>
+        <p class="muted llm-intro">描述巡查区域与目标，自动规划并执行。</p>
+        <form id="llm-form" class="llm-composer">
+          <label class="field" for="llm-instruction">你想巡查哪里？</label>
+          <textarea id="llm-instruction" rows="3" maxlength="4000" required placeholder="例如：巡查第一学校，识别异常人员。"></textarea>
+          <div class="llm-composer-footer"><span>自动选机 · 沿路识别</span><button id="llm-submit" type="submit">规划并开始搜索 <span aria-hidden="true">→</span></button></div>
         </form>
+        <div class="llm-settings-card">
+          <div class="llm-settings-heading"><h3>模型设置</h3><span>任务规划与图像识别</span></div>
+          <div class="llm-model-settings">
+            <label for="llm-model-select">模型服务</label>
+            <select id="llm-model-select" aria-describedby="llm-model-info" disabled>
+              <option value="" disabled selected>请选择</option>
+              <option value="openai">云端模型</option>
+              <option value="ollama">本地模型</option>
+            </select>
+            <p id="llm-model-info" class="muted" role="status" aria-live="polite">正在读取模型配置…</p>
+            <button id="llm-model-retry" type="button" hidden>重新读取</button>
+          </div>
+        </div>
         <p id="llm-status" class="llm-status" role="status" aria-live="polite">正在检查执行状态…</p>
-        <section id="llm-vision" class="llm-vision" hidden aria-label="巡查异常识别">
-          <div class="section-heading"><h2>异常识别 <span id="llm-anomaly-count" class="llm-anomaly-count">0</span></h2></div>
-          <p id="llm-vision-error" class="llm-vision-error" hidden></p>
-          <div id="llm-anomalies" class="llm-anomalies"></div>
-        </section>
-        <section id="llm-traffic" class="llm-vision" hidden aria-label="高空车辆测速">
-          <div class="section-heading"><h2>超速车辆 <span id="llm-speeding-count" class="llm-anomaly-count">0</span></h2></div>
-          <p id="llm-traffic-status" class="muted"></p>
+        <section id="llm-traffic" class="llm-vision traffic-workspace" hidden aria-label="车辆监管">
+          <div class="section-heading traffic-heading"><h2>车辆监管 <span id="llm-speeding-count" class="llm-anomaly-count" hidden>0</span></h2><span id="llm-traffic-status" class="traffic-live"></span></div>
           <p id="llm-traffic-error" class="llm-vision-error" hidden></p>
-          <div id="llm-vehicle-speeds" class="muted"></div>
-          <div id="llm-speeding-alerts" class="llm-anomalies"></div>
+          <div id="llm-traffic-targets" class="traffic-targets" aria-live="polite"></div>
         </section>
-        <details id="llm-history" class="llm-history" hidden>
-          <summary>前面的对话</summary><div id="llm-messages"></div>
-        </details>
         <section id="llm-result" hidden>
           <p id="llm-submitted" class="muted llm-submitted"></p>
           <div class="section-heading"><h2 id="llm-answer-heading">模型回答</h2><span id="llm-elapsed" class="muted"></span></div>
           <p id="llm-answer" class="llm-answer"></p>
           <p id="llm-queue" class="llm-answer llm-queue" hidden></p>
-          <details id="llm-command-panel" class="llm-command-panel" open hidden>
-            <summary>最终指令</summary>
+          <details id="llm-command-panel" class="llm-command-panel" hidden>
+            <summary>查看任务指令</summary>
             <pre id="llm-commands" tabindex="0" aria-label="通过校验的搜索指令"></pre>
           </details>
           <form id="llm-followup-form" class="llm-followup" hidden>
@@ -133,19 +123,28 @@
             <button id="llm-followup-submit" type="submit">发送补充 <span aria-hidden="true">→</span></button>
           </form>
         </section>
+        <section id="llm-vision" class="llm-vision" hidden aria-label="巡查异常识别">
+          <div class="section-heading"><h2>人员异常识别 <span id="llm-anomaly-count" class="llm-anomaly-count">0</span></h2></div>
+          <p id="llm-vision-error" class="llm-vision-error" hidden></p>
+          <div id="llm-anomalies" class="llm-anomalies"></div>
+        </section>
+        <details id="llm-history" class="llm-history" hidden>
+          <summary>前面的对话</summary><div id="llm-messages"></div>
+        </details>
       </div>
       <div id="abnormal-panel" class="sidebar-content abnormal-panel" role="tabpanel" aria-labelledby="abnormal-tab" hidden>
-        <h2>生成异常场景</h2>
-        <p class="muted">选择类型后点击「地图选点生成」，再点击地图。车辆在机动车道上生成，人员在附近可用的人行道上生成。</p>
-        <label class="field" for="abnormal-kind">异常类型</label>
-        <select id="abnormal-kind"><option value="vehicle">异常车辆</option><option value="armed_person">持刀人员</option><option value="patient">病人</option></select>
-        <div class="abnormal-buttons"><button id="abnormal-pick" type="button">地图选点生成</button><button id="abnormal-cancel" type="button" hidden>取消选点</button></div>
-        <p id="abnormal-operation" class="abnormal-status" role="status" aria-live="polite">选择类型后，可在地图上生成新目标。</p>
-        <p class="muted">车辆选点仅作参考，可点击目标地块或附近道路，系统自动选择周边车道上的生成位置，并沿地块外围顺时针闭环行驶，初始行为为突然加速。人员在选点 100 米内寻找可用人行道。</p>
+        <h2>异常场景</h2>
+        <p class="muted">选择街区，布置场景并查看现场画面。</p>
+        <div class="abnormal-zone-card">
+          <div><span class="abnormal-caption">当前街区</span><strong id="abnormal-zone-name">尚未选择</strong><span id="abnormal-zone-hint" class="muted">在地图上点击目标街区</span></div>
+          <button id="abnormal-zone-pick" type="button">地图选择</button>
+        </div>
+        <div id="abnormal-scenes" class="abnormal-scenes" aria-label="场景布置"></div>
+        <div class="abnormal-pick-status"><p id="abnormal-operation" class="abnormal-status" role="status" aria-live="polite">选中街区后，添加需要演示的场景。</p><button id="abnormal-cancel" type="button" hidden>取消选点</button></div>
         <section>
-          <div class="section-heading"><h2>已生成目标 <span id="abnormal-count">0</span></h2><span id="abnormal-connection" class="muted" role="status">正在连接…</span></div>
+          <div class="section-heading"><h2>街区目标 <span id="abnormal-count">0</span></h2><span id="abnormal-connection" class="muted" role="status">正在连接…</span></div>
           <div id="abnormal-list" class="abnormal-list" aria-label="异常目标列表"></div>
-          <p id="abnormal-empty" class="muted">暂无由 API 生成的目标。</p>
+          <p id="abnormal-empty" class="muted">选择街区后查看现场目标。</p>
         </section>
         <section id="abnormal-detail" hidden>
           <div class="section-heading"><h2 id="abnormal-title">当前目标</h2><button id="abnormal-locate" type="button">地图定位</button></div>
@@ -153,23 +152,32 @@
           <p id="abnormal-action"></p>
           <div id="abnormal-vehicle-controls" hidden>
             <label class="field" for="abnormal-behavior">车辆行为</label>
-            <div class="abnormal-buttons"><select id="abnormal-behavior"><option value="mixed">混合（随机切换）</option><option value="cruise">正常巡航</option><option value="surge" selected>突然加速</option><option value="weave">蛇形行驶</option><option value="brake">急刹减速</option><option value="wrong_way">逆向行驶</option><option value="stop">停止</option></select><button id="abnormal-apply" type="button">应用</button></div>
+            <div class="abnormal-buttons"><select id="abnormal-behavior"><option value="speeding" selected>超速行驶</option><option value="wrong_way">逆向行驶（超速）</option><option value="mixed">混合（持续超速，偶尔逆行）</option></select><button id="abnormal-apply" type="button">应用</button></div>
           </div>
         </section>
-      </div>
       <section id="abnormal-camera-panel" class="camera-panel" aria-label="异常目标实时监控" hidden>
         <div class="camera-heading"><h2>异常目标视角</h2><div class="camera-controls"><span class="muted">独立跟随镜头</span><button id="abnormal-camera-expand" type="button" aria-haspopup="dialog" aria-controls="abnormal-camera-dialog" aria-expanded="false" title="放大实时画面">放大</button></div></div>
         <div class="camera-view"><img id="abnormal-image" alt="所选异常目标的仿真实时画面" hidden><div id="abnormal-camera-message" class="camera-placeholder" role="status">选择一个已生成目标以查看画面</div></div>
       </section>
-      <section id="uav-camera-panel" class="camera-panel" aria-label="无人机实时监控">
+      </div>
+      <section id="uav-camera-panel" class="sidebar-content camera-panel fleet-panel" role="tabpanel" aria-labelledby="fleet-tab" hidden>
         <div class="camera-heading">
-          <h2>无人机视角</h2>
-          <div class="camera-controls"><label class="sr-only" for="camera-drone">选择无人机</label><select id="camera-drone">
-            <option>UAV_01</option><option>UAV_02</option><option>UAV_03</option><option>UAV_04</option><option>UAV_05</option>
-          </select><button id="camera-expand" type="button" aria-haspopup="dialog" aria-controls="camera-dialog" aria-expanded="false" title="放大实时画面">放大</button></div>
+          <div><h2>无人机机队</h2><p class="muted">同时查看机队状态与现场画面</p></div>
+          <div class="camera-controls"><button id="camera-back" type="button" hidden>全部画面</button><button id="camera-expand" type="button" aria-haspopup="dialog" aria-controls="camera-dialog" aria-expanded="false" title="展开监控墙">展开监控墙</button></div>
           <span id="airsim-status" role="status">正在连接 AirSim…</span>
         </div>
-        <div id="drone-cameras" class="camera-grid"></div>
+        <div class="fleet-summary" aria-label="机队概况"><div><span>在线无人机</span><strong id="fleet-total">—</strong></div><div><span>飞行中</span><strong id="fleet-active">—</strong></div><div><span>地面待命</span><strong id="fleet-idle">—</strong></div></div>
+        <div class="fleet-flight">
+          <div class="llm-settings-heading"><h3>任务飞行参数</h3><span>本次任务通用 · 点击修改</span></div>
+          <div class="llm-flight-settings" role="group" aria-label="飞行参数设置">
+            <button type="button" data-flight-setting="max_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>高度上限</span><strong><span id="llm-max-height-value">60</span><small>米</small></strong></button>
+            <button type="button" data-flight-setting="flight_speed" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>飞行速度</span><strong><span id="llm-flight-speed-value">30</span><small>米/秒</small></strong></button>
+            <button type="button" data-flight-setting="flight_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>巡查高度</span><strong><span id="llm-flight-height-value">15</span><small>米</small></strong></button>
+          </div>
+        </div>
+        <div class="fleet-toolbar"><h3>实时视角 <span id="fleet-visible-count">0</span></h3><label class="sr-only" for="camera-filter">显示无人机</label><select id="camera-filter"><option value="active">飞行中</option><option value="all">全部无人机</option></select></div>
+        <div id="fleet-empty" class="fleet-empty" role="status"><strong id="fleet-empty-title">等待仿真连接</strong><p id="fleet-empty-message">连接后将在这里显示无人机实时画面。</p><button id="fleet-show-all" type="button" hidden>查看全部无人机</button></div>
+        <div id="drone-cameras" class="camera-grid fleet-grid"></div>
       </section>
     </aside>
   </main>

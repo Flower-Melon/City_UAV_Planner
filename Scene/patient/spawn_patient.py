@@ -8,15 +8,16 @@ if __name__ == "__main__" and not __package__:
     __package__ = "Scene.patient"
 
 
-def spawn_patient(position) -> str:
-    """输入 UE 世界 (x, y) 米制坐标，返回唯一 patient_ID。
+def spawn_patient(position=None, *, zone_id=None) -> str:
+    """按街区zone_id随机生成，或在position附近生成，返回唯一patient_ID。
 
-    在 100 米内选择可用人行道，自动贴地；生成后不适约 6 秒、倒地并保持卧地。
-    每次新增一名病人；没有合适落点、素材缺失或仿真不可连接时抛出异常。
+    指定position时在100米内选点；仅指定zone_id时随机选择街区人行道。
+    与持刀人员当前位置及日常巡游段保持30米间距；生成后不适约6秒、倒地并保持卧地。
+    同一街区最多一名病人；已有目标或没有合适落点时抛出异常。
     """
     from ..armed_person.spawn_armed_person import _spawn_person
 
-    return _spawn_person(position, "patient")
+    return _spawn_person(position, "patient", zone_id=zone_id)
 
 
 if __name__ == "__main__":
