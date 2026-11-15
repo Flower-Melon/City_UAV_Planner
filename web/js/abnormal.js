@@ -32,6 +32,8 @@
   let targets = [], selected = null, currentZone = null, picking = false, busy = false, online = false;
   let timer, frameTimer, imageUrl, frameController, frameGeneration = 0, stateGeneration = 0, session = null, listKey = '';
   let pending;
+  let pursuit = null;
+  const pursuitActive = () => pursuit && !['complete', 'failed', 'stopped'].includes(pursuit.status);
   try { pending = JSON.parse(sessionStorage.getItem(storageKey)); } catch { /* 禁止存储时仍可使用。 */ }
   const visible = () => !$('abnormal-panel').hidden && !document.hidden;
 
@@ -55,8 +57,15 @@
     $('abnormal-zone-name').textContent = currentZone?.properties.name || '尚未选择';
     $('abnormal-zone-hint').textContent = currentZone ? '可自动布置，也可在地图上指定位置' : '在地图上点击目标街区';
     $('abnormal-cancel').hidden = !picking;
-    $('abnormal-apply').disabled = busy || !online;
-    for (const button of document.querySelectorAll('.abnormal-remove')) button.disabled = busy || !online;
+    $('abnormal-apply').disabled = busy || !online || pursuitActive() && pursuit.vehicle_id === selected;
+    $('abnormal-behavior').disabled = $('abnormal-apply').disabled;
+    $('abnormal-escape').dataset.escapeTarget = selected || '';
+    for (const button of document.querySelectorAll('[data-escape-target]')) {
+      button.disabled = busy || !online || !!pursuitActive();
+      button.textContent = pursuitActive() && pursuit.vehicle_id === button.dataset.escapeTarget ? '追踪中…' : '逃逸';
+    }
+    for (const button of document.querySelectorAll('.abnormal-remove'))
+      button.disabled = busy || !online || pursuitActive() && pursuit.vehicle_id === button.dataset.target;
     for (const [kind, card] of sceneCards) {
       const target = targets.find(target => target.zone_id === currentZone?.id && target.kind === kind);
       const working = pending?.data.kind === kind && pending.data.zone_id === currentZone?.id
@@ -74,7 +83,8 @@
       card.secondary.textContent = target ? '移除' : '指定位置';
       card.secondary.hidden = kind === 'vehicle' && !target;
       card.secondary.setAttribute('aria-label', `${scenes[kind].title}：${target ? '移除' : '指定位置'}`);
-      card.secondary.disabled = busy || !currentZone || !online || !window.liveMap?.isReady();
+      card.secondary.disabled = busy || !currentZone || !online || !window.liveMap?.isReady()
+        || pursuitActive() && pursuit.vehicle_id === target?.id;
       card.root.setAttribute('aria-busy', String(!!working));
     }
   }
@@ -116,7 +126,16 @@
         remove.className = 'abnormal-remove'; remove.textContent = '移除';
         remove.setAttribute('aria-label', `移除 ${names[target.kind]} ${target.id}`);
         remove.onclick = () => void runJob('remove', {target_id: target.id});
-        row.append(button, remove);
+        remove.dataset.target = target.id;
+        row.append(button);
+        if (target.kind === 'vehicle') {
+          const escape = document.createElement('button'); escape.type = 'button';
+          escape.className = 'abnormal-escape'; escape.dataset.escapeTarget = target.id;
+          escape.setAttribute('aria-label', `启动 ${target.id} 逃逸与追踪`);
+          escape.onclick = () => void runJob('escape', {target_id: target.id});
+          row.append(escape);
+        }
+        row.append(remove);
         return row;
       }));
     }
@@ -135,7 +154,10 @@
         $('abnormal-behavior').dataset.target = selected;
       }
     }
-    controls();
+    renderPursuit(); controls();
+  }
+  function renderPursuit() {
+    if (pursuit) window.pursuitView?.update(pursuit);
   }
   function setZone(zone) {
     if (!zone || zone.id === currentZone?.id) return;
@@ -181,6 +203,7 @@
     savePending(operation);
     controls();
     message(route === 'spawn' ? `正在生成${names[data.kind]}，请等待仿真返回…`
+      : route === 'escape' ? '正在检查机队、停止车辆监测并交接追踪…'
       : route === 'remove' ? `正在移除 ${data.target_id}…` : '正在设置车辆行为…');
     try {
       await json(`/api/abnormal/${route}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(operation.data)});
@@ -211,7 +234,7 @@
           message(`已移除：${job.result.target_id}`);
         } else {
           selected = job.result.target_id; clearFrame();
-          message(job.result.warning || (pending.route === 'spawn'
+          message(job.result.warning || (pending.route === 'escape' ? '已进入逃逸追踪流程，可在无人机机队查看三机画面。' : pending.route === 'spawn'
             ? `已在${job.result.zone_name}添加${names[pending.data.kind]}。` : '车辆行为已更新。'), !!job.result.warning);
         }
       } else message(`操作失败：${job.error}`, true);
@@ -240,6 +263,9 @@
           clearFrame(selected ? '正在等待实时画面…' : '选择一个已生成目标以查看画面');
         }
         online = data.connected; targets = data.targets;
+        const previousStatus = pursuit?.status;
+        pursuit = data.pursuit;
+        if (previousStatus !== pursuit?.status) window.dispatchEvent(new Event('vehicle-pursuit:change'));
         if (!currentZone && pending?.data.zone_id) setZone(window.liveMap?.getZone(pending.data.zone_id));
         if (!targets.some(t => t.id === selected && t.zone_id === currentZone?.id)) {
           const changed = selected !== null;
@@ -297,6 +323,9 @@
   $('abnormal-cancel').onclick = () => { cancelPick(); message('已取消地图选点。'); };
   $('abnormal-locate').onclick = () => window.liveMap?.centerTarget(selected);
   $('abnormal-apply').onclick = () => void runJob('behavior', {target_id: selected, behavior: $('abnormal-behavior').value});
+  $('abnormal-escape').onclick = () => void runJob('escape', {target_id: selected});
+  window.vehiclePursuit = {start: id => runJob('escape', {target_id: id}),
+    get active() { return !!pursuitActive(); }, get busy() { return busy; }};
   window.addEventListener('keydown', event => { if (event.key === 'Escape' && picking) $('abnormal-cancel').click(); });
   window.addEventListener('abnormal:select', event => { $('abnormal-tab').click(); select(event.detail.id); });
   window.addEventListener('map:selection', event => {

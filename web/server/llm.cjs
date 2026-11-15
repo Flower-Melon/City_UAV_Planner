@@ -93,11 +93,14 @@ class MissionExecutor {
     this.rescuePromises = [];
     this.responsePromises = [];
     this.targets = [];
+    this.trafficSuspended = false;
+    this.pursuit = null;
+    this.pursuitPromise = null;
   }
 
   assertIdle() {
     if (this.closed) throw requestError('执行服务已停止，请重启网页服务。', 503);
-    if (this.starting || this.uncertain || this.trafficActive || this.mission && !TERMINAL.has(this.mission.status))
+    if (this.starting || this.uncertain || this.trafficActive || this.pursuitActive || this.mission && !TERMINAL.has(this.mission.status))
       throw requestError('已有搜索任务正在执行或等待确认，请先查看进度。', 409);
   }
 
@@ -149,6 +152,8 @@ class MissionExecutor {
       this.rescuePromises = [];
       this.responsePromises = [];
       this.targets = [];
+      this.trafficSuspended = false;
+      this.pursuit = null;
       tasks.forEach((task, index) => {
         task.task_id = `task_${index + 1}`;
         task.output_directory = newRegionDirectory(this.root);
@@ -196,6 +201,7 @@ class MissionExecutor {
       if (failed || this.closed || this.uncertain) return;
       // 释放旧测速会话的无人机锁后才能转场；最后一个区域保持监测至新任务/复位。
       await this.stopTraffic(workerId);
+      if (this.pursuitActive) await this.pursuitPromise;
       if (this.closed || !queue.length) return;
       const task = queue.shift();
       task.status = 'running'; this.mission.executed = true;
@@ -278,23 +284,27 @@ class MissionExecutor {
   }
 
   async startTraffic(task, workerId) {
+    if (this.trafficSuspended) { task.monitor.traffic.status = 'stopped'; return; }
     if (task.monitor.status !== 'hovering') throw Error('监控无人机尚未就位，不能启动车辆监测。');
     await this.stopTraffic(workerId);
+    if (this.trafficSuspended) { task.monitor.traffic.status = 'stopped'; return; }
     const {mission_id: missionId, traffic_settings: settings} = this.mission;
     if (this.closed) throw Error('测速服务已停止。');
     const state = task.monitor.traffic;
-    const session = {channel: `traffic:${workerId}`, active: true, state, done: null};
+    const session = {channel: `traffic:${workerId}`, active: true, state, done: null, ready: null};
     this.trafficSessions.set(workerId, session);
     state.status = 'starting';
     try {
-      const result = await this.runtime.request('traffic_start', {
+      session.ready = this.runtime.request('traffic_start', {
         mission_id: missionId, task_id: task.task_id, drone_id: task.monitor.drone_id,
         output_directory: task.output_directory,
         zone_id: task.target.zone_id, ...settings
       }, {channel: session.channel, timeoutMs: 60000});
+      const result = await session.ready;
       if (result?.started !== true || result.drone_id !== task.monitor.drone_id)
         throw Error('车辆测速会话未确认启动。');
       if (this.closed) throw Error('测速服务已停止。');
+      if (!session.active) return;
       session.done = this.monitorTraffic(session, task, missionId);
     } catch (error) {
       state.status = this.closed ? 'stopped' : 'failed';
@@ -375,12 +385,72 @@ class MissionExecutor {
   async stopTraffic(workerId) {
     const session = this.trafficSessions.get(workerId);
     if (!session) return;
-    session.active = false;
-    await session.done;
-    this.trafficSessions.delete(workerId);
+    if (!session.stopping) session.stopping = (async () => {
+      session.active = false;
+      if (session.done) await session.done;
+      else {
+        await session.ready?.catch(() => {});
+        await this.runtime.request('traffic_stop', {}, {channel: session.channel, timeoutMs: 15000});
+        this.runtime.cancel(session.channel);
+        session.state.status = 'stopped';
+      }
+      this.trafficSessions.delete(workerId);
+    })();
+    await session.stopping;
   }
 
   get trafficActive() { return [...this.trafficSessions.values()].some(session => session.active); }
+
+  get pursuitActive() { return !!this.pursuit && !['complete', 'failed', 'stopped'].includes(this.pursuit.status); }
+
+  async startPursuit(target) {
+    if (this.closed || this.pursuitActive) throw requestError('已有追踪正在执行或收尾，请等待完成。', 409);
+    const task = this.mission?.tasks.find(item => item.target.zone_id === target.zone_id && item.monitor.status === 'hovering');
+    if (!task) throw requestError('请先让该街区的高空监控无人机就位，再启动车辆逃逸。', 409);
+    const observer = task.monitor.drone_id;
+    const directory = path.join('output', 'vehicle_pursuit', randomUUID());
+    const state = this.pursuit = {status: 'preparing', vehicle_id: target.id, zone_id: target.zone_id,
+      observer_id: observer, duration_s: 120, elapsed_s: 0, output_directory: directory,
+      drone_states: [], position_source: 'ue_global_position', position_updates: 0, evidence_count: 0};
+    // 预检期间也阻止工作组把即将交接的监控机转场。
+    let released;
+    this.pursuitPromise = new Promise(resolve => { released = resolve; });
+    try {
+      const fleet = await this.runtime.request('fleet', {}, {channel: 'fleet', timeoutMs: this.timeoutMs});
+      if (fleet.filter(drone => drone.available).length < 2)
+        throw requestError('追踪需要两架已落地的空闲增援机，请等待巡查机返航。', 409);
+      if (this.closed) throw Error('任务已停止。');
+      this.trafficSuspended = true;
+      this.pursuitPromise = this.runPursuit(state);
+      void this.pursuitPromise.finally(released);
+      return {target_id: target.id, pursuit: structuredClone(state)};
+    } catch (error) {
+      Object.assign(state, {status: 'failed', error: error.message});
+      released();
+      throw error;
+    }
+  }
+
+  async runPursuit(state) {
+    const channel = `pursuit:${state.vehicle_id}`;
+    try {
+      // 等待所有测速通道关闭，释放相机过滤器和高空机锁后再交接。
+      await Promise.all([...this.trafficSessions.keys()].map(id => this.stopTraffic(id)));
+      if (this.closed) throw Error('任务已停止，未启动逃逸。');
+      const result = await this.runtime.request('pursue_vehicle', {
+        target_id: state.vehicle_id, observer_id: state.observer_id,
+        output_directory: state.output_directory
+      }, {channel, timeoutMs: 0, onEvent: event => {
+        if (event?.type === 'pursuit_state') Object.assign(state, event.state);
+      }});
+      Object.assign(state, result);
+      if (state.status !== 'complete') throw Error('追踪未确认完成。');
+    } catch (error) {
+      Object.assign(state, {status: this.closed ? 'stopped' : 'failed', error: error.message});
+    } finally {
+      this.runtime.cancel(channel);
+    }
+  }
 
   writeTaskRecord(task) {
     // 关联信息独立于巡查完成状态：最后一个区域的高空测速可能仍在运行。
@@ -671,12 +741,23 @@ class MissionExecutor {
     if (!this.mission) return null;
     const mission = structuredClone(this.mission);
     mission.traffic = {active: this.trafficActive,
+      suspended: this.trafficSuspended, pursuit: this.pursuit && structuredClone(this.pursuit),
       frames: mission.tasks.reduce((sum, task) => sum + task.monitor.traffic.frames, 0),
       alerts: mission.tasks.flatMap(task => task.monitor.traffic.alerts),
       targets: mission.tasks.flatMap(task => (task.monitor.traffic.fusion?.targets || [])
-        .map(target => ({...target, task_id: task.task_id, drone_id: task.monitor.drone_id}))),
+        .map(target => ({...target, task_id: task.task_id, drone_id: task.monitor.drone_id,
+          ...(this.pursuit?.vehicle_id === target.target_id && this.pursuit.target ?
+            {position_m: this.pursuit.target.position_m, last_seen_s: this.pursuit.target.last_seen_s} : {})}))),
       errors: mission.tasks.filter(task => task.monitor.traffic.error)
         .map(task => ({task_id: task.task_id, error: task.monitor.traffic.error}))};
+    if (this.pursuit) {
+      mission.traffic.alerts = [];
+      mission.traffic.errors = [];
+      mission.traffic.targets = this.pursuit.target ? [{
+        target_id: this.pursuit.vehicle_id, zone_id: this.pursuit.zone_id, status: this.pursuit.status,
+        ...this.pursuit.target, trail: this.pursuit.trail_m || [], events: [], confirmed_evidence: []
+      }] : [];
+    }
     const summaries = mission.tasks.map(task => task.vision);
     mission.vision = Object.fromEntries(['total', 'analyzed', 'filtered', 'llm_analyzed', 'normal', 'abnormal',
       'patient', 'armed_person', 'uncertain', 'failed']
@@ -695,6 +776,11 @@ class MissionExecutor {
   }
   close() {
     this.closed = true;
+    if (this.pursuitActive) {
+      const directory = path.join(this.root, this.pursuit.output_directory);
+      fs.mkdirSync(directory, {recursive: true});
+      fs.writeFileSync(path.join(directory, 'stop.request'), '');
+    }
     for (const session of this.trafficSessions.values()) {
       session.active = false;
       session.state.status = 'stopped';
@@ -725,6 +811,11 @@ class LlmController {
   }
 
   start() { this.runtime.start(); }
+
+  startVehiclePursuit(target) {
+    if (this.resetting || this.planning || this.closed) throw requestError('正在规划、复位或停止，请稍后重试。', 409);
+    return this.executor.startPursuit(target);
+  }
 
   snapshot() {
     return {execution: this.executor.status(), plan: this.plan && structuredClone(this.plan),
@@ -780,6 +871,10 @@ class LlmController {
   }
 
   handle(request, response, url) {
+    if (url.pathname === '/api/llm/pursuit') {
+      if (request.method !== 'GET') { send(response, 405, {error: '请求方法错误。'}); return; }
+      send(response, 200, {pursuit: this.executor.pursuit && structuredClone(this.executor.pursuit)}); return;
+    }
     if (url.pathname === '/api/llm/backend') return this.handleBackend(request, response);
     if (url.pathname === '/api/llm/plan') return this.handlePlan(request, response);
     if (url.pathname === '/api/llm/mission') return this.handleMission(request, response);

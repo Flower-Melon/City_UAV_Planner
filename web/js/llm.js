@@ -138,13 +138,17 @@
       window.trafficView.clear();
     }
     const count = (traffic.targets || []).filter(t => t.status === 'confirmed').length;
+    $('llm-traffic-title').textContent = '车辆监管';
+    $('llm-traffic').setAttribute('aria-label', '车辆监管');
     $('llm-speeding-count').textContent = count;
     $('llm-speeding-count').hidden = !count;
     const waiting = !traffic.active && execution.tasks.some(t => ['queued', 'flying'].includes(t.monitor.status));
     const starting = execution.tasks.some(t => t.monitor.traffic.status === 'starting');
-    $('llm-traffic-status').textContent = waiting ? '等待就位' : starting ? '正在启动' : traffic.active ? '监测中' : '已结束';
+    $('llm-traffic-status').hidden = !!traffic.pursuit;
+    $('llm-traffic-status').textContent = traffic.pursuit ? '' : traffic.suspended ? '已结束'
+      : waiting ? '等待就位' : starting ? '正在启动' : traffic.active ? '监测中' : '已结束';
     window.trafficView.render(execution);
-    const error = traffic.errors[0]?.error || execution.tasks.find(t => t.monitor.traffic.fusion?.error)?.monitor.traffic.fusion.error;
+    const error = !traffic.pursuit && (traffic.errors[0]?.error || execution.tasks.find(t => t.monitor.traffic.fusion?.error)?.monitor.traffic.fusion.error);
     $('llm-traffic-error').hidden = !error;
     $('llm-traffic-error').textContent = error ? '部分监控暂不可用' : '';
   }
@@ -236,6 +240,7 @@
     showVision(mission);
     showTraffic(mission);
     flying = !!data.starting || !!data.uncertain || !!mission?.traffic?.active ||
+      !!mission?.traffic?.pursuit && !['complete', 'failed', 'stopped'].includes(mission.traffic.pursuit.status) ||
       !!mission && !['completed', 'failed'].includes(mission.status);
     if (mission || flying) needsClarification = false;
     if (mission) {
@@ -485,5 +490,6 @@
       }
     } finally { controls(); }
   };
+  window.addEventListener('vehicle-pursuit:change', () => { clearTimeout(pollTimer); void pollMission(); });
   controls(); void pollMission(); void updateBackend();
 })();

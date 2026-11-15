@@ -11,7 +11,7 @@ web/
 │  ├─ map.js                  地图交互
 │  ├─ airsim.js               无人机实时监控
 │  ├─ llm.js                  自然语言任务、异常照片和红框展示
-│  ├─ traffic.js              空地联合取证面板、抓拍放大与路口记录展示
+│  ├─ traffic.js              车辆取证面板、抓拍放大与追踪状态显示
 │  └─ abnormal.js             异常场景交互
 ├─ css/                       页面样式
 │  └─ styles.css              页面外观
@@ -24,8 +24,7 @@ web/
 │  ├─ python_bridge.py        Python 功能调用入口、网页模型后端的读取与保存
 │  ├─ vision_pipeline.py      巡查人员识别、异常标注与地面定位
 │  ├─ people_state.py         人物实时位置与演示目标查询
-│  ├─ traffic_pipeline.py     高空车辆取图、跟踪测速与空地数据接入
-│  ├─ vehicle_fusion.py       单街区车辆身份关联、时间窗口研判
+│  ├─ traffic_pipeline.py     高空车辆取图、跟踪测速、空地身份关联与时间窗口研判
 │  ├─ airsim_bridge.py        从 AirSim 采集无人机状态和画面
 │  └─ unreal_bridge.py        UE 内的异常目标观测与跟随取景
 └─ assets/                    静态素材

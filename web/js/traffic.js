@@ -1,6 +1,49 @@
 'use strict';
 
 (() => {
+  const labels = {preparing: '正在准备追踪', tracking: '正在追踪', returning: '正在返航',
+    complete: '追踪完成', failed: '追踪失败', stopped: '追踪已停止'};
+  let current = null, pollTimer = 0, polling = false, endpointAvailable = true;
+  const active = value => value && !['complete', 'failed', 'stopped'].includes(value.status);
+
+  function update(value) {
+    if (!value) return;
+    if (current?.vehicle_id === value.vehicle_id &&
+        (value.target?.last_seen_s ?? -1) < (current.target?.last_seen_s ?? -1)) return;
+    current = value;
+    const message = labels[value.status] || '正在追踪';
+    for (const panel of document.querySelectorAll('.pursuit-status')) {
+      panel.hidden = false;
+      if (panel.textContent !== message) panel.textContent = message;
+    }
+    window.liveMap?.setPursuit(value);
+    if (active(value) && endpointAvailable && !polling && !pollTimer) pollTimer = setTimeout(poll, 200);
+  }
+
+  async function poll() {
+    pollTimer = 0; if (!active(current) || polling || !endpointAvailable) return;
+    polling = true;
+    try {
+      const response = await fetch('/api/llm/pursuit', {cache: 'no-store', signal: AbortSignal.timeout(2500)});
+      if (response.status === 404) { endpointAvailable = false; return; }
+      if (response.ok) {
+        const data = await response.json();
+        if (data.pursuit) update(data.pursuit);
+      }
+    } catch { /* 下一轮继续读取；已显示的信息保留。 */ }
+    finally { polling = false; if (active(current) && endpointAvailable) pollTimer = setTimeout(poll, 200); }
+  }
+
+  function clear() {
+    current = null; clearTimeout(pollTimer); pollTimer = 0;
+    for (const panel of document.querySelectorAll('.pursuit-status')) {
+      panel.hidden = true; panel.textContent = '';
+    }
+    window.liveMap?.setPursuit(null);
+  }
+  window.pursuitView = {update, clear, get current() { return current; }};
+  window.addEventListener('mission:reset', clear);
+
   const cards = new Map();
   const $ = id => document.getElementById(id);
   const names = {speeding: '超速行驶', wrong_way: '逆向行驶'};
@@ -62,8 +105,11 @@
     const locate = document.createElement('button'); locate.type = 'button'; locate.textContent = '地图定位';
     locate.onclick = () => window.liveMap?.centerTraffic(id);
     const expand = document.createElement('button'); expand.type = 'button'; expand.textContent = '展开取证';
-    footer.append(locate, expand); card.append(sources, chain, footer);
-    const view = {card, uav, probe, locate, chain, state: card.querySelector('.traffic-card-state'),
+    const escape = document.createElement('button'); escape.type = 'button'; escape.textContent = '逃逸';
+    escape.dataset.escapeTarget = id;
+    escape.onclick = () => void window.vehiclePursuit?.start(id);
+    footer.append(locate, expand, escape); card.append(sources, chain, footer);
+    const view = {card, uav, probe, locate, escape, chain, state: card.querySelector('.traffic-card-state'),
       plate: card.querySelector('.traffic-card-plate'), zone: card.querySelector('.traffic-card-zone'),
       tags: card.querySelector('.traffic-violation-tags')};
     expand.onclick = () => {
@@ -145,9 +191,15 @@
 
   function render(execution) {
     const traffic = execution.traffic;
+    const container = $('llm-traffic-targets');
+    if (traffic.pursuit) {
+      window.pursuitView?.update(traffic.pursuit);
+      container.hidden = true;
+      window.liveMap?.setTraffic([]); return;
+    }
+    container.hidden = false;
     const records = (traffic.targets || []).filter(r => r.events.length || r.status === 'confirmed');
     window.liveMap?.setTraffic(records);
-    const container = $('llm-traffic-targets');
     container.classList.toggle('traffic-empty', !records.length);
     if (!records.length) {
       if (container.dataset.empty !== 'true') {
@@ -178,6 +230,11 @@
         const tag = document.createElement('span'); tag.textContent = names[v]; return tag;
       }));
       view.locate.disabled = !record.position_m;
+      const pursuit = traffic.pursuit;
+      const active = pursuit && !['complete', 'failed', 'stopped'].includes(pursuit.status);
+      view.escape.disabled = !!active || !!window.vehiclePursuit?.busy;
+      view.escape.textContent = active && pursuit.vehicle_id === record.target_id ? '追踪中…' : '逃逸';
+      if (active && pursuit.vehicle_id === record.target_id) view.state.textContent = '逃逸追踪中';
       updateSource(view.uav, uav, record.drone_id || '空中巡查');
       updateSource(view.probe, probe, probe?.probe_id || '道路监控');
       updateProbe(view.probe, record, probe, confirmed);
@@ -195,6 +252,7 @@
   window.trafficView = {render, clear() {
     cards.clear(); $('llm-traffic-targets').replaceChildren(); delete $('llm-traffic-targets').dataset.empty;
     window.liveMap?.setTraffic([]);
+    window.pursuitView?.clear(); $('llm-traffic-targets').hidden = false;
   }};
   $('llm-image-dialog').addEventListener('close', () => {
     $('llm-image-dialog').querySelector('h2').textContent = '异常照片';

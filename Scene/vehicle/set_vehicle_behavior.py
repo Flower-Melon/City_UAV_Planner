@@ -286,7 +286,8 @@ class World:
                 supported += h is not None and abs(h - z) < 0.45
         return z if supported >= 3 else None
 
-    def clearance(self, actor, xy, yaw, z, length, half_size, margin, heading=None):
+    def clearance(self, actor, xy, yaw, z, length, half_size, margin, heading=None,
+                  ignore_normal_traffic=False):
         """沿位移方向扫掠真实车身；yaw 为车身朝向，heading 为扫掠方向。"""
         heading = yaw if heading is None else heading
         center = actor.get_actor_bounds(False)[0]
@@ -297,10 +298,19 @@ class World:
         # 抬高盒子底部少许，排除支撑路面的浮点误命中。
         box = unreal.Vector((half_size[0] + margin) * 100, (half_size[1] + margin) * 100,
                             max(0.1, half_size[2] - 0.12) * 100)
-        hit = unreal.SystemLibrary.box_trace_single_for_objects(
-            self.world, start, end, box, unreal.Rotator(pitch=0, yaw=math.degrees(yaw), roll=0),
-            SOLID_OBJECTS, False, [actor], unreal.DrawDebugTrace.NONE, True)
-        h = hit.to_tuple() if hit is not None else None
+        ignored = [actor]
+        while True:
+            hit = unreal.SystemLibrary.box_trace_single_for_objects(
+                self.world, start, end, box, unreal.Rotator(pitch=0, yaw=math.degrees(yaw), roll=0),
+                SOLID_OBJECTS, False, ignored, unreal.DrawDebugTrace.NONE, True)
+            h = hit.to_tuple() if hit is not None else None
+            obstacle = h[9] if h and h[0] else None
+            # 只跳过普通交通车；重新扫掠仍能发现车后方的墙体、行人等障碍。
+            if (ignore_normal_traffic and obstacle is not None
+                    and obstacle.actor_has_tag("CityVehicle")):
+                ignored.append(obstacle)
+                continue
+            break
         self.clearance_guard = "TrafficOrObstacle"
         if h and h[0] and h[10] is not None:
             if h[10].get_editor_property("mobility") == unreal.ComponentMobility.STATIC:
@@ -358,6 +368,7 @@ class Vehicle:
             raise ValueError("出生点被车辆、行人或静态物体占用，请更换坐标")
         self.plan_timer = 0.0
         self.speed_cap = self.offset = 0.0
+        self.ignore_normal_traffic = False
         self.error = None
         self.trail = deque([(self.motion.xy, self.motion.yaw, self.motion.steering)], maxlen=200)
         self.blocked_seconds = self.recovery_remaining = self.centering_remaining = 0.0
@@ -397,9 +408,11 @@ class Vehicle:
         z = _context.footprint(xy, yaw)
         heading = math.atan2(xy[1] - model.xy[1], xy[0] - model.xy[0])
         free = _context.clearance(self.actor, model.xy, yaw, self.z + self.lift, travel + 0.03,
-                                  self.half_size, 0.0, heading)
-        if z is None or abs(z - self.z) > max(0.15, travel * 0.8) or free < travel + 0.02:
-            model.guard = "Road" if z is None else getattr(_context, "clearance_guard", "TrafficOrObstacle")
+                                  self.half_size, 0.0, heading,
+                                  ignore_normal_traffic=self.ignore_normal_traffic)
+        road_blocked = z is None or abs(z - self.z) > max(0.15, travel * 0.8)
+        if road_blocked or free < travel + 0.02:
+            model.guard = "Road" if road_blocked else getattr(_context, "clearance_guard", "TrafficOrObstacle")
             return
         _context.place(self.actor, xy, yaw, z + self.lift)
         model.xy, model.yaw = xy, yaw
@@ -422,7 +435,8 @@ class Vehicle:
             heading = math.atan2(xy[1] - previous[1], xy[0] - previous[0])
             # 扫掠方向与车身朝向分开；弯道上的车身朝向并不等于位移方向。
             free = _context.clearance(self.actor, previous, previous_yaw, previous_z + self.lift,
-                                      travel, self.half_size, model.settings["traffic_clearance_m"], heading)
+                                      travel, self.half_size, model.settings["traffic_clearance_m"], heading,
+                                      ignore_normal_traffic=self.ignore_normal_traffic)
             if free < travel - 0.01:
                 return along + free, getattr(_context, "clearance_guard", "TrafficOrObstacle")
             previous, previous_yaw, previous_z = xy, yaw, z
@@ -435,10 +449,13 @@ class Vehicle:
         if self.centering_remaining > 0:
             desired = 0.0
             speed = min(speed, 3.0)
+        if self.ignore_normal_traffic:
+            desired = self.offset
         self.speed_cap = model.loop.curve_limit(model.progress, model.speed,
                                                  settings["lateral_acceleration_m_s2"], speed)
         # 道路和车身支撑限制车道偏移；不把人行道作为可行驶区域。
-        offsets = sorted(set([desired, 0.0] + [i * 0.5 for i in range(-6, 7)]),
+        span = 12 if self.ignore_normal_traffic else 6
+        offsets = sorted(set([desired, 0.0] + [i * 0.5 for i in range(-span, span + 1)]),
                          key=lambda offset: (abs(offset - desired), abs(offset), offset))
         stopping = model.speed * model.speed / (2 * settings["braking_m_s2"]) + model.speed * 0.6 + 4
         best = (-1.0, 0.0, "Road")
@@ -449,7 +466,8 @@ class Vehicle:
                 z = _context.footprint(xy, yaw)
                 center, _ = model.loop.sample(model.progress + ahead)
                 base = _context.ground(center)
-                if z is None or base is None or abs(z - base) > settings["road_height_tolerance_m"]:
+                if z is None or (not self.ignore_normal_traffic and
+                        (base is None or abs(z - base) > settings["road_height_tolerance_m"])):
                     good = False
                     break
             if good:
@@ -485,10 +503,12 @@ class Vehicle:
         travel = math.hypot(xy[0] - model.xy[0], xy[1] - model.xy[1])
         heading = math.atan2(xy[1] - model.xy[1], xy[0] - model.xy[0]) if travel > 1e-7 else model.yaw
         free = _context.clearance(self.actor, model.xy, yaw, self.z + self.lift,
-                                  travel + 0.03, self.half_size, margin, heading)
-        if z is None or abs(z - self.z) > max(0.15, travel * 0.8) or free < travel + 0.02:
+                                  travel + 0.03, self.half_size, margin, heading,
+                                  ignore_normal_traffic=self.ignore_normal_traffic)
+        road_blocked = z is None or abs(z - self.z) > max(0.15, travel * 0.8)
+        if road_blocked or free < travel + 0.02:
             model.blocked(dt, candidate[4])
-            model.guard = "Road" if z is None else getattr(_context, "clearance_guard", "TrafficOrObstacle")
+            model.guard = "Road" if road_blocked else getattr(_context, "clearance_guard", "TrafficOrObstacle")
             self.note_progress(0.0, dt)
             return
         _context.place(self.actor, xy, yaw, z + self.lift)

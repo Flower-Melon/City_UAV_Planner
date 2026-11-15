@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>城市无人机巡查平台</title>
-  <link rel="stylesheet" href="./css/styles.css?v=20261114-monitor-desk">
-  <script src="./js/map.js?v=20261114-original-vehicle-marker" defer></script>
+  <link rel="stylesheet" href="./css/styles.css?v=20261115-tracking-status">
+  <script src="./js/map.js?v=20261115-tracking-status" defer></script>
   <script src="./js/airsim.js?v=20261114-fleet" defer></script>
-  <script src="./js/traffic.js?v=20261114-monitor-desk" defer></script>
-  <script src="./js/llm.js?v=20261114-monitor-desk" defer></script>
-  <script src="./js/abnormal.js?v=20261114-vehicle-modes" defer></script>
+  <script src="./js/traffic.js?v=20261115-traffic-pursuit" defer></script>
+  <script src="./js/llm.js?v=20261115-tracking-status" defer></script>
+  <script src="./js/abnormal.js?v=20261115-tracking-status" defer></script>
 </head>
 <body>
   <header>
@@ -104,8 +104,9 @@
         </div>
         <p id="llm-status" class="llm-status" role="status" aria-live="polite">正在检查执行状态…</p>
         <section id="llm-traffic" class="llm-vision traffic-workspace" hidden aria-label="车辆监管">
-          <div class="section-heading traffic-heading"><h2>车辆监管 <span id="llm-speeding-count" class="llm-anomaly-count" hidden>0</span></h2><span id="llm-traffic-status" class="traffic-live"></span></div>
+          <div class="section-heading traffic-heading"><h2><span id="llm-traffic-title">车辆监管</span> <span id="llm-speeding-count" class="llm-anomaly-count" hidden>0</span></h2><span id="llm-traffic-status" class="traffic-live"></span></div>
           <p id="llm-traffic-error" class="llm-vision-error" hidden></p>
+          <div class="pursuit-status" role="status" aria-live="polite" hidden></div>
           <div id="llm-traffic-targets" class="traffic-targets" aria-live="polite"></div>
         </section>
         <section id="llm-result" hidden>
@@ -141,6 +142,7 @@
         </div>
         <div id="abnormal-scenes" class="abnormal-scenes" aria-label="场景布置"></div>
         <div class="abnormal-pick-status"><p id="abnormal-operation" class="abnormal-status" role="status" aria-live="polite">选中街区后，添加需要演示的场景。</p><button id="abnormal-cancel" type="button" hidden>取消选点</button></div>
+        <div class="pursuit-status" role="status" aria-live="polite" hidden></div>
         <section>
           <div class="section-heading"><h2>街区目标 <span id="abnormal-count">0</span></h2><span id="abnormal-connection" class="muted" role="status">正在连接…</span></div>
           <div id="abnormal-list" class="abnormal-list" aria-label="异常目标列表"></div>
@@ -153,6 +155,7 @@
           <div id="abnormal-vehicle-controls" hidden>
             <label class="field" for="abnormal-behavior">车辆行为</label>
             <div class="abnormal-buttons"><select id="abnormal-behavior"><option value="speeding" selected>超速行驶</option><option value="wrong_way">逆向行驶（超速）</option><option value="mixed">混合（持续超速，偶尔逆行）</option></select><button id="abnormal-apply" type="button">应用</button></div>
+            <div class="abnormal-buttons"><button id="abnormal-escape" type="button">逃逸</button><span class="muted">停止车辆监测，启动两分钟协同追踪</span></div>
           </div>
         </section>
       <section id="abnormal-camera-panel" class="camera-panel" aria-label="异常目标实时监控" hidden>

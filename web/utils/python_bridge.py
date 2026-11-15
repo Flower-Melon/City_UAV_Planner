@@ -101,6 +101,37 @@ class PythonBridge:
                 from web.utils.traffic_pipeline import close_session
                 close_session(session)
             return {'stopped': True}
+        if operation == "pursue_vehicle":
+            from UAV.API.track_vehicle import pursue_vehicle
+
+            root = Path(__file__).resolve().parents[2]
+            directory = (root / request['output_directory']).resolve()
+            if directory.parent != (root / 'output' / 'vehicle_pursuit').resolve():
+                raise ValueError('追踪结果必须位于output/vehicle_pursuit的独立目录')
+
+            class PursuitHandler(logging.Handler):
+                def emit(self, record):
+                    state = getattr(record, 'pursuit_state', None)
+                    if state is not None and on_event is not None:
+                        on_event({'type': 'pursuit_state', 'state': state})
+
+            logger = logging.getLogger(pursue_vehicle.__module__)
+            handler, previous_level = PursuitHandler(), logger.level
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            try:
+                result = pursue_vehicle(request['target_id'], request['observer_id'],
+                                        output_dir=directory)
+            finally:
+                logger.removeHandler(handler)
+                logger.setLevel(previous_level)
+                handler.close()
+            return {'status': result['status'], 'elapsed_s': result['elapsed_s'],
+                    'target': result.get('target'), 'position_source': result['position_source'],
+                    'position_updates': result['position_updates'],
+                    'trail_m': result['trail_m'],
+                    'drone_states': result['drone_states'], 'evidence_count': len(result['evidence']),
+                    'travelled_m': result.get('escape', {}).get('travelled_m', 0)}
         if operation == "plan":
             if self.planner is None:
                 from llm.utils.catalog import ZoneCatalog
@@ -123,7 +154,11 @@ class PythonBridge:
             from UAV.API.deliver_medicine import _Delivery
             from UAV.API.respond_armed_person import _Response
             from UAV.runtime.airsim_client import AirSimClient
+            from Scene.vehicle.escape_vehicle import _request as escape_request
 
+            # 追踪进程已由网页终止；车辆行为在UE内计时，需单独制动。
+            with AirSimClient() as client:
+                escape_request(client, 'stop_all', vehicle_id='')
             reset_uav()
             # 同时清理历史或手动演示留下的部件，不依赖当前网页的任务记录。
             with AirSimClient() as client:

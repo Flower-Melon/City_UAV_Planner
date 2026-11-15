@@ -31,8 +31,10 @@ async function readAbnormalBody(request) {
 }
 
 module.exports = class AbnormalController {
-  constructor({root}) {
+  constructor({root, startPursuit, getPursuit}) {
     this.runtime = new PythonRuntime({root});
+    this.startPursuit = startPursuit;
+    this.getPursuit = getPursuit;
     this.jobs = new Map();
     this.queue = Promise.resolve();
     this.reading = null;
@@ -55,7 +57,18 @@ module.exports = class AbnormalController {
     this.jobs.set(job.id, job);
     this.queue = this.queue.then(async () => {
       try {
-        job.result = await this.runtime.request(operation, data, {channel: 'abnormal-actions', timeoutMs: 0});
+        const pursuit = this.getPursuit();
+        if (pursuit && !['complete', 'failed', 'stopped'].includes(pursuit.status) &&
+            (operation === 'abnormal_escape' || data.target_id === pursuit.vehicle_id))
+          throw abnormalError('车辆正在追踪中，暂时不能重复逃逸、修改行为或移除。');
+        if (operation === 'abnormal_escape') {
+          const state = await this.runtime.request('abnormal_state', {}, {channel: 'abnormal-actions', timeoutMs: 15000});
+          const target = state.targets.find(item => item.id === data.target_id && item.kind === 'vehicle');
+          if (!target) throw abnormalError('当前仿真中没有指定异常车辆。');
+          job.result = await this.startPursuit(target);
+        } else {
+          job.result = await this.runtime.request(operation, data, {channel: 'abnormal-actions', timeoutMs: 0});
+        }
         job.status = 'completed';
       } catch (error) { job.error = error.message; job.status = 'failed'; }
     });
@@ -65,7 +78,7 @@ module.exports = class AbnormalController {
   async handle(request, response, url) {
     try {
       const route = url.pathname.slice('/api/abnormal/'.length);
-      if (request.method === 'POST' && ['spawn', 'behavior', 'remove'].includes(route)) {
+      if (request.method === 'POST' && ['spawn', 'behavior', 'remove', 'escape'].includes(route)) {
         const data = await readAbnormalBody(request);
         if (route === 'spawn') {
           if (!abnormalKinds.has(data.kind)) throw abnormalError('请选择异常类型');
@@ -94,7 +107,7 @@ module.exports = class AbnormalController {
           this.reading = task;
           task.finally(() => { if (this.reading === task) this.reading = null; }).catch(() => {});
         }
-        sendJSON(response, 200, await this.reading); return;
+        sendJSON(response, 200, {...await this.reading, pursuit: this.getPursuit()}); return;
       }
       if (route === 'camera') {
         if (!target_id) throw abnormalError('请选择监控目标');

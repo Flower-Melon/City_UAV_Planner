@@ -225,6 +225,52 @@ respond_armed_person(None, "armed_person_02", max_height=60.0, flight_speed=8.0)
 None  # 投网处置演示已完成，无人机保持悬停。
 ```
 
+### 1.7 pursue_vehicle
+
+启动指定异常车逃逸，并由三架无人机在离地约200米高空持续跟随。车辆逃逸结束并制动后，两架增援机返航降落，原高空机回到监控位置；本函数等待上述过程完成后返回。
+
+调用前，指定高空机须已在目标区域上空就位且未被其他任务占用；另需两架已落地、静止且空闲的增援机。车辆应由 `spawn_vehicle()` 生成，不能已有未完成的逃逸任务。本函数会自动启动逃逸，无需预先调用 `start_escape()`。
+
+| 入参 | 类型 | 含义 |
+|---|---|---|
+| `vehicle_id` | `str` | 要追踪的异常车辆 ID，由 `spawn_vehicle()` 返回 |
+| `observer_id` | `str` | 已就位的高空监控机名称，默认 `"UAV_04"`；另外两架增援机自动选择 |
+| `duration_s` | `float` | 车辆逃逸时长，单位为仿真秒；默认 `120`，必须大于0且有限，不包含准备、制动和返航时间 |
+| `seed` | `int` 或 `None` | 车辆随机选路种子，默认 `None`；相同起点、朝向和道路条件下可指定整数复现选路 |
+| `output_dir` | `str` 或 `Path` | 追踪记录和相机截图的保存位置，默认 `"output/vehicle_pursuit"` |
+
+`duration_s`、`seed` 和 `output_dir` 仅限关键字传入。
+
+| 出参 | 类型 | 含义 |
+|---|---|---|
+| 返回值 | `dict` | 追踪及返航结果，成功时 `status` 为 `"complete"`；追踪或返航失败时抛出异常 |
+
+入参样例与调用：
+
+```python
+from Scene.vehicle import spawn_vehicle
+from UAV.API import monitor_area
+from UAV.API.track_vehicle import pursue_vehicle
+
+monitor_area("F-SCHOOL-1", drone_id="UAV_04")
+vehicle_id = spawn_vehicle((2286.37, 18.91))
+result = pursue_vehicle(vehicle_id, observer_id="UAV_04", duration_s=120, seed=42)
+```
+
+出参样例（仅列主要字段，数值仅作示意）：
+
+```python
+{
+    "status": "complete",
+    "vehicle_id": "abnormal_vehicle_02",
+    "duration_s": 120,
+    "elapsed_s": 124.6,
+    "travelled_m": 1800.0,
+}
+```
+
+`elapsed_s` 为车辆从开始逃逸至确认制动完成经过的仿真秒数，不包含准备和返航时间；`travelled_m` 为车辆累计行驶距离，单位米。`drone_states` 列出三机的名称、状态和位置，成功结束时三机状态均为 `"complete"`。
+
 ## 2 utils
 
 ### 2.1 plan_flight_path.py

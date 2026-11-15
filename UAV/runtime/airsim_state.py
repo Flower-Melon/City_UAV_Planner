@@ -49,7 +49,8 @@ def editor_log():
     return max(logs, key=lambda p: p.stat().st_mtime)
 
 
-def _run_ue_json(client, code, token, rejected_message, timeout_message, *, log_path=None):
+def _run_ue_json(client, code, token, rejected_message, timeout_message, *, log_path=None,
+                 poll_interval_s=0.1):
     """执行 UE Python 命令并读取带标记的 JSON 日志结果。"""
     log = log_path if log_path is not None else editor_log()
     offset = log.stat().st_size
@@ -67,7 +68,7 @@ def _run_ue_json(client, code, token, rejected_message, timeout_message, *, log_
                 body = line.split(token, 1)[1]
                 if body.startswith("{") and body.rstrip().endswith("}"):
                     return json.loads(body)
-        time.sleep(.1)
+        time.sleep(poll_interval_s)
     raise RuntimeError(timeout_message)
 
 

@@ -244,7 +244,7 @@ class RoadGraph:
             if not parts:
                 raise ValueError("所选街区不存在或不支持生成车辆")
             zone, polygon = max(parts, key=lambda item: item[1].area)
-            point = polygon.representative_point()
+            point = Point(position_xy(position)) if position is not None else polygon.representative_point()
         else:
             point = Point(position_xy(position))
             zone, polygon = min(self.zones, key=lambda item: (
@@ -304,7 +304,8 @@ def spawn_vehicle(position=None, *, zone_id=None) -> str:
     """按街区zone_id或参考坐标position生成，返回可供AirSim查询的唯一车辆ID。
 
     同一街区最多一辆异常车，在街区外围车道自动选择出生点，默认超速行驶。
-    指定zone_id时直接绑定该街区，无需position；仅指定position时取所在或最近地块。
+    指定zone_id时直接绑定该街区；同时传position可选择街区外围的出生参考点。
+    仅指定position时取所在或最近地块。
     仅生成网页地图上的顺时针闭环；地块外围路网无法顺时针闭环时抛出异常。
     返回前已确认车辆在运行中的 UE 世界生成并注册控制器。
     """

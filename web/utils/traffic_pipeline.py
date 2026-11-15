@@ -1,9 +1,9 @@
-"""高空车辆监测：取图、道路定位、测速和证据保存；由网页统一调度。
+"""高空车辆监测：取图、道路定位、测速、空地融合和证据保存；由网页统一调度。
 
-UE也会加载本文件执行道路测量，因此相机和模型依赖在调用时导入。
+UE也会加载本文件执行道路测量，因此相机、模型和探头读取依赖在调用时导入。
 """
 
-from collections import deque
+from collections import Counter, deque
 import json
 import math
 import time
@@ -12,13 +12,18 @@ import uuid
 
 
 TRACK_MAX_GAP_S = 3.0
-TRACK_WINDOW_S = 3.0
-DETECTION_CONFIDENCE = 0.80
+TRACK_WINDOW_S = 1.5
+DETECTION_CONFIDENCE = 0.60
 TRACK_CONFIDENCE = 0.35
+SPEED_MIN_SPAN_S = 0.6
+SPEED_CONFIRMATION_S = 0.5
 CONFIRMATION_MAX_GAP_S = 1.5
 CLOCK_SYNC_INTERVAL_S = 1.0
 ROAD_CELL_M = 4.0
 ROAD_PREFETCH_CELLS = 3
+FUSION_WINDOW_S = 60.0
+FUSION_SAMPLE_INTERVAL_S = 3.0
+FUSION_ROUTE_GATE_M = 14.0
 _surface_world = None
 _road_surfaces = {}
 
@@ -45,7 +50,7 @@ def start_session(drone_id, zone_id, directory, speed_limit_kmh=60.0):
                'zone_id': zone_id, 'frames': 0, 'last_stamp': None,
                'clock_anchor': None, 'clock_rate': None, 'clock_rate_error': 0.0,
                'clock_history': deque(), 'clock_synced_at': 0.0,
-               'road_cache': {}, 'camera_reference': None}
+               'road_cache': {}, 'camera_reference': None, 'fusion_context': None}
     try:
         client = session['client']
         name = vehicle_name(drone_id, client.call('listVehicles'))
@@ -55,7 +60,6 @@ def start_session(drone_id, zone_id, directory, speed_limit_kmh=60.0):
             raise RuntimeError('监控无人机仍有飞行任务，无法开始测速')
         session['lock'] = lock
         session['log_path'] = editor_log()
-        from web.utils.vehicle_fusion import VehicleFusion
         # 使用探头现成的评估字段辅助单车演示的身份归属，车牌仍来自实际读牌记录。
         client.call('simRunConsoleCommand', 'citynpc.ProbeTruthFields 1')
         session['fusion'] = VehicleFusion(zone_id, session['log_path'], speed_limit_kmh)
@@ -77,10 +81,20 @@ def start_session(drone_id, zone_id, directory, speed_limit_kmh=60.0):
 def step_session(session):
     """处理一帧，同时读取本街区探头并更新联合判别。"""
     # 单次取图/推理失败不销毁轨迹；下次有效曝光按仿真时间淘汰过期观测。
+    started = time.perf_counter()
     report = _step_session(session)
-    context = geometry_request(session['client'], 'fusion_context', log_path=session['log_path'])
+    fusion_started = time.perf_counter()
+    # 身份和路线随每秒的时钟同步一起更新，不再为每帧单独往返 UE。
+    context = session['fusion_context']
+    if context is None:
+        context = geometry_request(session['client'], 'fusion_context', log_path=session['log_path'])
+        session['fusion_context'] = context
+    context = {**context, 'simulation_time_s': max(context['simulation_time_s'],
+               report.get('simulation_time_s', context['simulation_time_s']))}
     report['fusion'] = session['fusion'].step(context, report['vehicles'], report['alerts'],
                                              report.get('simulation_time_s'))
+    report['timings_ms']['fusion'] = round((time.perf_counter() - fusion_started) * 1000, 2)
+    report['timings_ms']['total'] = round((time.perf_counter() - started) * 1000, 2)
     _write_json(session['directory'] / 'latest.json', report)
     return report
 
@@ -99,33 +113,47 @@ def close_session(session):
 
 
 def _step_session(session):
+    started = time.perf_counter()
     image, exposure = _read_frame(session)
+    timings = {'capture': round((time.perf_counter() - started) * 1000, 2)}
     if image is None:
-        return {**exposure, 'frames': session['frames'], 'vehicles': [], 'alerts': []}
+        return {**exposure, 'frames': session['frames'], 'vehicles': [], 'alerts': [], 'timings_ms': timings}
+    started = time.perf_counter()
     result = session['predictor'].predict(image, conf=TRACK_CONFIDENCE, save=False)
-    can_recover = any(len(track['history']) >= 2 for track in session['tracks'].values())
+    timings['inference'] = round((time.perf_counter() - started) * 1000, 2)
+    can_recover = bool(session['tracks'])
     detections = [d for d in result['detections'] if can_recover or d['confidence'] >= DETECTION_CONFIDENCE]
     size = result['image_size']
     rays = [(exposure['position_m'], camera_ray(detection['center_xy'],
              (size['width'], size['height']), exposure['camera_fov_deg'], exposure['camera_orientation_ned']))
             for detection in detections]
+    started = time.perf_counter()
     positions = _project(session, rays) if rays else []
+    timings['projection'] = round((time.perf_counter() - started) * 1000, 2)
     localized = []
     for detection, position in zip(detections, positions):
         if position is not None:
             localized.append({**detection, 'position_m': position})
+    started = time.perf_counter()
     vehicles, speeding = _update_tracks(session, localized, exposure['simulation_time_s'],
                                                  time_uncertainty_s=exposure['time_uncertainty_s'])
+    timings['tracking'] = round((time.perf_counter() - started) * 1000, 2)
     session['frames'] += 1
     if speeding:
         # 告警前再校准一次，避免暂停/时间倍率变化期间的外推时间产生误报。
+        started = time.perf_counter()
         changed = _sync_clock(session)
+        timings['clock_check'] = round((time.perf_counter() - started) * 1000, 2)
         checked_time = None if changed else _frame_time(session, int(exposure['capture_time_ns']))[0]
         if changed or abs(checked_time - exposure['simulation_time_s']) > exposure['time_uncertainty_s']:
             _reset_tracks(session)
-            return {'status': 'timing_unstable', 'frames': session['frames'], 'vehicles': [], 'alerts': []}
+            return {'status': 'timing_unstable', 'frames': session['frames'], 'vehicles': [], 'alerts': [],
+                    'timings_ms': timings}
+    started = time.perf_counter()
     alerts = _save_evidence(session, image, exposure, speeding) if speeding else []
+    timings['evidence'] = round((time.perf_counter() - started) * 1000, 2)
     report = {'status': 'running', 'frames': session['frames'], 'vehicles': vehicles, 'alerts': alerts,
+              'detection_count': len(result['detections']), 'localized_count': len(localized), 'timings_ms': timings,
               'unlocated_count': len(detections) - len(localized), **exposure}
     return report
 
@@ -140,13 +168,13 @@ def _match_tracks(session, positions, indices, *, low_confidence=False, excluded
     distances = {}
     for key, track in session['tracks'].items():
         history = track['history']
-        if key in excluded or low_confidence and len(history) < 2:
+        if key in excluded:
             continue
         dt = session['last_track_time'] - history[-1][0]
         velocity, _ = _track_velocity(history)
         expected = [history[-1][axis + 1] + velocity[axis] * dt for axis in (0, 1)]
         gate = min(65.0, 2.0 + (55.0 if len(history) < 2 else 15.0) * dt)
-        if low_confidence:
+        if low_confidence and len(history) >= 2:
             gate = min(gate, 2.0 + 5.0 * dt)
         for index in indices:
             distance = math.dist(expected, positions[index][:2])
@@ -163,7 +191,7 @@ def _match_tracks(session, positions, indices, *, low_confidence=False, excluded
             continue
         matches[index] = key
     ambiguous = {key for key, _ in distances} - set(matches.values())
-    return matches, ambiguous
+    return matches, ambiguous, {index for _, index in distances}
 
 
 def _track_velocity(history):
@@ -200,13 +228,13 @@ def _update_tracks(session, detections, timestamp_s, *, time_uncertainty_s=0.0):
                 raise ValueError("车辆世界坐标无效")
             positions.append(point)
 
-        # 高置信度优先关联；低置信度只续接有运动历史的轨迹，且使用更窄的门限。
+        # 高置信度优先关联；低置信度也可续接初始观测，已有速度时收紧门限。
         high = [i for i, d in enumerate(detections) if d.get('confidence', 1.0) >= DETECTION_CONFIDENCE]
         low = [i for i, d in enumerate(detections)
                if TRACK_CONFIDENCE <= d.get('confidence', 1.0) < DETECTION_CONFIDENCE]
-        matches, ambiguous = _match_tracks(session, positions, high)
-        recovered, low_ambiguous = _match_tracks(session, positions, low, low_confidence=True,
-                                                excluded=set(matches.values()) | ambiguous)
+        matches, ambiguous, high_candidates = _match_tracks(session, positions, high)
+        recovered, low_ambiguous, _ = _match_tracks(session, positions, low, low_confidence=True,
+                                                   excluded=set(matches.values()) | ambiguous)
         matches.update(recovered)
         for key, track in session['tracks'].items():
             if (key in ambiguous | low_ambiguous or track.get('last_over_time') is not None
@@ -217,7 +245,8 @@ def _update_tracks(session, detections, timestamp_s, *, time_uncertainty_s=0.0):
         for index, (detection, position) in enumerate(zip(detections, positions)):
             key = matches.get(index)
             if key is None:
-                if index not in high:
+                # 关联有歧义时等待后续观测，不为同一辆车反复创建重叠轨迹。
+                if index not in high or index in high_candidates:
                     continue
                 key = session['next_track_id']
                 session['next_track_id'] += 1
@@ -226,14 +255,14 @@ def _update_tracks(session, detections, timestamp_s, *, time_uncertainty_s=0.0):
             track = session['tracks'][key]
             history = track['history']
             history.append((timestamp_s, *position[:2], time_uncertainty_s))
-            # 正常保留最近3秒；处理较慢时仍保留测速所需的最近3次观测。
+            # 使用较短窗口跟随加减速和转弯；低帧率时仍保留最近3次观测。
             while len(history) > 3 and timestamp_s - history[0][0] > TRACK_WINDOW_S:
                 history.popleft()
             track['z'] = position[2]
             velocity, residual = _track_velocity(history)
             span = timestamp_s - history[0][0]
             speed = math.hypot(*velocity)
-            ready = len(history) >= 3 and span >= 1.0 and residual <= 0.75 and speed <= 55
+            ready = len(history) >= 3 and span >= SPEED_MIN_SPAN_S and residual <= 0.75 and speed <= 55
             # 位置抖动和曝光时间区间都进入速度误差；以速度下界持续超限才告警。
             error = (3.6 * (max(0.4, 2 * residual) + 2 * speed * max(p[3] for p in history)) / span
                      if ready else None)
@@ -251,7 +280,7 @@ def _update_tracks(session, detections, timestamp_s, *, time_uncertainty_s=0.0):
                 **detection, 'track_id': key, 'speed_kmh': round(kmh, 1) if ready else None,
                 'speed_error_kmh': round(error, 1) if ready else None,
                 'speed_limit_kmh': session['speed_limit_kmh'],
-                'overspeed': bool(overspeed and timestamp_s - track['over_since'] >= 0.75),
+                'overspeed': bool(overspeed and timestamp_s - track['over_since'] >= SPEED_CONFIRMATION_S),
                 'trajectory': [[round(p[0], 6), round(p[1], 3), round(p[2], 3)] for p in history],
             }
             measurements.append(measurement)
@@ -388,6 +417,7 @@ def _clock(session):
     value = result['simulation_time_s']
     if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
         raise RuntimeError('UE仿真时间无效')
+    session['fusion_context'] = {'simulation_time_s': value, 'targets': result['targets']}
     wall = int(result['wall_time_ns'])
     elapsed = second[0] - first[0]
     delta = second[1] - first[1]
@@ -478,12 +508,14 @@ def camera_ray(center, size, fov, orientation):
     return [v / length for v in direction]
 
 
-def geometry_request(client, operation, *, rays=(), log_path=None):
+def geometry_request(client, operation, *, rays=(), log_path=None, prefetch_cells=None):
     from UAV.runtime.airsim_state import _run_ue_json
 
     source = Path(__file__).resolve()
     token = 'WEB_TRAFFIC_GEOMETRY_' + uuid.uuid4().hex + ':'
     request = {'operation': operation, 'rays': list(rays)}
+    if prefetch_cells is not None:
+        request['prefetch_cells'] = prefetch_cells
     script = '\n'.join([
         'import importlib.util,sys,unreal,json',
         "name='city_traffic_pipeline'",
@@ -501,7 +533,8 @@ def geometry_request(client, operation, *, rays=(), log_path=None):
         'unreal.log(' + repr(token) + '+json.dumps(result))',
     ])
     response = _run_ue_json(client, 'exec(' + repr(script) + ')', token,
-                           'UE未接受车辆测量请求', 'UE未返回车辆测量结果', log_path=log_path)
+                           'UE未接受车辆测量请求', 'UE未返回车辆测量结果', log_path=log_path,
+                           poll_interval_s=0.01)
     if not response['ok']:
         raise RuntimeError(response['error'])
     return response['result']
@@ -549,7 +582,155 @@ def _save_evidence(session, image, exposure, speeding):
 def _write_json(path, value):
     temporary = path.with_suffix('.json.part')
     temporary.write_text(json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2) + '\n', encoding='utf-8')
-    temporary.replace(path)
+    for attempt in range(5):
+        try:
+            temporary.replace(path)
+            break
+        except PermissionError:
+            # Windows 状态查看器可能短暂持有不允许替换的文件句柄。
+            if attempt == 4:
+                raise
+            time.sleep(0.02)
+
+
+def route_distance(point, route):
+    return min(segment_distance(point, a, b) for a, b in zip(route, route[1:]))
+
+
+def segment_distance(point, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = dx * dx + dy * dy
+    fraction = max(0.0, min(1.0, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length)) if length else 0.0
+    return math.hypot(point[0] - a[0] - fraction * dx, point[1] - a[1] - fraction * dy)
+
+
+def wrong_way(row, route):
+    # 通行方向 approaching/departing 只表示相对镜头的方向，不等同于逆行。
+    # 探头给出的车头方向与最近外围车道方向相反时，才认作逆行。
+    a, b = min(zip(route, route[1:]), key=lambda pair: segment_distance(row['xy_m'], *pair))
+    heading = math.radians(row['heading_deg'])
+    return math.cos(heading) * (b[0] - a[0]) + math.sin(heading) * (b[1] - a[1]) < 0
+
+
+class VehicleFusion:
+    """单街区车辆融合：探头负责身份，高空 YOLO 负责沿途测速。"""
+
+    def __init__(self, zone_id, log_path, speed_limit_kmh):
+        root = Path(__file__).resolve().parents[2]
+        self.events_dir = Path(log_path).parent.parent / 'TrafficProbes'
+        self.zone_id = zone_id
+        self.probes = json.loads((root / 'Map/objects/traffic_probes.json').read_text(encoding='utf-8-sig'))['probes']
+        self.limit = speed_limit_kmh
+        self.cursor = None
+        self.started_at = None
+        self.last_time = None
+        self.targets = {}
+        self.probe_session = None
+        self.pending_records = []
+
+    def step(self, context, vehicles, alerts, observation_time=None):
+        from Scene.probe.get_probe_records import _read_probe_records
+
+        now = context['simulation_time_s']
+        if self.last_time is not None and now < self.last_time:
+            self.targets.clear()
+            self.cursor = self.started_at = None
+            self.pending_records.clear()
+        self.last_time = now
+        if self.started_at is None:
+            self.started_at = now
+        demos = {item['id']: item for item in context['targets'] if item['zone_id'] == self.zone_id}
+        self.targets = {key: value for key, value in self.targets.items() if key in demos}
+        # 闭环和探头布局固定，附近探头只在建立目标时筛选一次。
+        for key, demo in demos.items():
+            if key not in self.targets:
+                self.targets[key] = {'target_id': key, 'plate': None, 'events': [], 'recent_events': [],
+                                     'confirmed_at': None, 'confirmed_evidence': [],
+                                     'position_m': None, 'last_seen_s': None, 'trail': [],
+                                     'local_probes': [p for p in self.probes
+                                                      if route_distance(p['xy_m'], demo['route']) <= 65]}
+        error = None
+        try:
+            page = _read_probe_records(events_dir=self.events_dir, cursor=self.cursor,
+                                       start=self.started_at)
+            if self.probe_session is not None and page['session'] != self.probe_session:
+                # 新 Play 场次的历史不能与上一场混合。
+                self.targets.clear()
+                self.cursor = self.started_at = None
+                self.pending_records.clear()
+                self.probe_session = page['session']
+                return self.snapshot(now, demos, '探头场次已变化，正在重新关联')
+            self.cursor, self.probe_session = page['cursor'], page['session']
+            rows = self.pending_records + page['records']
+            # UE查询时钟后探头仍可能写入；稍晚的记录留到下一帧，不能推进游标后丢弃。
+            self.pending_records = [row for row in rows if row['t'] > now]
+            for row in rows:
+                key = row.get('truth_id')
+                if key not in demos or row['t'] > now or now - row['t'] > FUSION_WINDOW_S:
+                    continue
+                state, demo = self.targets[key], demos[key]
+                if route_distance(row['xy_m'], demo['route']) > 65:
+                    continue
+                if row.get('read_ok') and row.get('plate'):
+                    state['plate'] = row['plate']
+                violations = []
+                if row['speed_kmh'] > self.limit:
+                    violations.append('speeding')
+                if wrong_way(row, demo['route']):
+                    violations.append('wrong_way')
+                if violations:
+                    self.add_event(state, {'source': 'probe', 't': row['t'], 'probe_id': row['probe'],
+                                           'position_m': row['xy_m'], 'plate': row.get('plate'),
+                                           'speed_kmh': row['speed_kmh'], 'violations': violations,
+                                           'direction': row['direction']})
+        except (OSError, ValueError) as failure:
+            error = str(failure)
+        for key, demo in demos.items():
+            state = self.targets[key]
+            # 仅在所属闭环附近选取唯一超速目标，不使用 Actor 的真实速度或驾驶模式。
+            candidates = [v for v in vehicles if v['overspeed']
+                          and route_distance(v['position_m'], demo['route']) <= FUSION_ROUTE_GATE_M]
+            if len(candidates) != 1:
+                continue
+            vehicle = candidates[0]
+            stamp = observation_time if observation_time is not None else now
+            state.update(position_m=vehicle['position_m'], last_seen_s=stamp,
+                         speed_kmh=vehicle['speed_kmh'], track_id=vehicle['track_id'])
+            state['trail'].append(vehicle['position_m'][:2])
+            state['trail'] = state['trail'][-80:]
+            evidence = next((a for a in alerts if a['track_id'] == vehicle['track_id']), None)
+            if evidence:
+                state['uav_event_id'] = evidence['event_id']
+            self.add_event(state, {'source': 'uav', 't': stamp, 'track_id': vehicle['track_id'],
+                                   'position_m': vehicle['position_m'], 'speed_kmh': vehicle['speed_kmh'],
+                                   'violations': ['speeding'], 'uav_event_id': state.get('uav_event_id')})
+        return self.snapshot(now, demos, error)
+
+    @staticmethod
+    def add_event(state, event):
+        previous = next((e for e in reversed(state['events']) if e['source'] == event['source']), None)
+        if previous and event['t'] - previous['t'] < FUSION_SAMPLE_INTERVAL_S:
+            return
+        state['events'].append(event)
+        state['events'].sort(key=lambda e: e['t'])
+        state['recent_events'] = sorted(state['recent_events'] + [event], key=lambda e: e['t'])[-2:]
+
+    def snapshot(self, now, demos, error):
+        records = []
+        for key, state in self.targets.items():
+            events = [event for event in state['events'] if now - event['t'] <= FUSION_WINDOW_S]
+            state['events'] = events
+            counts = Counter(event['source'] for event in events)
+            if state['confirmed_at'] is None and counts['uav'] and counts['probe']:
+                state['confirmed_at'] = now
+                state['confirmed_evidence'] = list(events)
+            status = 'confirmed' if state['confirmed_at'] is not None else 'observing' if events else 'waiting'
+            records.append({**state, 'plate': state['plate'] if status == 'confirmed' else None,
+                            'status': status, 'zone_id': self.zone_id,
+                            'source_counts': {'uav': counts['uav'], 'probe': counts['probe']}})
+        return {'window_s': FUSION_WINDOW_S, 'simulation_time_s': now, 'targets': records,
+                'probe_session': self.probe_session, 'error': error,
+                'association': '单街区闭环关联 · 探头 truth_id 辅助归属'}
 
 
 def _dispatch(request):
@@ -559,7 +740,7 @@ def _dispatch(request):
     world = unreal.EditorLevelLibrary.get_game_world()
     if world is None:
         raise RuntimeError('请先启动UE Play仿真')
-    if request['operation'] == 'fusion_context':
+    if request['operation'] in ('fusion_context', 'clock'):
         import sys
         module = sys.modules.get('city_abnormal_runtime')
         targets = []
@@ -567,10 +748,12 @@ def _dispatch(request):
             if unreal.SystemLibrary.is_valid(item.actor) and item.actor.get_world() == world:
                 targets.append({'id': name, 'zone_id': item.route['zone_id'],
                                 'route': item.route['points']})
-        return {'simulation_time_s': unreal.GameplayStatics.get_time_seconds(world), 'targets': targets}
+        context = {'simulation_time_s': unreal.GameplayStatics.get_time_seconds(world), 'targets': targets}
+        if request['operation'] == 'fusion_context':
+            return context
     if request['operation'] == 'clock':
         import time
-        return {'simulation_time_s': unreal.GameplayStatics.get_time_seconds(world),
+        return {**context,
                 'wall_time_ns': str(time.time_ns()),
                 'frame_delta_s': unreal.GameplayStatics.get_world_delta_seconds(world),
                 'dilation': unreal.GameplayStatics.get_global_time_dilation(world)}
@@ -594,9 +777,10 @@ def _dispatch(request):
             cells = [key]
             if not prefetched:
                 # 每批最多预热一个28米邻域，避免高速车辆下一帧已离开当前4米单元。
+                radius = request.get('prefetch_cells', ROAD_PREFETCH_CELLS)
                 cells += [(key[0] + dx, key[1] + dy, key[2])
-                          for dx in range(-ROAD_PREFETCH_CELLS, ROAD_PREFETCH_CELLS + 1)
-                          for dy in range(-ROAD_PREFETCH_CELLS, ROAD_PREFETCH_CELLS + 1) if dx or dy]
+                          for dx in range(-radius, radius + 1)
+                          for dy in range(-radius, radius + 1) if dx or dy]
                 prefetched = True
             for cell in cells:
                 view_key = (*cell, *(round(v * 2) for v in position))

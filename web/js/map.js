@@ -116,6 +116,11 @@ let ready = false, buildingRequest;
 let liveDrones = [];
 let abnormalTargets = [], abnormalSelected = null, pickHandler = null, pendingPoint = null;
 let trafficTargets = [];
+let pursuitSnapshot = null, pursuitFollowing = true, pursuitLocated = false, pursuitFrame = 0;
+const pursuitMotion = new Map();
+const pursuitCanvas = document.createElement('canvas'); pursuitCanvas.className = 'pursuit-map-layer';
+pursuitCanvas.setAttribute('aria-hidden', 'true'); canvas.after(pursuitCanvas);
+const pursuitContext = pursuitCanvas.getContext('2d');
 const abnormalColors = {vehicle: '#df542f', armed_person: '#914ac5', patient: '#138b80'};
 const worldSize = 4000;
 const visuals = new CityMapVisuals();
@@ -305,31 +310,36 @@ function drawProbes() {
     ctx.restore();
   }
 }
+function drawAbnormalTarget(context, target) {
+  const {scale} = state;
+  const color = abnormalColors[target.kind];
+  const [x, y] = target.position_m;
+  context.save(); context.translate(x, y); context.scale(1 / scale, 1 / scale);
+  if (target.id === abnormalSelected) {
+    context.beginPath(); context.arc(0, 0, 14, 0, Math.PI * 2);
+    context.fillStyle = '#ffffffbb'; context.fill(); context.strokeStyle = '#18334a'; context.lineWidth = 2; context.stroke();
+  }
+  context.fillStyle = color; context.strokeStyle = '#fff'; context.lineWidth = 2;
+  context.beginPath();
+  if (target.kind === 'vehicle') {
+    context.rotate(target.yaw_rad || 0); context.rect(-8, -5, 16, 10); context.fill(); context.stroke();
+    context.beginPath(); context.moveTo(8, 0); context.lineTo(3, -3); context.lineTo(3, 3); context.closePath(); context.fillStyle = '#fff'; context.fill();
+  } else {
+    context.moveTo(0, -9); context.lineTo(8, 0); context.lineTo(0, 9); context.lineTo(-8, 0); context.closePath(); context.fill(); context.stroke();
+    context.fillStyle = '#fff'; context.font = 'bold 11px system-ui'; context.textAlign = 'center'; context.fillText(target.kind === 'patient' ? '+' : '!', 0, 4);
+  }
+  context.restore();
+  context.font = `600 ${12 / scale}px system-ui`; context.textAlign = 'left'; context.lineJoin = 'round';
+  const label = `${{vehicle: '异常车', armed_person: '持刀人员', patient: '病人'}[target.kind]} ${target.id.split('_').pop()}`;
+  context.strokeStyle = '#fff'; context.lineWidth = 4 / scale; context.strokeText(label, x + 16 / scale, y - 8 / scale);
+  context.fillStyle = color; context.fillText(label, x + 16 / scale, y - 8 / scale);
+}
 function drawAbnormal() {
   const {scale} = state;
   drawTraffic();
   for (const target of abnormalTargets) {
-    const color = abnormalColors[target.kind];
-    const [x, y] = target.position_m;
-    ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale);
-    if (target.id === abnormalSelected) {
-      ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffffbb'; ctx.fill(); ctx.strokeStyle = '#18334a'; ctx.lineWidth = 2; ctx.stroke();
-    }
-    ctx.fillStyle = color; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    if (target.kind === 'vehicle') {
-      ctx.rotate(target.yaw_rad || 0); ctx.rect(-8, -5, 16, 10); ctx.fill(); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(3, -3); ctx.lineTo(3, 3); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill();
-    } else {
-      ctx.moveTo(0, -9); ctx.lineTo(8, 0); ctx.lineTo(0, 9); ctx.lineTo(-8, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText(target.kind === 'patient' ? '+' : '!', 0, 4);
-    }
-    ctx.restore();
-    ctx.font = `600 ${12 / scale}px system-ui`; ctx.textAlign = 'left'; ctx.lineJoin = 'round';
-    const label = `${{vehicle: '异常车', armed_person: '持刀人员', patient: '病人'}[target.kind]} ${target.id.split('_').pop()}`;
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 / scale; ctx.strokeText(label, x + 16 / scale, y - 8 / scale);
-    ctx.fillStyle = color; ctx.fillText(label, x + 16 / scale, y - 8 / scale);
+    if (target.id === pursuitSnapshot?.vehicle_id && pursuitSnapshot.target) continue;
+    drawAbnormalTarget(ctx, target);
   }
   if (pendingPoint) {
     const [x, y] = pendingPoint, r = 12 / scale;
@@ -361,6 +371,71 @@ function drawTraffic() {
       ctx.restore();
     }
   }
+}
+
+function pursuitPoint(key, now = performance.now()) {
+  const motion = pursuitMotion.get(key); if (!motion) return null;
+  const fraction = Math.min(1, Math.max(0, (now - motion.started) / motion.duration));
+  return motion.from.map((v, i) => v + (motion.to[i] - v) * fraction);
+}
+function movePursuitMarker(key, point) {
+  if (!point) return;
+  const previous = pursuitMotion.get(key);
+  if (previous && point.every((value, i) => value === previous.to[i])) return;
+  const now = performance.now();
+  const duration = previous ? Math.max(120, Math.min(1100, now - previous.started)) : 220;
+  pursuitMotion.set(key, {from: pursuitPoint(key, now) || point, to: point, started: now, duration});
+}
+function setPursuit(value) {
+  if (value?.vehicle_id !== pursuitSnapshot?.vehicle_id) {
+    pursuitMotion.clear(); pursuitLocated = false; pursuitFollowing = true;
+  }
+  pursuitSnapshot = value;
+  if (!value) {
+    cancelAnimationFrame(pursuitFrame); pursuitFrame = 0;
+    pursuitContext.clearRect(0, 0, pursuitCanvas.width, pursuitCanvas.height); schedule(); return;
+  }
+  movePursuitMarker('target', value.target?.position_m);
+  if (!pursuitFrame) pursuitFrame = requestAnimationFrame(drawPursuit);
+  schedule();
+}
+function drawPursuit(now) {
+  pursuitFrame = 0; if (!pursuitSnapshot) return;
+  const target = pursuitPoint('target', now);
+  if (pursuitCanvas.width !== canvas.width || pursuitCanvas.height !== canvas.height) {
+    pursuitCanvas.width = canvas.width; pursuitCanvas.height = canvas.height;
+  }
+  const p = pursuitContext;
+  p.setTransform(state.ratio, 0, 0, state.ratio, 0, 0); p.clearRect(0, 0, state.width, state.height);
+  if (ready && target) {
+    if (!pursuitLocated) {
+      state.scale = Math.max(state.scale, .85); pursuitLocated = true;
+      state.ox = state.width / 2 - target[0] * state.scale;
+      state.oy = state.height / 2 - target[1] * state.scale; schedule();
+    }
+    let x = target[0] * state.scale + state.ox, y = target[1] * state.scale + state.oy;
+    if (pursuitFollowing && !state.drag) {
+      const dx = state.width / 2 - x, dy = state.height / 2 - y;
+      if (Math.abs(dx) > state.width * .16 || Math.abs(dy) > state.height * .16) {
+        state.ox += dx * .045; state.oy += dy * .045; schedule();
+        x = target[0] * state.scale + state.ox; y = target[1] * state.scale + state.oy;
+      }
+    }
+    const screen = point => [point[0] * state.scale + state.ox, point[1] * state.scale + state.oy];
+    const trail = pursuitSnapshot.trail_m || [];
+    if (trail.length > 1) {
+      p.beginPath(); trail.forEach((point, i) => { const q = screen(point); i ? p.lineTo(...q) : p.moveTo(...q); }); p.lineTo(x, y);
+      p.strokeStyle = abnormalColors.vehicle; p.lineWidth = 1.5; p.lineCap = 'round'; p.lineJoin = 'round'; p.stroke();
+    }
+    // 追踪与非追踪共用原有车辆绘制函数，仅更新位置与朝向。
+    p.save();
+    p.setTransform(state.ratio * state.scale, 0, 0, state.ratio * state.scale,
+                   state.ratio * state.ox, state.ratio * state.oy);
+    drawAbnormalTarget(p, {id: pursuitSnapshot.vehicle_id, kind: 'vehicle',
+                           position_m: target, yaw_rad: pursuitSnapshot.target?.heading_rad || 0});
+    p.restore();
+  }
+  pursuitFrame = requestAnimationFrame(drawPursuit);
 }
 function zoom(factor, x = state.width / 2, y = state.height / 2) {
   const wx = (x - state.ox) / state.scale, wy = (y - state.oy) / state.scale;
@@ -503,6 +578,7 @@ canvas.addEventListener('wheel', event => {
 }, {passive: false});
 canvas.onpointerdown = event => {
   if (event.button !== 0 || !event.isPrimary) return;
+  pursuitFollowing = false;
   state.drag = {x: event.clientX, y: event.clientY, ox: state.ox, oy: state.oy, moved: false}; canvas.setPointerCapture(event.pointerId);
 };
 canvas.onpointermove = event => {
@@ -562,6 +638,8 @@ async function initialize() {
 background = new Image(); background.src = './assets/town12.png'; background.onload = schedule;
 background.onerror = () => { $('loading').textContent = '无法读取 assets/town12.png，请保留完整的 web 文件夹。'; };
 window.liveMap = {
+  setPursuit,
+  followPursuit() { pursuitFollowing = true; pursuitLocated = false; if (pursuitSnapshot) setPursuit(pursuitSnapshot); },
   setTraffic(records) { trafficTargets = records; schedule(); },
   centerTraffic(id) {
     const target = trafficTargets.find(t => t.target_id === id);
