@@ -1,5 +1,5 @@
 'use strict';
-// 无人机监控接口：管理采集进程、实时状态、轨迹及画面缓存。
+// 无人机监控接口：管理采集进程、实时状态及画面缓存。
 const path = require('node:path');
 const net = require('node:net');
 const {spawn} = require('node:child_process');
@@ -198,9 +198,7 @@ module.exports = class AirsimController {
   // 规划模块读取原始采样，避免将网页展示用的占位无人机用于任务派发。
   getState() { return this.state; }
 
-  clearTrails() {
-    this.state = {...this.state, drones: this.state.drones.map(drone => ({...drone, trail: []}))};
-    // 清空采集进程中的全部轨迹；旧进程的在途消息由上方child检查直接丢弃。
+  restartBridge() {
     const child = this.bridge;
     this.bridge = null;
     this.frames.clear();
@@ -227,13 +225,6 @@ module.exports = class AirsimController {
   handle(request, response, url) {
     if (this.closed) { send(response, 503, {error: '网页服务已停止。'}); return; }
     const pathname = decodeURIComponent(url.pathname);
-    if (pathname === '/api/airsim/trails/clear') {
-      if (request.method !== 'POST') {
-        response.writeHead(405, {Allow: 'POST'}); response.end(); return;
-      }
-      this.clearTrails();
-      send(response, 200, {cleared: true}); return;
-    }
     if (!['GET', 'HEAD'].includes(request.method)) {
       response.writeHead(405, {Allow: 'GET, HEAD'}); response.end(); return;
     }

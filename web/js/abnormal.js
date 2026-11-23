@@ -20,6 +20,10 @@
     expand.setAttribute('aria-expanded', 'false'); expand.focus();
   });
   const names = {vehicle: '异常车辆', armed_person: '持刀人员', patient: '病人'};
+  const personActions = {patient: {route: 'deliver', label: '派机送药'}, armed_person: {route: 'subdue', label: '派机处置'}};
+  const personPhases = {queued: '等待调度', selecting: '正在选机', planning: '正在规划航线',
+    loading: '正在起飞挂载药箱', en_route: '正在飞往现场', delivering: '正在投递药品',
+    treating: '正在现场处置', returning: '正在返航'};
   const scenes = {
     patient: {title: '医疗求助', icon: '+', description: '随机布置在街区人行道，也可手动选择位置。'},
     armed_person: {title: '持刀人员', icon: '!', description: '随机布置巡游人员，与医疗救援现场保持距离。'},
@@ -27,14 +31,27 @@
   };
   const sceneCards = new Map();
   const modes = {mixed: '混合', speeding: '超速行驶', wrong_way: '逆向行驶（超速）'};
+  const interceptLabels = {braking: '正在减速停车', stopped: '已截停'};
   const actions = ['原地停留', '步行', '奔跑', '持刀威胁', '痛苦', '倒地中', '躺卧'];
   const storageKey = 'city-abnormal-pending';
+  const personJobs = new Map();
+  let activePersonActions = new Set();
   let targets = [], selected = null, currentZone = null, picking = false, busy = false, online = false;
   let timer, frameTimer, imageUrl, frameController, frameGeneration = 0, stateGeneration = 0, session = null, listKey = '';
+  let lastWatch;
   let pending;
   let pursuit = null;
   const pursuitActive = () => pursuit && !['complete', 'failed', 'stopped'].includes(pursuit.status);
-  try { pending = JSON.parse(sessionStorage.getItem(storageKey)); } catch { /* 禁止存储时仍可使用。 */ }
+  const isPersonAction = route => route === 'deliver' || route === 'subdue';
+  const personBusy = id => personJobs.has(id) || activePersonActions.has(id);
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(storageKey));
+    for (const operation of Array.isArray(saved) ? saved : saved ? [saved] : []) {
+      if (isPersonAction(operation.route)) personJobs.set(operation.data.target_id, operation);
+      else pending = operation;
+    }
+    busy = !!pending;
+  } catch { /* 禁止存储时仍可使用。 */ }
   const visible = () => !$('abnormal-panel').hidden && !document.hidden;
 
   async function json(url, options = {}) {
@@ -50,6 +67,10 @@
     $('abnormal-operation').textContent = text;
     $('abnormal-operation').dataset.error = String(error);
   }
+  function vehicleStatus(target) {
+    const label = interceptLabels[target.intercept_state] || modes[target.active_behavior] || '行驶中';
+    return `${label} · ${(target.speed_m_s * 3.6).toFixed(1)} km/h`;
+  }
   function controls() {
     $('abnormal-camera-panel').hidden = !dialog.open && (!visible() || !selected);
     $('abnormal-zone-pick').disabled = busy || !window.liveMap?.isReady();
@@ -60,21 +81,33 @@
     $('abnormal-apply').disabled = busy || !online || pursuitActive() && pursuit.vehicle_id === selected;
     $('abnormal-behavior').disabled = $('abnormal-apply').disabled;
     $('abnormal-escape').dataset.escapeTarget = selected || '';
-    for (const button of document.querySelectorAll('[data-escape-target]')) {
-      button.disabled = busy || !online || !!pursuitActive();
-      button.textContent = pursuitActive() && pursuit.vehicle_id === button.dataset.escapeTarget ? '追踪中…' : '逃逸';
+    $('abnormal-pursue').dataset.pursuitTarget = selected || '';
+    for (const button of document.querySelectorAll('[data-escape-target]')) button.disabled = busy || !online;
+    for (const button of document.querySelectorAll('[data-person-action-target]')) {
+      const id = button.dataset.personActionTarget;
+      const target = targets.find(item => item.id === id);
+      const acting = personBusy(id);
+      const phase = personPhases[personJobs.get(id)?.phase];
+      button.disabled = busy || !online || acting || !!target?.error;
+      if (target) button.textContent = acting ? `${phase || '执行中'}…` : personActions[target.kind].label;
     }
+    for (const button of document.querySelectorAll('[data-pursuit-target]'))
+      button.disabled = busy || !online || !!pursuitActive();
     for (const button of document.querySelectorAll('.abnormal-remove'))
-      button.disabled = busy || !online || pursuitActive() && pursuit.vehicle_id === button.dataset.target;
+      button.disabled = busy || !online || personBusy(button.dataset.target)
+        || pursuitActive() && pursuit.vehicle_id === button.dataset.target;
     for (const [kind, card] of sceneCards) {
       const target = targets.find(target => target.zone_id === currentZone?.id && target.kind === kind);
       const working = pending?.data.kind === kind && pending.data.zone_id === currentZone?.id
         || pending?.route === 'remove' && pending.data.target_id === target?.id;
+      const acting = personBusy(target?.id);
+      const phase = personPhases[personJobs.get(target?.id)?.phase];
       card.root.dataset.active = String(!!target);
       card.state.textContent = working ? pending.route === 'remove' ? '正在移除…' : '正在添加…'
-        : target ? target.error ? '需要关注' : '现场运行中' : !currentZone ? '待选街区' : !online ? '等待连接' : '待布置';
+        : acting ? phase || '执行中' : target ? target.error ? '需要关注' : interceptLabels[target.intercept_state] || '现场运行中'
+          : !currentZone ? '待选街区' : !online ? '等待连接' : '待布置';
       card.description.textContent = target ? target.error ? '目标运行异常，可查看详情或重新布置。'
-        : target.kind === 'vehicle' ? `${modes[target.active_behavior] || '行驶中'} · ${(target.speed_m_s * 3.6).toFixed(1)} km/h`
+        : target.kind === 'vehicle' ? vehicleStatus(target)
         : `当前状态：${actions[target.action] || '等待更新'}` : scenes[kind].description;
       card.primary.textContent = target ? '定位' : working ? '正在添加…' : '添加';
       card.primary.setAttribute('aria-label', `${scenes[kind].title}：${target ? '定位' : '添加'}`);
@@ -83,9 +116,9 @@
       card.secondary.textContent = target ? '移除' : '指定位置';
       card.secondary.hidden = kind === 'vehicle' && !target;
       card.secondary.setAttribute('aria-label', `${scenes[kind].title}：${target ? '移除' : '指定位置'}`);
-      card.secondary.disabled = busy || !currentZone || !online || !window.liveMap?.isReady()
+      card.secondary.disabled = busy || acting || !currentZone || !online || !window.liveMap?.isReady()
         || pursuitActive() && pursuit.vehicle_id === target?.id;
-      card.root.setAttribute('aria-busy', String(!!working));
+      card.root.setAttribute('aria-busy', String(!!working || acting));
     }
   }
   function cancelPick() {
@@ -106,7 +139,7 @@
     if (visible() && selected) void frame();
   }
   function render() {
-    window.liveMap?.setAbnormal(targets, selected);
+    window.liveMap?.setAbnormal(targets, selected, session);
     const localTargets = targets.filter(target => target.zone_id === currentZone?.id);
     $('abnormal-count').textContent = localTargets.length;
     $('abnormal-empty').hidden = localTargets.length > 0;
@@ -131,9 +164,24 @@
         if (target.kind === 'vehicle') {
           const escape = document.createElement('button'); escape.type = 'button';
           escape.className = 'abnormal-escape'; escape.dataset.escapeTarget = target.id;
-          escape.setAttribute('aria-label', `启动 ${target.id} 逃逸与追踪`);
+          escape.textContent = '启动逃逸';
           escape.onclick = () => void runJob('escape', {target_id: target.id});
-          row.append(escape);
+          const follow = document.createElement('button'); follow.type = 'button';
+          follow.className = 'abnormal-escape'; follow.dataset.pursuitTarget = target.id;
+          follow.textContent = '开始追踪';
+          follow.onclick = () => void runJob('pursue', {target_id: target.id});
+          row.append(escape, follow);
+        } else if (personActions[target.kind]) {
+          const {route, label} = personActions[target.kind];
+          const action = document.createElement('button'); action.type = 'button';
+          action.className = 'abnormal-person-action'; action.textContent = label;
+          action.dataset.personActionTarget = target.id;
+          action.setAttribute('aria-label', `${label} ${names[target.kind]} ${target.id}`);
+          action.onclick = () => {
+            select(target.id);
+            void runJob(route, {target_id: target.id});
+          };
+          row.append(action);
         }
         row.append(remove);
         return row;
@@ -145,7 +193,7 @@
       $('abnormal-title').textContent = `${target.zone_name} · ${names[target.kind]} · ${target.id.split('_').pop()}`;
       $('abnormal-position').textContent = `UE X ${target.position_m[0].toFixed(1)} · Y ${target.position_m[1].toFixed(1)} · Z ${target.position_m[2].toFixed(1)} m`;
       $('abnormal-action').textContent = target.error ? `运行异常：${target.error}` : target.kind === 'vehicle'
-        ? `${modes[target.behavior] || target.behavior} · 当前 ${modes[target.active_behavior] || target.active_behavior} · ${(target.speed_m_s * 3.6).toFixed(1)} km/h`
+        ? (target.intercept_state ? vehicleStatus(target) : `${modes[target.behavior] || target.behavior} · 当前 ${vehicleStatus(target)}`)
         : `当前状态：${actions[target.action] || '等待更新'}`;
       $('abnormal-action').dataset.error = String(!!target.error);
       $('abnormal-vehicle-controls').hidden = target.kind !== 'vehicle';
@@ -192,39 +240,76 @@
       void runJob('spawn', {kind, zone_id: zone.id, position, behavior: 'speeding'});
     });
   }
-  function savePending(value) {
-    pending = value;
-    try { if (value) sessionStorage.setItem(storageKey, JSON.stringify(value)); else sessionStorage.removeItem(storageKey); } catch { /* 存储可选。 */ }
+  function savePending(operation, running) {
+    if (isPersonAction(operation.route)) {
+      if (running) personJobs.set(operation.data.target_id, operation);
+      else personJobs.delete(operation.data.target_id);
+    } else {
+      pending = running ? operation : null;
+      busy = running;
+    }
+    const saved = pending ? [pending, ...personJobs.values()] : [...personJobs.values()];
+    try {
+      if (saved.length) sessionStorage.setItem(storageKey, JSON.stringify(saved));
+      else sessionStorage.removeItem(storageKey);
+    } catch { /* 存储可选。 */ }
+  }
+  function finishJob(operation) {
+    savePending(operation, false);
+    if (!isPersonAction(operation.route)) window.liveMap?.setPendingPoint(null);
+    controls();
   }
   async function runJob(route, data) {
-    if (busy) return;
-    cancelPick(); busy = true;
+    if (busy || personBusy(data.target_id)) return;
+    cancelPick();
+    if (route === 'pursue' || isPersonAction(route)) data = {...data, flight: window.getMissionFlightSettings()};
     const operation = {route, data: {request_id: crypto.randomUUID(), ...data}};
-    savePending(operation);
+    savePending(operation, true);
     controls();
     message(route === 'spawn' ? `正在生成${names[data.kind]}，请等待仿真返回…`
-      : route === 'escape' ? '正在检查机队、停止车辆监测并交接追踪…'
+      : route === 'escape' ? '正在切换车辆路线…'
+      : route === 'pursue' ? '正在检查可用于追踪的无人机…'
+      : route === 'deliver' ? '正在提交送药请求…'
+      : route === 'subdue' ? '正在提交处置请求…'
       : route === 'remove' ? `正在移除 ${data.target_id}…` : '正在设置车辆行为…');
     try {
       await json(`/api/abnormal/${route}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(operation.data)});
     } catch (error) {
       if (error.status >= 400 && error.status < 500) {
-        savePending(null); busy = false; window.liveMap?.setPendingPoint(null); controls();
+        finishJob(operation);
         message(error.message, true); return;
       }
       message(`提交结果尚未确认：${error.message}；正在查询操作记录。`, true);
     }
-    void pollJob();
+    void pollJob(operation);
   }
-  async function pollJob() {
-    if (!pending) return;
-    busy = true; controls();
+  async function pollJob(operation) {
+    const {route, data} = operation;
+    const personAction = isPersonAction(route);
     try {
-      const job = await json(`/api/abnormal/jobs/${encodeURIComponent(pending.data.request_id)}`);
-      if (job.status === 'running') { setTimeout(pollJob, 800); return; }
-      if (job.status === 'completed') {
+      const job = await json(`/api/abnormal/jobs/${encodeURIComponent(data.request_id)}`);
+      if (job.status === 'running') {
+        if (personAction && personPhases[job.phase] &&
+            (job.phase !== operation.phase || job.drone_id !== operation.drone_id)) {
+          operation.phase = job.phase;
+          operation.drone_id = job.drone_id;
+          controls();
+          const drone = job.drone_id ? `${job.drone_id} ` : '';
+          const phase = job.phase === 'returning'
+            ? `${route === 'deliver' ? '药品已投递' : '处置已完成'}，${drone}正在返航`
+            : drone + personPhases[job.phase];
+          message(`${data.target_id} · ${phase}。`);
+        }
+        setTimeout(() => pollJob(operation), personAction && !['en_route', 'delivering', 'treating', 'returning'].includes(job.phase) ? 300 : 800);
+        return;
+      }
+      if (personAction) {
+        const result = job.status === 'completed' ? `${route === 'deliver' ? '药品已投递' : '持刀人员已制服'}，无人机已返航降落。`
+          : `操作失败：${job.error}`;
+        message(`${data.target_id} · ${result}`, job.status !== 'completed');
+      } else if (job.status === 'completed') {
         ++stateGeneration;
-        if (pending.route === 'remove') {
+        if (route === 'remove') {
           targets = targets.filter(target => target.id !== job.result.target_id);
           if (selected === job.result.target_id) {
             selected = targets.find(target => target.zone_id === currentZone?.id)?.id || null;
@@ -234,35 +319,45 @@
           message(`已移除：${job.result.target_id}`);
         } else {
           selected = job.result.target_id; clearFrame();
-          message(job.result.warning || (pending.route === 'escape' ? '已进入逃逸追踪流程，可在无人机机队查看三机画面。' : pending.route === 'spawn'
-            ? `已在${job.result.zone_name}添加${names[pending.data.kind]}。` : '车辆行为已更新。'), !!job.result.warning);
+          message(job.result.warning || (route === 'escape' ? '车辆已启动逃逸。'
+            : route === 'pursue' ? '正在调度追踪，请到「机队」查看实时画面。'
+            : route === 'spawn'
+            ? `已在${job.result.zone_name}添加${names[data.kind]}。` : '车辆行为已更新。'), !!job.result.warning);
         }
       } else message(`操作失败：${job.error}`, true);
-      await poll();
-      savePending(null); busy = false; window.liveMap?.setPendingPoint(null); controls();
+      if (!personAction) await poll();
+      finishJob(operation);
     } catch (error) {
       if (error.status === 404) {
-        savePending(null); busy = false; window.liveMap?.setPendingPoint(null); controls();
-        message('未找到操作记录（服务可能已重启）。请先查看已有目标，确认上次结果后再生成。', true);
+        finishJob(operation);
+        message(personAction ? `${data.target_id} · 未找到处置记录，请确认结果后再派机。`
+          : '未找到操作记录（服务可能已重启）。请先查看已有目标，确认上次结果后再生成。', true);
         return;
       }
       // 保留待确认请求，防止网络失败后重复生成。
-      message(`操作状态待确认：${error.message}。正在重试查询，请勿重复生成。`, true);
-      setTimeout(pollJob, 2000);
+      message(personAction ? `${data.target_id} · 处置状态待确认，正在重试查询。`
+        : `操作状态待确认：${error.message}。正在重试查询，请勿重复生成。`, true);
+      setTimeout(() => pollJob(operation), 2000);
     }
   }
   async function poll() {
     clearTimeout(timer);
+    const started = performance.now();
     const generation = stateGeneration;
     if (!document.hidden) {
       try {
-        const data = await json(`/api/abnormal/state?target=${encodeURIComponent(selected || '')}&watch=${visible() && !!selected ? 1 : 0}`);
+        const target = selected;
+        const watch = visible() && !!target && (lastWatch?.target !== target || started - lastWatch.at >= 700);
+        const data = await json(`/api/abnormal/state?target=${encodeURIComponent(target || '')}&watch=${watch ? 1 : 0}`);
         if (generation !== stateGeneration) { timer = setTimeout(poll, 0); return; }
         if (session !== data.session) {
           session = data.session;
+          lastWatch = null;
           clearFrame(selected ? '正在等待实时画面…' : '选择一个已生成目标以查看画面');
         }
+        if (watch && data.connected) lastWatch = {target, at: started};
         online = data.connected; targets = data.targets;
+        activePersonActions = new Set(data.active_person_actions || []);
         const previousStatus = pursuit?.status;
         pursuit = data.pursuit;
         if (previousStatus !== pursuit?.status) window.dispatchEvent(new Event('vehicle-pursuit:change'));
@@ -282,7 +377,8 @@
         $('abnormal-connection').textContent = '连接失败'; $('abnormal-connection').title = error.message;
       }
     }
-    clearTimeout(timer); timer = setTimeout(poll, 700);
+    const interval = online && targets.length && !document.hidden ? 200 : 700;
+    clearTimeout(timer); timer = setTimeout(poll, Math.max(0, interval - (performance.now() - started)));
   }
   async function frame() {
     clearTimeout(frameTimer); frameTimer = null;
@@ -324,7 +420,9 @@
   $('abnormal-locate').onclick = () => window.liveMap?.centerTarget(selected);
   $('abnormal-apply').onclick = () => void runJob('behavior', {target_id: selected, behavior: $('abnormal-behavior').value});
   $('abnormal-escape').onclick = () => void runJob('escape', {target_id: selected});
-  window.vehiclePursuit = {start: id => runJob('escape', {target_id: id}),
+  $('abnormal-pursue').onclick = () => void runJob('pursue', {target_id: selected});
+  window.vehiclePursuit = {escape: id => runJob('escape', {target_id: id}),
+    start: id => runJob('pursue', {target_id: id}),
     get active() { return !!pursuitActive(); }, get busy() { return busy; }};
   window.addEventListener('keydown', event => { if (event.key === 'Escape' && picking) $('abnormal-cancel').click(); });
   window.addEventListener('abnormal:select', event => { $('abnormal-tab').click(); select(event.detail.id); });
@@ -363,6 +461,8 @@
     sceneCards.set(kind, {root, state, description, primary, secondary}); $('abnormal-scenes').append(root);
   }
   controls();
-  if (pending) { message('正在恢复上一次操作状态…'); void pollJob(); }
+  if (pending || personJobs.size) message('正在恢复操作状态…');
+  if (pending) void pollJob(pending);
+  for (const operation of personJobs.values()) void pollJob(operation);
   void poll();
 })();

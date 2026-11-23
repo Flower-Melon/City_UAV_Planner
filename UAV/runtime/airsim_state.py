@@ -1,5 +1,6 @@
 """AirSim 机队状态、UE 坐标标定与地面测量。"""
 
+from contextlib import nullcontext
 import json
 import math
 import os
@@ -32,6 +33,27 @@ def vector(value):
     return result
 
 
+def uses_pose_flight(settings):
+    return settings.get("PhysicsEngineName") == "ExternalPhysicsEngine"
+
+
+def spawn_ned(settings, name):
+    config = settings.get("Vehicles", {}).get(name, {})
+    if all(config.get(key) is not None for key in "XYZ"):
+        return tuple(float(config[key]) for key in "XYZ")
+    return (0.0, 0.0, 0.0)
+
+
+def vehicle_airborne(client, settings, name, position_ned, scale):
+    if uses_pose_flight(settings):
+        # 位姿驱动不会触发 SimpleFlight 的起降状态机。演示机统一在出生点着陆。
+        return math.dist(position_ned, spawn_ned(settings, name)) * scale > 0.75
+    landed = client.call("getMultirotorState", name).get("landed_state")
+    if type(landed) is not int or landed not in (0, 1):
+        raise RuntimeError(f"无法确认 {name} 的落地状态")
+    return landed == 1
+
+
 def editor_log():
     if os.name != "nt":
         raise RuntimeError("UE world-coordinate calibration currently requires the local Windows editor")
@@ -39,10 +61,10 @@ def editor_log():
     result = subprocess.run(["powershell.exe", "-NoProfile", "-Command", query], capture_output=True, timeout=10,
                             creationflags=subprocess.CREATE_NO_WINDOW)
     commands = result.stdout.decode("utf-8", errors="replace")
-    matches = re.findall(r'"([^"\r\n]+\.uproject)"', commands)
-    if not matches:
+    match = re.search(r'"([^"\r\n]+\.uproject)"|(?<!\S)([^"\s]+\.uproject)(?=\s|$)', commands, re.IGNORECASE)
+    if not match:
         raise RuntimeError("Cannot locate the running Unreal editor project")
-    project = Path(matches[0])
+    project = Path(match.group(1) or match.group(2))
     logs = list((project.parent / "Saved" / "Logs").glob("*.log"))
     if not logs:
         raise RuntimeError("Unreal editor log is unavailable")
@@ -72,7 +94,7 @@ def _run_ue_json(client, code, token, rejected_message, timeout_message, *, log_
     raise RuntimeError(timeout_message)
 
 
-def calibrate(rpc):
+def calibrate(rpc, *, log_path=None):
     token = "WEB_AIRSIM_ANCHOR_" + uuid.uuid4().hex + ":"
     code = (
         "import unreal,json; "
@@ -88,6 +110,7 @@ def calibrate(rpc):
         rpc, code, token,
         "UE Python coordinate calibration command was rejected",
         "UE world-coordinate calibration failed; check that the editor Python plugin is enabled",
+        log_path=log_path,
     )
     vector(rpc.call("simGetObjectPose", anchor["actor"])["position"])
     return anchor
@@ -96,20 +119,31 @@ def calibrate(rpc):
 class WorldFrame:
     """由运行中的UE参考点测量全局NED与世界米制坐标之间的关系。"""
 
-    def __init__(self, client):
+    def __init__(self, client, settings=None):
         self.client = client
-        self.anchor = calibrate(client)
+        self.settings = json.loads(client.call("getSettingsString")) if settings is None else settings
+        self.log_path = editor_log()
+        self.anchor = calibrate(client, log_path=self.log_path)
         self.scale = float(self.anchor['scale'])
         if not math.isfinite(self.scale) or self.scale <= 0:
             raise RuntimeError('UE坐标尺度无效')
 
-    def vehicle(self, name):
+    def world_offset(self):
         reference = vector(self.client.call('simGetObjectPose', self.anchor['actor'])['position'])
-        offset = [a-b*self.scale for a,b in zip(self.anchor['position_m'], [reference[0],reference[1],-reference[2]])]
+        return [a - b * self.scale for a, b in zip(self.anchor['position_m'], (*reference[:2], -reference[2]))]
+
+    def world(self, ned, offset):
+        return [a + b * self.scale for a, b in zip(offset, (*ned[:2], -ned[2]))]
+
+    def home(self, name):
+        return self.world(spawn_ned(self.settings, name), self.world_offset())
+
+    def vehicle(self, name):
+        offset = self.world_offset()
         world_ned = vector(self.client.call('simGetObjectPose', name)['position'])
         local_pose = self.client.call('simGetVehiclePose', name)
         local = vector(local_pose['position'])
-        world = [a+b*self.scale for a,b in zip(offset,[world_ned[0],world_ned[1],-world_ned[2]])]
+        world = self.world(world_ned, offset)
         origin = [a-b*self.scale for a,b in zip(world,[local[0],local[1],-local[2]])]
         return world, local, origin
 
@@ -135,6 +169,7 @@ class WorldFrame:
         result = _run_ue_json(
             self.client, code, token,
             'UE地面测量命令未执行', 'UE未返回起飞地面测量结果',
+            log_path=self.log_path,
         )['ground_z_m']
         if result is None or not math.isfinite(float(result)):
             raise RuntimeError('无法测量起飞地面高度')
@@ -147,11 +182,11 @@ class AirSimFleet:
     def __init__(self, client_factory=AirSimClient):
         self.client_factory = client_factory
 
-    def read(self):
+    def read(self, *, frame=None):
         """当前位置使用 UE 世界米制坐标，不使用配置中的出生点。"""
         try:
-            with self.client_factory() as rpc:
-                settings = json.loads(rpc.call("getSettingsString"))
+            with (self.client_factory() if frame is None else nullcontext(frame.client)) as rpc:
+                settings = json.loads(rpc.call("getSettingsString")) if frame is None else frame.settings
                 configured = settings.get("Vehicles", {})
                 names = [name for name in rpc.call("listVehicles")
                          if configured.get(name, {}).get("VehicleType", "SimpleFlight")
@@ -162,21 +197,19 @@ class AirSimFleet:
                         or len(set(names)) != len(names)):
                     raise RuntimeError("AirSim 返回的无人机名称无效或重复。")
 
-                frame = WorldFrame(rpc)
+                if frame is None:
+                    frame = WorldFrame(rpc, settings)
+                offset = frame.world_offset()
                 fleet = []
                 for name in names:
-                    position, _, _ = frame.vehicle(name)
-                    if len(position) != 3 or any(type(value) not in (int, float) or not math.isfinite(value) for value in position):
-                        raise RuntimeError(f"无法读取 {name} 的有效世界坐标。")
-                    state = rpc.call("getMultirotorState", name)
-                    landed = state.get("landed_state")
-                    if type(landed) is not int or landed not in (0, 1):
-                        raise RuntimeError(f"无法确认 {name} 的落地状态，未生成指令。")
-                    motion = rpc.call("simGetGroundTruthKinematics", name)
-                    speed_m_s = math.hypot(*vector(motion["linear_velocity"])) * frame.scale
-                    # 初版的候选规则，不把在线直接当成空闲；不接管飞行或任务锁。
-                    fleet.append({"name": name, "position_m": position,
-                                  "available": landed == 0 and speed_m_s <= 0.1})
+                    ned = vector(rpc.call("simGetObjectPose", name)["position"])
+                    airborne = vehicle_airborne(rpc, settings, name, ned, frame.scale)
+                    speed = 0.0
+                    if not uses_pose_flight(settings):
+                        motion = rpc.call("simGetGroundTruthKinematics", name)
+                        speed = math.hypot(*vector(motion["linear_velocity"])) * frame.scale
+                    fleet.append({"name": name, "position_m": frame.world(ned, offset),
+                                  "airborne": airborne, "available": not airborne and speed <= 0.1})
                 return sorted(fleet, key=lambda drone: drone["name"])
         except OSError as error:
             raise RuntimeError("无法读取 AirSim（127.0.0.1:41451），请确认仿真已启动且 RPC 可连接。") from error

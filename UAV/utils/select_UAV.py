@@ -10,7 +10,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     __package__ = "UAV.utils"
 
-from ..runtime.airsim_state import AirSimFleet
+from ..runtime.airsim_state import AirSimFleet, vehicle_name
 from ..runtime.flight_control import vehicle_lock
 from .plan_search_path import search_scope
 
@@ -50,18 +50,70 @@ def _reserve_UAV(zone_id):
             # 其他飞行API可能刚取得该机任务锁，重新读取状态并选机。
 
 
-def _reserve_nearest_UAV(position):
+def _nearest_available(position, fleet):
+    return sorted((math.dist(drone["position_m"], position), drone["name"])
+                  for drone in fleet if drone["available"])
+
+
+def _reserve_nearest_UAV(position, *, frame=None):
     """按目标实时位置选择并占用最近的落地空闲机。"""
     with vehicle_lock("__select_UAV__"):
-        candidates = sorted(
-            (math.dist(drone["position_m"], position), drone["name"])
-            for drone in AirSimFleet().read() if drone["available"]
-        )
-        for _, name in candidates:
+        for _, name in _nearest_available(position, AirSimFleet().read(frame=frame)):
             lock = vehicle_lock(name)
             if lock.acquire(blocking=False):
                 return name, lock
     raise RuntimeError("当前没有可用无人机（需落地、静止且未被任务占用）")
+
+
+def _hovering_observers(frame, fleet, target_position):
+    candidates = []
+    for drone in fleet:
+        if not drone["airborne"] or vehicle_lock(drone["name"]).locked():
+            continue
+        position = drone["position_m"]
+        if position[2] - frame.home(drone["name"])[2] >= 100.0:
+            candidates.append((math.dist(position[:2], target_position[:2]), drone["name"], position))
+    return sorted(candidates)
+
+
+def _reserve_pursuit_UAVs(client, frame, observer_id, target_position, *, auto_observer=True):
+    """锁定三机，返回名称、任务锁及是否返回监控位置。"""
+    with vehicle_lock("__select_UAV__"):
+        selected = []
+        try:
+            if observer_id is None:
+                fleet = AirSimFleet().read()
+                position = target_position
+                if auto_observer:
+                    for _, name, hover_position in _hovering_observers(frame, fleet, target_position):
+                        lock = vehicle_lock(name)
+                        if lock.acquire(blocking=False):
+                            selected.append((name, lock, True))
+                            position = hover_position
+                            break
+            else:
+                observer = vehicle_name(observer_id, client.call("listVehicles"))
+                lock = vehicle_lock(observer)
+                if not lock.acquire(blocking=False):
+                    raise RuntimeError("高空机仍被其他任务占用，请先停止原监测会话")
+                selected.append((observer, lock, True))
+                fleet = AirSimFleet().read()
+                drone = next((drone for drone in fleet if drone["name"] == observer), None)
+                if drone is None or not drone["airborne"]:
+                    raise RuntimeError("高空机尚未升空，请先启动区域监控")
+                position = drone["position_m"]
+            needed = 3 - len(selected)
+            for _, name in _nearest_available(position, fleet):
+                lock = vehicle_lock(name)
+                if lock.acquire(blocking=False):
+                    selected.append((name, lock, False))
+                    if len(selected) == 3:
+                        return selected
+            raise RuntimeError(f"追踪需要 {needed} 架已落地、静止且未被占用的无人机")
+        except BaseException:
+            for _, lock, _ in reversed(selected):
+                lock.release()
+            raise
 
 
 if __name__ == "__main__":

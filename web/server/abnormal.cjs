@@ -11,8 +11,9 @@ function sendJSON(response, status, data) {
 
 const abnormalKinds = new Set(['vehicle', 'armed_person', 'patient']);
 const abnormalBehaviors = new Set(['speeding', 'wrong_way', 'mixed']);
+const actionKinds = {abnormal_pursue: 'vehicle', abnormal_deliver: 'patient', abnormal_subdue: 'armed_person'};
 const validAbnormalId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
-const abnormalError = message => Object.assign(Error(message), {statusCode: 400});
+const abnormalError = (message, statusCode = 400) => Object.assign(Error(message), {statusCode});
 
 async function readAbnormalBody(request) {
   if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}`)
@@ -31,11 +32,13 @@ async function readAbnormalBody(request) {
 }
 
 module.exports = class AbnormalController {
-  constructor({root, startPursuit, getPursuit}) {
+  constructor({root, startPursuit, getPursuit, executePersonAction}) {
     this.runtime = new PythonRuntime({root});
     this.startPursuit = startPursuit;
     this.getPursuit = getPursuit;
+    this.executePersonAction = executePersonAction;
     this.jobs = new Map();
+    this.activePersonActions = new Set();
     this.queue = Promise.resolve();
     this.reading = null;
     this.frames = new Map();
@@ -49,28 +52,49 @@ module.exports = class AbnormalController {
       if (previous.signature !== signature) throw abnormalError('请求编号已用于其他操作');
       return previous;
     }
-    // 单一写入通道保留未结束任务；只清理旧的已结束任务。
+    const kind = actionKinds[operation];
+    const personAction = !!kind && kind !== 'vehicle';
+    if ((personAction || operation === 'abnormal_remove') && this.activePersonActions.has(data.target_id))
+      throw abnormalError('该人物正在处置中，请等待完成。', 409);
+    // 只清理旧的已结束任务，重试时仍可用原请求编号查到结果。
     for (const [id, item] of this.jobs) {
       if (item.status !== 'running' && Date.now() - item.created_at > 86400000) this.jobs.delete(id);
     }
     const job = {id: data.request_id, status: 'running', created_at: Date.now(), signature};
     this.jobs.set(job.id, job);
-    this.queue = this.queue.then(async () => {
-      try {
-        const pursuit = this.getPursuit();
-        if (pursuit && !['complete', 'failed', 'stopped'].includes(pursuit.status) &&
-            (operation === 'abnormal_escape' || data.target_id === pursuit.vehicle_id))
-          throw abnormalError('车辆正在追踪中，暂时不能重复逃逸、修改行为或移除。');
-        if (operation === 'abnormal_escape') {
-          const state = await this.runtime.request('abnormal_state', {}, {channel: 'abnormal-actions', timeoutMs: 15000});
-          const target = state.targets.find(item => item.id === data.target_id && item.kind === 'vehicle');
-          if (!target) throw abnormalError('当前仿真中没有指定异常车辆。');
-          job.result = await this.startPursuit(target);
-        } else {
-          job.result = await this.runtime.request(operation, data, {channel: 'abnormal-actions', timeoutMs: 0});
-        }
-        job.status = 'completed';
-      } catch (error) { job.error = error.message; job.status = 'failed'; }
+    if (personAction) {
+      job.phase = 'queued';
+      this.activePersonActions.add(data.target_id);
+    }
+    const dispatch = this.queue.then(async () => {
+      const pursuit = this.getPursuit();
+      if (pursuit && !['complete', 'failed', 'stopped'].includes(pursuit.status) &&
+          data.target_id === pursuit.vehicle_id && ['abnormal_behavior', 'abnormal_remove'].includes(operation))
+        throw abnormalError('车辆正在追踪中，暂时不能修改行为或移除。');
+      if (personAction) {
+        // 飞行任务自身会核实目标类型和实时位置。
+        job.phase = 'selecting';
+        const result = this.executePersonAction({id: data.target_id, kind}, data.flight, (phase, droneId) => {
+          job.phase = phase;
+          if (droneId) job.drone_id = droneId;
+        });
+        return {result};
+      }
+      if (kind) {
+        const state = await this.runtime.request('abnormal_state', {}, {channel: 'abnormal-actions', timeoutMs: 15000});
+        const target = state.targets.find(item => item.id === data.target_id && item.kind === kind);
+        if (!target) throw abnormalError('当前仿真中没有与此操作匹配的目标。');
+        return {result: await this.startPursuit(target, data.flight)};
+      }
+      return {result: await this.runtime.request(operation, data, {channel: 'abnormal-actions', timeoutMs: 0})};
+    });
+    this.queue = dispatch.then(() => {}, () => {});
+    void dispatch.then(({result}) => result).then(result => {
+      Object.assign(job, {status: 'completed', result});
+    }, error => {
+      Object.assign(job, {status: 'failed', error: error.message});
+    }).finally(() => {
+      if (personAction) this.activePersonActions.delete(data.target_id);
     });
     return job;
   }
@@ -78,7 +102,7 @@ module.exports = class AbnormalController {
   async handle(request, response, url) {
     try {
       const route = url.pathname.slice('/api/abnormal/'.length);
-      if (request.method === 'POST' && ['spawn', 'behavior', 'remove', 'escape'].includes(route)) {
+      if (request.method === 'POST' && ['spawn', 'behavior', 'remove', 'escape', 'pursue', 'deliver', 'subdue'].includes(route)) {
         const data = await readAbnormalBody(request);
         if (route === 'spawn') {
           if (!abnormalKinds.has(data.kind)) throw abnormalError('请选择异常类型');
@@ -107,7 +131,8 @@ module.exports = class AbnormalController {
           this.reading = task;
           task.finally(() => { if (this.reading === task) this.reading = null; }).catch(() => {});
         }
-        sendJSON(response, 200, {...await this.reading, pursuit: this.getPursuit()}); return;
+        sendJSON(response, 200, {...await this.reading, pursuit: this.getPursuit(),
+          active_person_actions: [...this.activePersonActions]}); return;
       }
       if (route === 'camera') {
         if (!target_id) throw abnormalError('请选择监控目标');

@@ -24,6 +24,7 @@ ROAD_PREFETCH_CELLS = 3
 FUSION_WINDOW_S = 60.0
 FUSION_SAMPLE_INTERVAL_S = 3.0
 FUSION_ROUTE_GATE_M = 14.0
+MONITOR_ROAD_MARGIN_M = 40.0
 _surface_world = None
 _road_surfaces = {}
 
@@ -616,9 +617,14 @@ class VehicleFusion:
     """单街区车辆融合：探头负责身份，高空 YOLO 负责沿途测速。"""
 
     def __init__(self, zone_id, log_path, speed_limit_kmh):
+        from shapely.prepared import prep
+        from UAV.utils.plan_search_path import search_scope
+
         root = Path(__file__).resolve().parents[2]
         self.events_dir = Path(log_path).parent.parent / 'TrafficProbes'
         self.zone_id = zone_id
+        geometry, _ = search_scope({'zone_id': zone_id})
+        self.coverage = prep(geometry.buffer(MONITOR_ROAD_MARGIN_M))
         self.probes = json.loads((root / 'Map/objects/traffic_probes.json').read_text(encoding='utf-8-sig'))['probes']
         self.limit = speed_limit_kmh
         self.cursor = None
@@ -630,6 +636,7 @@ class VehicleFusion:
 
     def step(self, context, vehicles, alerts, observation_time=None):
         from Scene.probe.get_probe_records import _read_probe_records
+        from shapely.geometry import LineString, Point
 
         now = context['simulation_time_s']
         if self.last_time is not None and now < self.last_time:
@@ -639,16 +646,18 @@ class VehicleFusion:
         self.last_time = now
         if self.started_at is None:
             self.started_at = now
-        demos = {item['id']: item for item in context['targets'] if item['zone_id'] == self.zone_id}
+        demos = {item['id']: item for item in context['targets'] if item['zone_id'] == self.zone_id or
+                 self.coverage.intersects(LineString(item['route']))}
         self.targets = {key: value for key, value in self.targets.items() if key in demos}
-        # 闭环和探头布局固定，附近探头只在建立目标时筛选一次。
         for key, demo in demos.items():
             if key not in self.targets:
                 self.targets[key] = {'target_id': key, 'plate': None, 'events': [], 'recent_events': [],
                                      'confirmed_at': None, 'confirmed_evidence': [],
                                      'position_m': None, 'last_seen_s': None, 'trail': [],
                                      'local_probes': [p for p in self.probes
-                                                      if route_distance(p['xy_m'], demo['route']) <= 65]}
+                                                      if route_distance(p['xy_m'], demo['route']) <= 65
+                                                      and (demo['zone_id'] == self.zone_id or
+                                                           self.coverage.covers(Point(p['xy_m'][:2])))]}
         error = None
         try:
             page = _read_probe_records(events_dir=self.events_dir, cursor=self.cursor,
@@ -669,6 +678,8 @@ class VehicleFusion:
                 if key not in demos or row['t'] > now or now - row['t'] > FUSION_WINDOW_S:
                     continue
                 state, demo = self.targets[key], demos[key]
+                if demo['zone_id'] != self.zone_id and not self.coverage.covers(Point(row['xy_m'][:2])):
+                    continue
                 if route_distance(row['xy_m'], demo['route']) > 65:
                     continue
                 if row.get('read_ok') and row.get('plate'):
@@ -685,13 +696,18 @@ class VehicleFusion:
                                            'direction': row['direction']})
         except (OSError, ValueError) as failure:
             error = str(failure)
+        matches = {}
         for key, demo in demos.items():
-            state = self.targets[key]
-            # 仅在所属闭环附近选取唯一超速目标，不使用 Actor 的真实速度或驾驶模式。
-            candidates = [v for v in vehicles if v['overspeed']
-                          and route_distance(v['position_m'], demo['route']) <= FUSION_ROUTE_GATE_M]
-            if len(candidates) != 1:
+            # 使用实际图像的超速结果，结合路线与监控范围关联车辆。
+            matches[key] = [v for v in vehicles if v['overspeed']
+                            and route_distance(v['position_m'], demo['route']) <= FUSION_ROUTE_GATE_M
+                            and (demo['zone_id'] == self.zone_id or
+                                 self.coverage.covers(Point(v['position_m'][:2])))]
+        owners = Counter(v['track_id'] for candidates in matches.values() for v in candidates)
+        for key, candidates in matches.items():
+            if len(candidates) != 1 or owners[candidates[0]['track_id']] != 1:
                 continue
+            state = self.targets[key]
             vehicle = candidates[0]
             stamp = observation_time if observation_time is not None else now
             state.update(position_m=vehicle['position_m'], last_seen_s=stamp,
@@ -730,7 +746,7 @@ class VehicleFusion:
                             'source_counts': {'uav': counts['uav'], 'probe': counts['probe']}})
         return {'window_s': FUSION_WINDOW_S, 'simulation_time_s': now, 'targets': records,
                 'probe_session': self.probe_session, 'error': error,
-                'association': '单街区闭环关联 · 探头 truth_id 辅助归属'}
+                'association': '监控范围与车道关联 · 探头 truth_id 辅助归属'}
 
 
 def _dispatch(request):
@@ -747,7 +763,7 @@ def _dispatch(request):
         for name, item in getattr(module, '_vehicles', {}).items():
             if unreal.SystemLibrary.is_valid(item.actor) and item.actor.get_world() == world:
                 targets.append({'id': name, 'zone_id': item.route['zone_id'],
-                                'route': item.route['points']})
+                                'route': item.motion.loop.points})
         context = {'simulation_time_s': unreal.GameplayStatics.get_time_seconds(world), 'targets': targets}
         if request['operation'] == 'fusion_context':
             return context

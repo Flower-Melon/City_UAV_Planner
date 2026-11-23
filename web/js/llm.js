@@ -10,18 +10,6 @@
   const modelSelect = $('llm-model-select'), modelInfo = $('llm-model-info');
   const modelRetry = $('llm-model-retry');
   let modelBackend = null, modelPending = false;
-  const flightButtons = [...document.querySelectorAll('[data-flight-setting]')];
-  const flightDialog = $('llm-flight-dialog'), flightValue = $('llm-flight-value');
-  const flightFields = {
-    max_height: {label: '最大飞行高度', unit: '米', min: 15, valueId: 'llm-max-height-value',
-      help: '去程和返航相对沿途地面的最大高度，至少 15 米。'},
-    flight_speed: {label: '飞行速度', unit: '米/秒', min: 0, valueId: 'llm-flight-speed-value',
-      help: '巡航速度上限，必须大于 0；转弯和短路段会自动降速。'},
-    flight_height: {label: '巡查高度', unit: '米', min: 0, valueId: 'llm-flight-height-value',
-      help: '相对起飞地面的固定巡查高度（flight_height），必须大于 0。'}
-  };
-  const flightSettings = {max_height: 60, flight_speed: 30, flight_height: 15};
-  let editingFlight = null;
   let pending = false, conversation = [], previousTurn = null;
   let needsClarification = false;
   let checking = true, flying = false, mission = null, pollTimer;
@@ -29,39 +17,6 @@
   let visionMission = null;
   const shownAnomalies = new Map();
   let trafficMission = null;
-  function showFlight(settings) {
-    for (const [key, field] of Object.entries(flightFields)) {
-      if (typeof settings[key] !== 'number' || !Number.isFinite(settings[key])) continue;
-      flightSettings[key] = settings[key];
-      $(field.valueId).textContent = String(settings[key]);
-    }
-  }
-  for (const button of flightButtons) button.onclick = () => {
-    if (button.disabled) return;
-    editingFlight = button.dataset.flightSetting;
-    const field = flightFields[editingFlight];
-    $('llm-flight-title').textContent = `设置${field.label}`;
-    $('llm-flight-label').textContent = `${field.label}（${field.unit}）`;
-    $('llm-flight-help').textContent = field.help;
-    flightValue.min = String(field.min);
-    flightValue.value = String(flightSettings[editingFlight]);
-    flightValue.setCustomValidity('');
-    flightDialog.showModal();
-    flightValue.focus(); flightValue.select();
-  };
-  flightValue.oninput = () => flightValue.setCustomValidity('');
-  $('llm-flight-form').onsubmit = event => {
-    event.preventDefault();
-    if (!editingFlight || flightButtons.some(button => button.disabled)) return;
-    const value = flightValue.valueAsNumber, field = flightFields[editingFlight];
-    if (!Number.isFinite(value) || value <= 0 || value < field.min) {
-      flightValue.setCustomValidity(field.min ? `${field.label}不得低于 ${field.min} ${field.unit}。` : '请输入大于 0 的有限数值。');
-      flightValue.reportValidity(); return;
-    }
-    showFlight({[editingFlight]: value});
-    flightDialog.close();
-  };
-  $('llm-flight-cancel').onclick = () => flightDialog.close();
 
   function annotatedImage(record) {
     const view = document.createElement('div'); view.className = 'llm-anomaly-image';
@@ -131,7 +86,7 @@
 
   function showTraffic(execution) {
     const traffic = execution?.traffic;
-    $('llm-traffic').hidden = !traffic;
+    $('llm-traffic').hidden = !traffic || !!traffic.pursuit;
     if (!traffic) { window.liveMap?.setTraffic([]); return; }
     if (trafficMission !== execution.mission_id) {
       trafficMission = execution.mission_id;
@@ -155,13 +110,12 @@
 
   // 根据规划与飞行状态锁定输入，防止刷新或重复点击再次派发。
   function controls() {
-    for (const element of [submit, input, followupSubmit, followupInput, ...flightButtons])
+    for (const element of [submit, input, followupSubmit, followupInput])
       element.disabled = pending || checking || flying || resetting || resetFailed || modelPending || !modelBackend;
     const modelLocked = modelPending || pending || checking || flying || resetting || resetFailed;
     modelSelect.disabled = modelLocked || !modelBackend;
     modelSelect.setAttribute('aria-busy', String(modelPending));
     modelRetry.disabled = modelLocked;
-    if (flightDialog.open && flightButtons.some(button => button.disabled)) flightDialog.close();
     newTask.hidden = false;
     newTask.disabled = resetting || modelPending;
     newTask.textContent = resetting ? '正在复位…' : '新任务';
@@ -230,13 +184,15 @@
       flying = false;
       setStatus('error', `复位失败：${data.reset_error} 请点击「新任务」重试。`); controls(); return;
     }
-    if (wasResetting && data.reset_completed && !data.execution) {
+    if (data.reset_completed && !data.execution && (wasResetting || (!pending && form.hidden))) {
       clearTask();
       window.dispatchEvent(new Event('mission:reset'));
-      setStatus('idle', '后台任务已终止，无人机已复位，轨迹已清除，可以输入新任务。'); controls(); return;
+      setStatus('idle', '后台任务已终止，无人机已复位，可以输入新任务。');
+      controls();
+      if (!$('llm-panel').hidden) input.focus();
+      return;
     }
     mission = data.execution;
-    if (mission?.settings) showFlight(mission.settings);
     showVision(mission);
     showTraffic(mission);
     flying = !!data.starting || !!data.uncertain || !!mission?.traffic?.active ||
@@ -251,7 +207,7 @@
         mission.tasks.map(task => `${task.sequence}. ${task.target.zone_id} → 巡查：${task.drone_id || '等待自动分配'}` +
           (task.monitor ? `；监控：${task.monitor.drone_id || '等待自动分配'}（${monitorLabels[task.monitor.status] || task.monitor.status}）` : '')).join('\n');
       const rescueLabels = {locating: '定位地面落点', dispatching: '正在派机', delivering: '执行药品投递',
-        delivered: '投递完成，保持悬停', failed: '失败', uncertain: '执行状态未确认', stopped: '已停止'};
+        returning: '投递完成，正在返航', delivered: '投递完成，已返航降落', failed: '失败', uncertain: '执行状态未确认', stopped: '已停止'};
       const rescues = mission.rescues || [];
       if (rescues.length) $('llm-queue').textContent += '\n药品救援：\n' + rescues.map(rescue =>
         `${rescue.rescue_id} · ${rescue.zone_id} · ${rescue.image} → ${rescue.drone_id || '尚未分配'}（${rescueLabels[rescue.status] || rescue.status}）` +
@@ -259,10 +215,10 @@
         (rescue.error ? `：${rescue.error}` : '')).join('\n');
       const delivering = rescues.some(rescue => ['dispatching', 'delivering'].includes(rescue.status));
       const responseLabels = {queued: '等待前一目标处置', dispatching: '正在派机', responding: '抵近并执行投网',
-        resolved: '投网处置完成，保持悬停', failed: '失败', uncertain: '执行状态未确认', stopped: '已停止'};
+        resolved: '处置完成，已返航降落', failed: '失败', uncertain: '执行状态未确认', stopped: '已停止'};
       const responses = mission.responses || [];
       const phaseLabels = {approaching: '抵近目标', threat: '持刀威胁', following: '跑开与无人机跟随',
-        confronting: '转身对抗', netting: '投网与倒地', resolved: '处置完成'};
+        confronting: '转身对抗', netting: '投网与倒地', returning: '处置完成，正在返航', resolved: '处置完成'};
       if (responses.length) $('llm-queue').textContent += '\n持刀人员处置：\n' + responses.map(response =>
         `${response.response_id} · ${response.zone_id} · ${response.image} → ${response.drone_id || '尚未分配'}（${response.status === 'responding' && phaseLabels[response.phase] || responseLabels[response.status] || response.status}）` +
         (response.person_id ? `；人物 ${response.person_id}` : '') +
@@ -277,15 +233,25 @@
       if (mission.status === 'running' && delivering)
         messages.running = '任务执行中 · 已发现病人，救援无人机正在执行药品投递。';
       if (mission.status === 'completed' && rescues.length)
-        messages.completed = '巡查及药品救援已完成 · 救援机和监控机保持悬停。';
+        messages.completed = '巡查及药品救援已完成 · 救援机已返航降落。';
       if (mission.status === 'running' && responding)
         messages.running = delivering ? '任务执行中 · 药品投递与持刀人员投网处置正在进行。' :
           '任务执行中 · 已发现持刀人员，处置无人机正在抵近并投网。';
       if (mission.status === 'completed' && responses.length)
-        messages.completed = '巡查及异常目标处置已完成 · 任务无人机保持悬停。';
+        messages.completed = '巡查及异常目标处置已完成 · 处置机已返航降落。';
+      if (mission.status === 'running' && (rescues.some(rescue => rescue.status === 'returning') ||
+          responses.some(response => response.status === 'responding' && response.phase === 'returning')))
+        messages.running = '任务执行中 · 无人机正在返航降落。';
       if (mission.traffic?.active && ['completed', 'failed'].includes(mission.status))
         messages[mission.status] += ' 空地联合车辆监测继续运行，点击「新任务」结束并复位。';
-      setStatus(mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready', messages[mission.status] || '正在确认执行状态…');
+      const pursuit = mission.traffic?.pursuit;
+      const pursuitMessage = {preparing: '正在调度三架无人机，请到「机队」查看画面。',
+        tracking: pursuit?.target?.intercept_state === 'braking' ? '异常车辆正在减速停车。' : '三架无人机正在协同追踪，画面位于「机队」。',
+        returning: pursuit?.outcome === 'intercepted' ? '车辆已截停，无人机正在归位。' : '无人机正在归位。',
+        complete: '车辆追踪任务已完成，可到「机队」查看追踪结果。',
+        failed: '车辆追踪未完成。', stopped: '车辆追踪已结束。'}[pursuit?.status];
+      setStatus(pursuit?.status === 'failed' || !pursuit && mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready',
+        pursuitMessage || messages[mission.status] || '正在确认执行状态…');
       newTask.hidden = false;
       if (resultPanel.hidden && data.plan) {
         resultPanel.hidden = false; form.hidden = true;
@@ -310,7 +276,7 @@
       snapshot = data;
       checking = false; showMission(data);
       if (resetIdle && !mission && !flying && !pending && !resetting && !resetFailed)
-        setStatus('idle', data.reset_completed ? '后台任务已终止，无人机已复位，轨迹已清除，可以输入新任务。' : '输入任务后自动规划并开始搜索。');
+        setStatus('idle', data.reset_completed ? '后台任务已终止，无人机已复位，可以输入新任务。' : '输入任务后自动规划并开始搜索。');
     } catch (error) {
       if (current !== generation) return;
       checking = true; controls(); setStatus('error', `无法确认执行状态：${error.message} 正在重试。`);
@@ -370,9 +336,7 @@
     try {
       const response = await fetch('/api/llm/plan', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({instruction, conversation,
-          flight: {max_height: flightSettings.max_height, flight_speed: flightSettings.flight_speed,
-            flight_height: flightSettings.flight_height}}), signal: controller.signal
+        body: JSON.stringify({instruction, conversation, flight: window.getMissionFlightSettings()}), signal: controller.signal
       });
       if (!response.headers.get('Content-Type')?.includes('application/json')) {
         throw new Error('网页服务未返回有效数据，请重启 node web/serve.cjs 后刷新页面。');
@@ -444,6 +408,7 @@
     mission = null; flying = false; pending = false; checking = false;
     conversation = []; previousTurn = null;
     needsClarification = false;
+    input.value = ''; followupInput.value = ''; form.hidden = false;
     $('llm-messages').replaceChildren(); $('llm-history').hidden = true;
     $('llm-history').open = false; resultPanel.hidden = true;
     $('llm-commands').textContent = ''; $('llm-answer').textContent = ''; $('llm-queue').textContent = '';
@@ -453,9 +418,7 @@
     shownAnomalies.clear(); visionMission = null;
     $('llm-traffic').hidden = true; trafficMission = null;
     window.trafficView.clear();
-    input.value = ''; followupInput.value = ''; form.hidden = false;
     if ($('llm-image-dialog').open) $('llm-image-dialog').close();
-    input.focus();
   }
 
   newTask.onclick = async () => {
@@ -490,6 +453,8 @@
       }
     } finally { controls(); }
   };
-  window.addEventListener('vehicle-pursuit:change', () => { clearTimeout(pollTimer); void pollMission(); });
+  window.addEventListener('vehicle-pursuit:change', () => {
+    if (!resetting) void pollMission();
+  });
   controls(); void pollMission(); void updateBackend();
 })();

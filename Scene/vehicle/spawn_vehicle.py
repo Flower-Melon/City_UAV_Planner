@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import msgpack
-from shapely.geometry import LineString, Point, Polygon, shape
+from shapely.geometry import LineString, Point, Polygon, box, shape
 
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -156,6 +156,10 @@ def position_xy(value):
 
 class RoadGraph:
     def __init__(self, network, zones):
+        xmin, ymin, xmax, ymax = network["coordinate_metadata"]["bounds_m"]
+        xmid, ymid = (xmin + xmax) / 2, (ymin + ymax) / 2
+        self.tiles = {"3_1": (xmin, ymid, xmid, ymax), "3_2": (xmin, ymin, xmid, ymid),
+                      "4_1": (xmid, ymid, xmax, ymax), "4_2": (xmid, ymin, xmax, ymid)}
         self.zones = []
         for feature in zones["features"]:
             if feature["properties"]["category"] == "transport":
@@ -183,9 +187,11 @@ class RoadGraph:
             raise ValueError("路网没有机动车道")
         self.lines = [LineString(e["points"]) for e in self.roads]
 
-    def _perimeter_graph(self, polygon):
+    def _perimeter_graph(self, polygon, driving_area):
         # 只使用地块外围 40 米内的道路，避免绕到相邻街区或穿过地块内部。
-        corridor = polygon.buffer(40.0).difference(polygon)
+        corridor = polygon.buffer(40.0).difference(polygon).intersection(driving_area)
+        if corridor.is_empty:
+            return {}, {}
         xmin, ymin, xmax, ymax = corridor.bounds
         center = polygon.representative_point()
         outgoing, turns = {}, {}
@@ -240,16 +246,33 @@ class RoadGraph:
 
     def loop(self, position=None, *, zone_id=None):
         if zone_id is not None:
-            parts = [item for item in self.zones if item[0]["id"] == zone_id]
-            if not parts:
+            zone = next((feature for feature, _ in self.zones if feature["id"] == zone_id), None)
+            if zone is None:
                 raise ValueError("所选街区不存在或不支持生成车辆")
-            zone, polygon = max(parts, key=lambda item: item[1].area)
-            point = Point(position_xy(position)) if position is not None else polygon.representative_point()
         else:
             point = Point(position_xy(position))
-            zone, polygon = min(self.zones, key=lambda item: (
+            zone, _ = min(self.zones, key=lambda item: (
                 item[1].distance(point), item[0]["id"]))
-        outgoing, turns = self._perimeter_graph(polygon)
+
+        tile = zone["properties"]["tile"]
+        bounds = self.tiles[tile]
+        district = box(*bounds)
+        parts = []
+        for feature, part in self.zones:
+            if feature["id"] == zone["id"]:
+                clipped = part.intersection(district)
+                parts.extend(p for p in getattr(clipped, "geoms", (clipped,))
+                             if p.geom_type == "Polygon" and not p.is_empty)
+        if not parts:
+            raise ValueError("所选街区在所属大区内没有可用地块")
+        if zone_id is not None:
+            polygon = max(parts, key=lambda part: part.area)
+            point = Point(position_xy(position)) if position is not None else polygon.representative_point()
+        else:
+            polygon = min(parts, key=lambda part: part.distance(point))
+
+        # 路线中心线与大区边界之间预留车身宽度和转向余量。
+        outgoing, turns = self._perimeter_graph(polygon, district.buffer(-3.0))
         # 在目标地块的全部外围车道中选择出生点，不要求参考点落在道路上。
         # 车道至少长 6 米，以便出生点离两端各留出 3 米。
         candidates = sorted((i for i, edge in enumerate(self.roads)
@@ -262,7 +285,7 @@ class RoadGraph:
             if returning is not None:
                 break
         if returning is None:
-            raise ValueError(f"{zone['properties']['name']}：当前路网无法沿该地块外围形成顺时针闭环")
+            raise ValueError(f"{zone['properties']['name']}：所属大区内无法沿该地块外围形成顺时针闭环")
         along = min(max(line.project(point), 3.0), line.length - 3.0)
         spawn = tuple(line.interpolate(along).coords[0])
         before, after = [edge["points"][0]], []
@@ -291,6 +314,7 @@ class RoadGraph:
             raise ValueError("出生点所在道路没有足够长度的可行闭环")
         return {"points": points, "spawn_xy": spawn, "snap_distance_m": point.distance(Point(spawn)),
                 "zone_id": zone["id"], "zone_name": zone["properties"]["name"],
+                "tile": tile, "tile_bounds": bounds,
                 "edge_id": edge["id"], "edge_ids": [edge["id"]] + [e["id"] for e in returning]}
 
 

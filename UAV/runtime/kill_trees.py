@@ -102,11 +102,7 @@ def _valid_capture(unreal, capture):
         return False
 
 
-def _refresh(unreal, world, state):
-    capture = state["capture"]
-    if not _valid_capture(unreal, capture):
-        raise RuntimeError("下视相机已失效，请重新启动任务")
-    # 取图前或监控机到位后扫描，覆盖飞行途中流式加载的分块和新组件。
+def hide_tree_components(unreal, world, capture):
     # StaticMeshComponent 查询包含 ISM/HISM，不能隐藏其共用的分块 Actor。
     count = 0
     for actor in unreal.GameplayStatics.get_all_actors_of_class(world, unreal.Actor):
@@ -115,6 +111,15 @@ def _refresh(unreal, world, state):
             if mesh is not None and mesh.get_path_name().startswith(TREE_ASSET_ROOT):
                 capture.hide_component(component)
                 count += 1
+    return count
+
+
+def _refresh(unreal, world, state):
+    capture = state["capture"]
+    if not _valid_capture(unreal, capture):
+        raise RuntimeError("下视相机已失效，请重新启动任务")
+    # 取图前或监控机到位后扫描，覆盖飞行途中流式加载的分块和新组件。
+    count = hide_tree_components(unreal, world, capture)
     if not count:
         raise RuntimeError("当前场景未找到树木组件，请核对 TREE_ASSET_ROOT")
     return {"tree_components": count}

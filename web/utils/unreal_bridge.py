@@ -205,7 +205,7 @@ def execute(data):
                    zone_name=item.route["zone_name"] if kind == "vehicle" else item.zone_name)
         if kind == "vehicle":
             row.update(behavior=item.motion.behavior, active_behavior=item.motion.active_behavior,
-                       speed_m_s=item.motion.speed)
+                       speed_m_s=item.motion.speed, intercept_state=getattr(item.motion, "intercept_state", None))
         else:
             row["action"] = (item.animation.get_editor_property("action_index")
                              if getattr(item, "external", False) else item.action)

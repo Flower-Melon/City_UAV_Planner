@@ -1,4 +1,4 @@
-"""无人机抵近持刀人员，接管并快速投网，完成后悬停。"""
+"""无人机抵近持刀人员并完成仿真处置，随后返航降落。"""
 
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -18,7 +18,7 @@ from web.utils.people_state import get_person_state
 from .fly_to_point import _world_position
 from ..runtime.airsim_client import AirSimClient
 from ..runtime.airsim_state import WorldFrame, vehicle_name, editor_log, _run_ue_json
-from ..runtime.flight_control import FlightControl, hold_position, vehicle_lock
+from ..runtime.flight_control import FlightControl, vehicle_lock
 from ..utils.plan_flight_path import _clear_path, _positive, _xyz, plan_flight_path
 from ..utils.select_UAV import _reserve_nearest_UAV
 
@@ -113,20 +113,11 @@ def _approach(flight, hover, speed):
     if distance <= 1.0:
         flight._collision()
         return
-    # 制动期间人物仍可能继续巡游，允许这段位移，但不绕过直线路径净空检查。
+    # 人物仍可能继续巡游，对位前检查直线路径净空。
     if distance > 60.0 or not _clear_path([actual, hover], 1.5, 1.0):
         raise RuntimeError("未到达可安全对位的投网悬停点附近")
-    align_speed = min(speed, 4.0)
-    timeout = max(15.0, distance / align_speed * 2.0 + 8.0)
-    completed = flight.client.call(
-        "moveToPosition", *flight._ned(hover), align_speed / flight.frame.scale, timeout,
-        0, {"is_rate": True, "yaw_or_rate": 0.0}, 3.0 / flight.frame.scale, 0.0, flight.name,
-        timeout=timeout + 5.0,
-    )
-    flight.stop()
-    flight._collision()
-    if type(completed) is not bool or math.dist(_position(flight), hover) > 1.0:
-        raise RuntimeError("无人机未完成投网悬停对位")
+    flight.move_to(hover, min(speed, 4.0))
+    flight.confirm_position(hover)
 
 
 def _rendezvous(flight, response, person_id, cap, speed):
@@ -164,7 +155,7 @@ def _rendezvous(flight, response, person_id, cap, speed):
             try:
                 flight.fly_route(route, on_progress=progress)
             except _TargetReached:
-                return person  # fly_route已制动，立即进入接管和投网对位。
+                return person  # 无人机已悬停，立即进入接管和对位。
             finally:
                 if pending is not None:
                     pending.result()
@@ -187,10 +178,7 @@ def _wait(response, flight, anchor, person_id):
         if time.monotonic() >= next_query:
             get_person_state(person_id, client=flight.client)
             next_query = time.monotonic() + 1.0
-        hold_position(flight.client, flight.name, flight._ned(anchor)[2], 0.25, scale=flight.frame.scale)
-        if flight.client.call("isApiControlEnabled", flight.name) is not True:
-            raise RuntimeError("无人机API控制权已释放")
-        flight._collision()
+        flight.hold()
         if math.dist(_position(flight), anchor) > 1.0:
             raise RuntimeError("无人机偏离悬停点超过1米")
         if state.get("net") == "wrapped" and state.get("act") == "lying" and not state.get("knife_in_hand"):
@@ -198,8 +186,8 @@ def _wait(response, flight, anchor, person_id):
     raise RuntimeError("等待投网倒地动画完成超时")
 
 
-def respond_armed_person(drone_id, person_id, max_height, flight_speed=25.0) -> None:
-    """抵近指定持刀人员，接管后一次对位并投网倒地，完成后悬停。
+def respond_armed_person(drone_id, person_id, max_height, flight_speed=25.0, *, by_drone=None) -> None:
+    """抵近指定持刀人员，完成仿真处置后返航降落。
 
     person_id指定目标；水平20米内且接近离地12米处置高度时接管，停止人物巡游。
     不安排跑开跟随或固定对抗等待；保留净空、碰撞及投网动画完成确认。
@@ -220,8 +208,9 @@ def respond_armed_person(drone_id, person_id, max_height, flight_speed=25.0) -> 
             state = response.command("status")
             if state.get("person") and state.get("act") != "lying":
                 raise RuntimeError("已有接管中的人物，请先结束原演示")
+            frame = WorldFrame(client)
             if drone_id is None:
-                name, lock = _reserve_nearest_UAV(person["position_m"])
+                name, lock = _reserve_nearest_UAV(person["position_m"], frame=frame)
             else:
                 name = vehicle_name(drone_id, client.call("listVehicles"))
                 lock = vehicle_lock(name)
@@ -229,16 +218,20 @@ def respond_armed_person(drone_id, person_id, max_height, flight_speed=25.0) -> 
                     raise RuntimeError(f"{name}已有任务正在执行")
             flight, taken = None, False
             try:
+                profile = (by_drone or {}).get(name, {})
+                cap = _positive(profile.get("max_height", cap), "最大离地高度")
+                speed = _positive(profile.get("flight_speed", speed), "飞行速度")
+                if cap < 15.0:
+                    raise ValueError("最大离地高度不得低于15米")
                 if not re.fullmatch(r"[\w.-]+", name):
                     raise ValueError("无人机名称只能包含字母、数字、下划线、点和连字符")
                 logger.info("处置无人机已选定", extra={"selected_drone_id": name})
-                frame = WorldFrame(client)
-                world, local, origin = frame.vehicle(name)
+                world, _, origin = frame.vehicle(name)
                 response.command("reset")
                 hover = _hover(response, person["position_m"])
                 plan_flight_path(world, hover, cap, speed)
                 flight = FlightControl(client, frame, name, origin)
-                flight.prepare(world, local)
+                flight.prepare()
                 _phase("approaching")
                 _rendezvous(flight, response, person_id, cap, speed)
                 _external(client, person_id, True)
@@ -255,13 +248,19 @@ def respond_armed_person(drone_id, person_id, max_height, flight_speed=25.0) -> 
                 response.command("kit strobe on")
                 response.command("kit spot on")
                 feet = get_person_state(person_id, client=client)["position_m"]
-                yaw = math.degrees(math.atan2(feet[1] - hover[1], feet[0] - hover[0]))
-                if client.call("rotateToYaw", yaw, 10.0, 5.0, name, timeout=15.0) is not True:
-                    raise RuntimeError("无人机未完成朝向调整")
+                yaw = math.atan2(feet[1] - hover[1], feet[0] - hover[0])
+                flight.turn_to(yaw)
                 _phase("netting")
                 response.command("net fire")
                 _wait(response, flight, hover, person_id)
+                # 现场处置已完成，返航异常时保留人物的已处置状态。
+                taken = False
                 response.command("kit spot off")
+                _phase("returning")
+                try:
+                    flight.return_home(cap, speed)
+                except Exception as error:
+                    raise RuntimeError(f"目标已处置，返航降落失败（{error}）") from error
                 _phase("resolved")
             except BaseException:
                 if flight is not None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-from collections import deque
 import io
 import json
 import math
@@ -16,7 +15,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from UAV.runtime.airsim_client import AirSimClient as Rpc
-from UAV.runtime.airsim_state import calibrate, vector
+from UAV.runtime.airsim_state import calibrate, vector, vehicle_airborne
 
 
 OUTPUT_LOCK = threading.Lock()
@@ -76,7 +75,6 @@ class Monitor:
         self.capture = threading.Event()
         self.capture.set()
         self.camera_name = "UAV_01"
-        self.clear_trails = threading.Event()
 
     def commands(self):
         for line in sys.stdin:
@@ -84,8 +82,6 @@ class Monitor:
                 message = json.loads(line)
                 if not isinstance(message, dict):
                     continue
-                if message.get('clear_trails') is True:
-                    self.clear_trails.set()
                 if isinstance(message.get('camera'), str):
                     with self.lock:
                         self.camera_name = message['camera']
@@ -162,7 +158,6 @@ class Monitor:
                 self.epoch.set()
                 self.epoch = threading.Event()
                 session_id = str(time.time_ns())
-                trails = {name: deque(maxlen=2000) for name in names}
                 with self.lock:
                     self.records = {name: {"name": name, "position_m": None, "updated_at": 0,
                         "available": False,
@@ -172,12 +167,9 @@ class Monitor:
                 emit({"type": "reset"})
                 threading.Thread(target=self.camera_loop, args=(self.epoch,), daemon=True).start()
                 next_calibration = 0
+                samples = {}
                 while True:
                     started = time.monotonic()
-                    if self.clear_trails.is_set():
-                        self.clear_trails.clear()
-                        for trail in trails.values():
-                            trail.clear()
                     if anchor is None and started >= next_calibration:
                         try:
                             anchor = calibrate(rpc)
@@ -192,25 +184,22 @@ class Monitor:
                     for name in names:
                         current = rpc.call("simGetObjectPose", name)
                         ned = vector(current["position"])
-                        # 箭头表示实际移动方向；NED 与地图的 X、Y 轴一致。
-                        kinematics = rpc.call("simGetGroundTruthKinematics", name)
-                        velocity = vector(kinematics["linear_velocity"])
-                        landed = rpc.call("getMultirotorState", name).get("landed_state")
-                        available = type(landed) is int and landed == 0 and math.hypot(*velocity) * scale <= .1 if anchor else False
+                        now = time.monotonic()
+                        previous, sampled_at = samples.get(name, (ned, now))
+                        dt = now - sampled_at
+                        velocity = [(a - b) / dt for a, b in zip(ned, previous)] if dt > 0 else (0, 0, 0)
+                        samples[name] = ned, now
+                        speed = math.hypot(*velocity) * scale if anchor else None
+                        airborne = bool(anchor) and vehicle_airborne(rpc, settings, name, ned, scale)
+                        available = bool(anchor) and not airborne and speed <= .1
                         course = (math.atan2(velocity[1], velocity[0])
                                   if math.hypot(velocity[0], velocity[1]) >= .1 else None)
                         position = [a+b*scale for a, b in zip(world_offset, [ned[0], ned[1], -ned[2]])] if anchor else None
                         stamp = int(time.time()*1000)
-                        trail = trails[name]
-                        while trail and stamp - trail[0][0] > 300000:
-                            trail.popleft()
-                        if position is not None and (not trail or math.hypot(position[0]-trail[-1][1], position[1]-trail[-1][2]) >= .25):
-                            trail.append([stamp, position[0], position[1]])
                         with self.lock:
                             record = self.records[name]
-                            record.update(position_m=position, updated_at=stamp, trail=list(trail), available=available,
-                                          airborne=type(landed) is int and landed == 1,
-                                          speed_m_s=math.hypot(*velocity) * scale if anchor else None)
+                            record.update(position_m=position, updated_at=stamp, available=available,
+                                          airborne=airborne, speed_m_s=speed)
                             # 停止或只有微小漂移时保留最后移动方向，避免箭头抖动。
                             if course is not None:
                                 record["course_rad"] = course

@@ -11,15 +11,17 @@ const AbnormalController = require('./server/abnormal.cjs');
 const root = fs.realpathSync(path.resolve(__dirname, '..'));
 const airsimAPI = new AirsimController({root});
 const llmAPI = new LlmController({root, getState: () => airsimAPI.getState(),
-  clearTrails: () => airsimAPI.clearTrails()});
+  restartMonitor: () => airsimAPI.restartBridge()});
 const abnormalAPI = new AbnormalController({root,
-  startPursuit: target => llmAPI.startVehiclePursuit(target),
-  getPursuit: () => llmAPI.executor.pursuit});
+  startPursuit: (target, flight) => llmAPI.startVehiclePursuit(target, flight),
+  getPursuit: () => llmAPI.executor.pursuit,
+  executePersonAction: (target, flight, onProgress) => llmAPI.executePersonAction(target, flight, onProgress)});
 const identity = createHash('sha256').update('town12-live-viewer-v9-abnormal:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
 const revisionHash = createHash('sha256');
-for (const relative of ['web/serve.cjs', 'web/server/llm.cjs', 'web/server/python.cjs',
+for (const relative of ['web/serve.cjs', 'web/server/llm.cjs', 'web/server/python.cjs', 'web/js/flight-settings.js',
   'web/server/airsim.cjs',
-  'web/server/abnormal.cjs', 'UAV/API/track_vehicle.py', 'Scene/vehicle/escape_vehicle.py',
+  'web/server/abnormal.cjs', 'UAV/API/track_vehicle.py', 'UAV/runtime/flight_control.py',
+  'UAV/runtime/pursuit_camera.py', 'Scene/vehicle/escape_vehicle.py',
   'web/utils/python_bridge.py', 'web/utils/traffic_pipeline.py',
   'UAV/API/reset_uav.py'])
   revisionHash.update(relative).update(fs.readFileSync(path.join(root, relative)));

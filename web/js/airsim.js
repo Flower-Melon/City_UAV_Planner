@@ -7,6 +7,146 @@
   const filter = $('camera-filter'), dialog = $('camera-dialog'), expand = $('camera-expand');
   const panelParent = panel.parentNode, panelNext = panel.nextSibling;
   const cards = new Map();
+  const flightDialog = $('fleet-flight-dialog');
+  const flightForm = $('fleet-flight-form'), flightDrone = $('fleet-flight-drone');
+  const flightFields = $('fleet-flight-fields'), flightInputs = $('fleet-flight-inputs');
+  const flightStatus = $('fleet-flight-status'), flightReset = $('fleet-flight-reset'), flightSave = $('fleet-flight-save');
+  const flightParameters = Object.entries(window.fleetFlightFields);
+  const flightStorageKey = 'city-fleet-unified-flight-profiles';
+  const flightDefaults = Object.fromEntries(flightParameters.map(([key, field]) => [key, field.defaultValue]));
+  const flightProfiles = new Map(), flightDrafts = new Map();
+  let flightNames = [];
+
+  function storedFlightProfile(values) {
+    return Object.fromEntries(flightParameters.flatMap(([key, field]) => {
+      const value = values?.[key];
+      return Number.isFinite(value) && value > 0 && value >= (field.min ?? 0) ? [[key, value]] : [];
+    }));
+  }
+
+  function mergeTaskFlightProfiles(profiles) {
+    // 多个旧任务保存过同一字段时，优先沿用区域巡查的值。
+    const priority = ['response', 'delivery', 'pursuit', 'monitor', 'search'];
+    return Object.assign({}, ...priority.map(task => storedFlightProfile(profiles?.[task])));
+  }
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(flightStorageKey));
+    let profiles;
+    if (saved) {
+      Object.assign(flightDefaults, storedFlightProfile(saved.defaults));
+      profiles = saved.by_drone || {};
+    } else {
+      const previousDefaults = JSON.parse(localStorage.getItem('city-fleet-task-flight-defaults'));
+      const previousProfiles = JSON.parse(localStorage.getItem('city-fleet-task-flight-profiles'));
+      Object.assign(flightDefaults, mergeTaskFlightProfiles(previousDefaults));
+      profiles = previousProfiles
+        ? Object.fromEntries(Object.entries(previousProfiles).map(([name, profile]) => [name, mergeTaskFlightProfiles(profile)]))
+        : JSON.parse(localStorage.getItem('city-fleet-flight-profiles')) || {};
+    }
+    for (const [name, profile] of Object.entries(profiles)) {
+      const values = storedFlightProfile(profile);
+      if (Object.keys(values).length) flightProfiles.set(name, values);
+    }
+  } catch { /* 本地存储不可用时仍可编辑当前页面。 */ }
+
+  window.getMissionFlightSettings = () => ({...flightDefaults, by_drone: Object.fromEntries(flightProfiles)});
+
+  const inputs = flightParameters.map(([key, field]) => {
+    const row = document.createElement('div');
+    const label = document.createElement('label');
+    const title = document.createElement('span');
+    title.textContent = field.label;
+    const control = document.createElement('span');
+    control.className = 'fleet-flight-input';
+    const input = document.createElement('input');
+    Object.assign(input, {name: key, type: 'number', min: field.min ?? 0, step: 'any', required: true});
+    const unit = document.createElement('small');
+    unit.textContent = field.unit;
+    const hint = document.createElement('small');
+    hint.id = 'fleet-flight-hint-' + key;
+    hint.className = 'fleet-flight-hint';
+    hint.textContent = field.description;
+    input.setAttribute('aria-describedby', hint.id);
+    control.append(input, unit);
+    label.append(title, control);
+    row.append(label, hint);
+    flightInputs.append(row);
+    return input;
+  });
+
+  function loadFlightProfile() {
+    const name = flightDrone.value;
+    const saved = flightProfiles.get(name);
+    const draft = flightDrafts.get(name);
+    for (const input of inputs) {
+      input.value = draft?.[input.name] ?? saved?.[input.name] ?? flightDefaults[input.name];
+      input.setCustomValidity('');
+    }
+    flightFields.disabled = !name;
+    flightSave.disabled = !name || !draft;
+    flightReset.disabled = !name || !(saved || draft);
+    flightStatus.textContent = !name ? '连接仿真后可选择无人机'
+      : draft ? '有未保存的修改' : '保存后用于新提交的任务';
+  }
+
+  function loadFlightDrones() {
+    const previous = flightDrone.value;
+    const choices = [...new Set([...flightNames, ...flightProfiles.keys()])];
+    const options = choices.map(name => new Option(name, name));
+    flightDrone.replaceChildren(...(options.length ? options : [new Option('暂无无人机', '')]));
+    if (choices.includes(previous)) flightDrone.value = previous;
+    flightDrone.disabled = !choices.length;
+    loadFlightProfile();
+  }
+
+  function updateFlightDrones(names) {
+    if (names.length === flightNames.length && names.every((name, i) => name === flightNames[i])) return;
+    flightNames = names;
+    loadFlightDrones();
+  }
+
+  function storeFlightProfiles(message) {
+    loadFlightDrones();
+    try {
+      localStorage.setItem(flightStorageKey, JSON.stringify({
+        defaults: flightDefaults, by_drone: Object.fromEntries(flightProfiles)
+      }));
+      flightStatus.textContent = message;
+    } catch { flightStatus.textContent = '参数已应用到当前页面'; }
+  }
+
+  $('fleet-flight-open').onclick = () => flightDialog.showModal();
+  $('fleet-flight-close').onclick = () => flightDialog.close();
+  flightDrone.onchange = loadFlightProfile;
+  flightFields.oninput = event => {
+    event.target.setCustomValidity('');
+    flightDrafts.set(flightDrone.value, Object.fromEntries(inputs.map(input => [input.name, input.value])));
+    flightStatus.textContent = '有未保存的修改';
+    flightSave.disabled = flightReset.disabled = false;
+  };
+  flightForm.onsubmit = event => {
+    event.preventDefault();
+    const name = flightDrone.value;
+    if (!name) return;
+    for (const input of inputs) {
+      if (!Number.isFinite(input.valueAsNumber) || input.valueAsNumber <= 0) {
+        input.setCustomValidity('请输入大于 0 的数值');
+        input.reportValidity();
+        return;
+      }
+    }
+    flightProfiles.set(name, Object.fromEntries(inputs.map(input => [input.name, input.valueAsNumber])));
+    flightDrafts.delete(name);
+    storeFlightProfiles(name + ' 参数已保存');
+  };
+  flightReset.onclick = () => {
+    const name = flightDrone.value;
+    flightDrafts.delete(name);
+    flightProfiles.delete(name);
+    storeFlightProfiles(name + ' 已恢复默认');
+  };
+  loadFlightDrones();
   let records = [], connected = false, focused = null;
   let stateRequest = null, timer, generation = 0;
   const params = new URLSearchParams(location.search);
@@ -138,12 +278,15 @@
   }
 
   function render() {
-    const active = records.filter(drone => drone.airborne === true);
+    const active = new Set(records.filter(drone => drone.airborne === true).map(drone => drone.name));
+    const pursuit = window.pursuitView?.current;
+    const pursuitCameras = new Set(!dialog.open && pursuit?.status === 'tracking'
+      ? pursuit.drone_states.filter(drone => drone.phase !== 'waiting').map(drone => drone.name) : []);
     $('fleet-total').textContent = connected ? records.length : '—';
-    $('fleet-active').textContent = connected ? active.length : '—';
-    $('fleet-idle').textContent = connected ? records.filter(drone => drone.available === true).length : '—';
-    $('fleet-tab-count').textContent = active.length; $('fleet-tab-count').hidden = !connected || !active.length;
-    const shown = connected ? records.filter(drone => filter.value === 'all' || drone.airborne === true) : [];
+    $('fleet-active').textContent = connected ? active.size : '—';
+    $('fleet-idle').textContent = connected ? records.filter(drone => drone.available === true && !active.has(drone.name)).length : '—';
+    $('fleet-tab-count').textContent = active.size; $('fleet-tab-count').hidden = !connected || !active.size;
+    const shown = connected ? records.filter(drone => filter.value === 'all' || active.has(drone.name)) : [];
     if (focused && !shown.some(drone => drone.name === focused)) focused = null;
     $('camera-back').hidden = !focused;
     $('fleet-visible-count').textContent = focused ? 1 : shown.length;
@@ -162,8 +305,9 @@
       let card = cards.get(drone.name);
       if (!card && !included) continue;
       card ||= createCard(drone.name, index); card.root.hidden = !included;
-      card.badge.textContent = drone.airborne ? '飞行中' : drone.available ? '待命' : '准备中';
-      card.badge.dataset.active = String(!!drone.airborne);
+      const airborne = active.has(drone.name);
+      card.badge.textContent = airborne ? '飞行中' : drone.available ? '待命' : '准备中';
+      card.badge.dataset.active = String(airborne);
       const located = Array.isArray(drone.position_m) && drone.position_m.every(Number.isFinite);
       card.locate.disabled = !located || !window.liveMap?.isReady();
       if (located) {
@@ -171,7 +315,8 @@
         const speed = Number.isFinite(drone.speed_m_s) ? ` · ${drone.speed_m_s.toFixed(1)} m/s` : '';
         card.position.textContent = `X ${x.toFixed(1)} · Y ${y.toFixed(1)} · Z ${z.toFixed(1)} m${speed}`;
       } else card.position.textContent = '正在校准位置…';
-      if (included && visible()) ensureStream(card, drone.name);
+      if (included && visible() && pursuitCameras.has(drone.name)) stopStream(card, '在上方切换追踪视角');
+      else if (included && visible()) ensureStream(card, drone.name);
       else stopStream(card, '等待实时画面');
     }
   }
@@ -181,6 +326,7 @@
   }
   async function update() {
     clearTimeout(timer); stateRequest?.abort();
+    const started = performance.now();
     const current = ++generation;
     if (location.protocol === 'file:') { status.textContent = '请通过本地 HTTP 服务打开'; return; }
     if (!document.hidden) {
@@ -192,19 +338,21 @@
         const data = await response.json();
         if (current !== generation) return;
         records = data.drones.map((drone, index) => ({...drone, color: colors[index % colors.length]}));
+        updateFlightDrones(records.map(drone => drone.name));
         connected = data.connected;
         if (connected) {
           status.dataset.online = 'true'; status.textContent = '实时连接'; status.title = data.coordinate_error || '';
-          window.liveMap?.setDrones(records); render();
+          window.liveMap?.setDrones(records, data.session_id); render();
         } else disconnected();
       } catch (error) { if (current === generation) { note('state-error', error.message); disconnected(); } }
       finally { clearTimeout(timeout); if (stateRequest === controller) stateRequest = null; }
     }
-    if (current === generation) timer = setTimeout(update, 350);
+    const interval = connected && !document.hidden ? 150 : 700;
+    if (current === generation) timer = setTimeout(update, Math.max(0, interval - (performance.now() - started)));
   }
   filter.onchange = () => { focused = null; render(); };
   $('fleet-show-all').onclick = () => { filter.value = 'all'; render(); };
-  window.addEventListener('mission:reset', () => { window.liveMap?.clearTrails(); stopAll('正在复位…'); void update(); });
+  window.addEventListener('mission:reset', () => { stopAll('正在复位…'); void update(); });
   window.addEventListener('sidebar:change', () => { if (!visible()) stopAll('等待实时画面'); void update(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopAll('等待实时画面'); else void update(); });
   window.addEventListener('pagehide', () => { clearTimeout(timer); stateRequest?.abort(); stopAll(''); });

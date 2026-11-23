@@ -2,16 +2,20 @@
 
 `API/` 提供直接面向仿真环境的无人机飞行接口，直接运行即可完成一类任务；`runtime/` 负责 AirSim 通信、状态读取与飞行执行；`utils/` 提供不依赖仿真环境的算法。
 
+演示飞控需要在 AirSim 加载的 `settings.json` 中配置 `"PhysicsEngineName": "ExternalPhysicsEngine"`。本机默认路径是 `Documents/AirSim/settings.json`。修改后重新进入 UE 的 Play 会话。
+
+飞行任务共用逐帧位姿控制。起飞、沿线飞行、转向、悬停和返航都从无人机当前位置推进。每次更新最多移动 1.5 米，UE 卡顿时等待已发位姿生效。场景复位指令直接恢复出生位姿。
+
 ## 1 API
 
 ### 1.1 fly_to_point
 
-根据分层飞行路网飞往指定世界XYZ，完成后在目标附近悬停。规划包含绕楼、跨楼、升降和速度调整；执行时连续向前跟随轨迹，已越过的采样航点直接跳过，不折返对位。
+根据分层飞行路网逐段飞往指定世界 XYZ，确认到达后悬停。航线包含绕楼、跨楼和升降。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
 | `drone_id` | `int` 或 `str` | 无人机编号，`1` 或 `"UAV_01"` |
-| `target_position` | `(x, y, z)` 或 `[x, y, z]` | 目标UE世界坐标，单位米；Z为世界高度，横向轨迹偏差容许5米、高度偏差容许1.5米，沿前进方向过点不回拉 |
+| `target_position` | `(x, y, z)` 或 `[x, y, z]` | 目标 UE 世界坐标，单位米。Z 为世界高度 |
 | `max_height` | `float` | 导航最大离地高度，单位米，至少15米；相对沿途当地地面 |
 | `flight_speed` | `float` | 巡航速度上限，单位米/秒，大于 `0`，默认 `25.0`；拐弯及接近终点时自动降速 |
 
@@ -136,7 +140,7 @@ output/temp/
 
 ### 1.4 deliver_medicine
 
-向指定病人投递药品。按病人ID读取实时地面位置，必要时在周围5米内选择可达落点；无人机在落点上方15米悬停，下放药箱、脱钩并收绳，完成后保持悬停。
+向指定病人投递药品。按病人 ID 读取实时地面位置，必要时在周围 5 米内选择可达落点。无人机在落点上方 15 米悬停，下放药箱、脱钩并收绳，随后按导航航线飞回起飞基点降落。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
@@ -147,7 +151,7 @@ output/temp/
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
-| 返回值 | `None` | 同步完成投递及收绳后返回，无人机保持悬停，不自动返航或降落 |
+| 返回值 | `None` | 完成投递、收绳和返航降落后返回 |
 
 入参样例与调用：
 
@@ -162,22 +166,23 @@ deliver_medicine(None, "patient_02", max_height=60.0, flight_speed=8.0)
 出参样例：
 
 ```python
-None  # 药箱已着地并收绳，无人机在落点上空悬停。
+None  # 药箱已投递，无人机已返航降落。
 ```
 
 ### 1.5 monitor_area
 
-以设定速度15米/秒连续爬升到监控高度，允许过冲，不逐段对位；随后保持实际到达的高度飞往区域几何中心上空悬停。当前高度已足够时直接转场。
+以最高 15 米/秒连续爬升到监控高度，再飞往区域几何中心上空悬停。当前高度已足够时直接转场。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
 | `zone_id` | `str` | `Map/zones/functional_zones.json` 中真实的区域ID，如 `"F-SCHOOL-1"` |
 | `drone_id` | `int`、`str` 或 `None` | 无人机编号或名称，默认 `None`，从当前可用无人机中自动选取一架；指定ID时可将已悬停的监控机转往下一区域 |
-| `flight_height` | `float` | 相对无人机起飞原点的最低监控高度，单位米，大于0，默认 `200.0`，允许爬升过冲，默认值在 `monitor_area.py` 中设置 |
+| `flight_height` | `float` | 相对无人机起飞原点的最低监控高度，单位米，大于 0，默认 `200.0` |
+| `flight_speed` | `float` | 监控飞行速度上限，单位米/秒，默认 `25.0`，爬升速度最高 `15.0` |
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
-| 返回值 | `None` | 同步完成飞行和悬停后返回，不自动返航或降落 |
+| 返回值 | `str` | 完成飞行并悬停后返回实际执飞的无人机名称 |
 
 入参样例与调用：
 
@@ -196,7 +201,7 @@ None  # 无人机已到区域中心上空悬停
 
 ### 1.6 respond_armed_person
 
-执行持刀人员快速投网处置。
+在 UE 中完成持刀人员处置，随后按导航航线飞回起飞基点降落。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
@@ -207,7 +212,7 @@ None  # 无人机已到区域中心上空悬停
 
 | 出参 | 类型 | 含义 |
 |---|---|---|
-| 返回值 | `None` | 同步完成投网处置后返回，无人机保持悬停，不自动返航或降落 |
+| 返回值 | `None` | 完成仿真处置和返航降落后返回 |
 
 入参样例与调用：
 
@@ -222,54 +227,43 @@ respond_armed_person(None, "armed_person_02", max_height=60.0, flight_speed=8.0)
 出参样例：
 
 ```python
-None  # 投网处置演示已完成，无人机保持悬停。
+None  # 仿真处置已完成，无人机已返航降落。
 ```
 
-### 1.7 pursue_vehicle
+### 1.7 track_vehicle
 
-启动指定异常车逃逸，并由三架无人机在离地约200米高空持续跟随。车辆逃逸结束并制动后，两架增援机返航降落，原高空机回到监控位置；本函数等待上述过程完成后返回。
-
-调用前，指定高空机须已在目标区域上空就位且未被其他任务占用；另需两架已落地、静止且空闲的增援机。车辆应由 `spawn_vehicle()` 生成，不能已有未完成的逃逸任务。本函数会自动启动逃逸，无需预先调用 `start_escape()`。
+主追、前哨、侧翼三架机按 UE 车辆坐标进行追踪演示。指定监控机时由该机担任主追，另选两架就近的落地空闲机增援。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
-| `vehicle_id` | `str` | 要追踪的异常车辆 ID，由 `spawn_vehicle()` 返回 |
-| `observer_id` | `str` | 已就位的高空监控机名称，默认 `"UAV_04"`；另外两架增援机自动选择 |
-| `duration_s` | `float` | 车辆逃逸时长，单位为仿真秒；默认 `120`，必须大于0且有限，不包含准备、制动和返航时间 |
-| `seed` | `int` 或 `None` | 车辆随机选路种子，默认 `None`；相同起点、朝向和道路条件下可指定整数复现选路 |
-| `output_dir` | `str` 或 `Path` | 追踪记录和相机截图的保存位置，默认 `"output/vehicle_pursuit"` |
+| `vehicle_id` | `str` 或 `None` | `spawn_vehicle()` 返回的车辆 ID。传 `None` 时选择当前仿真中编号最小的异常车 |
+| `observer_id` | `str` 或 `None` | `monitor_area()` 返回的监控机名称。传 `None` 时自动选机 |
 
-`duration_s`、`seed` 和 `output_dir` 仅限关键字传入。
-
-| 出参 | 类型 | 含义 |
-|---|---|---|
-| 返回值 | `dict` | 追踪及返航结果，成功时 `status` 为 `"complete"`；追踪或返航失败时抛出异常 |
-
-入参样例与调用：
+按流程完成巡查和高空监控后，手动启动已发现的异常车逃逸，再开始追踪：
 
 ```python
-from Scene.vehicle import spawn_vehicle
+from Scene.vehicle.escape_vehicle import escape_vehicle
 from UAV.API import monitor_area
-from UAV.API.track_vehicle import pursue_vehicle
+from UAV.API.track_vehicle import track_vehicle
 
-monitor_area("F-SCHOOL-1", drone_id="UAV_04")
-vehicle_id = spawn_vehicle((2286.37, 18.91))
-result = pursue_vehicle(vehicle_id, observer_id="UAV_04", duration_s=120, seed=42)
+observer_id = monitor_area(zone_id)
+escape_vehicle(vehicle_id)
+result = track_vehicle(vehicle_id, observer_id)
 ```
 
-出参样例（仅列主要字段，数值仅作示意）：
+也可以在项目根目录直接运行以下命令。省略参数时自动选车、选机。优先接管靠近车辆的高空空闲悬停机，并调用两架增援机。如果没有可接管的高空机，就选距车辆最近的三架落地空闲机起飞。需要指定目标时，可在命令末尾传入车辆 ID 和监控机名称。
 
-```python
-{
-    "status": "complete",
-    "vehicle_id": "abnormal_vehicle_02",
-    "duration_s": 120,
-    "elapsed_s": 124.6,
-    "travelled_m": 1800.0,
-}
+```powershell
+python UAV/API/track_vehicle.py
 ```
 
-`elapsed_s` 为车辆从开始逃逸至确认制动完成经过的仿真秒数，不包含准备和返航时间；`travelled_m` 为车辆累计行驶距离，单位米。`drone_states` 列出三机的名称、状态和位置，成功结束时三机状态均为 `"complete"`。
+网页可直接对异常车辆点击「开始追踪」。有就位的监控机时，由它担任主追，另派两架空闲机。监控机未就位或尚未启动监控时，按车辆实时位置选择三架落地空闲机。
+
+三架机按机队中各自的飞行速度设置起飞、入场和归位。监控机回到接管时的悬停位置，增援机在出生点降落。
+
+在「机队」面板手动切换追踪画面。至少两架无人机进入各自编队点的 24 米范围内，累计稳定跟随 8 秒，且最近 4 秒内至少有一次确认车辆可见，UE 才会发出减速命令。短暂掉队时暂停累计，超过 1.5 秒后重新计算。
+
+确认车辆停稳后，三机归位并保留最后一帧有效画面。追踪开始两分钟仍未满足条件时，三机返航，网页显示未截停。函数等待归位结束，成功时返回 `status` 为 `"complete"` 的结果字典。需要让车辆重新行驶时，可在「场景」面板应用车辆行为。命令行调试可用 Ctrl+C 提前归位。追踪过程不生成输出文件。
 
 ## 2 utils
 
@@ -382,4 +376,4 @@ drone_id = select_UAV("F-SCHOOL-1")
 | `airsim_client.py` | 连接 AirSim，发送请求并接收结果 |
 | `airsim_state.py` | 读取机队状态、解析无人机名称，完成坐标标定与地面测量 |
 | `kill_trees.py` | 巡查和监控无人机的下视 RGB 相机隐藏树木组件 |
-| `flight_control.py` | 按航点速度执行三维路径，原地升降到高后继续飞行，核对位置和碰撞，管理跨线程/进程的任务锁与降落；进程退出后自动释放占用 |
+| `flight_control.py` | 根据航点和速度连续写入仿真位姿，核对位置和碰撞，管理起降与跨进程任务锁 |

@@ -15,8 +15,8 @@ if not __package__:
     __package__ = "UAV.API"
 
 from ..runtime.airsim_client import AirSimClient
-from ..runtime.airsim_state import calibrate, vector, vehicle_name
-from ..runtime.flight_control import vehicle_lock
+from ..runtime.airsim_state import calibrate, uses_pose_flight, vector, vehicle_name
+from ..runtime.flight_control import vehicle_lock, write_pose
 
 _RESET_LOCK = threading.Lock()
 
@@ -32,9 +32,8 @@ def _euler(quaternion):
             math.atan2(2*(w*z+x*y), 1-2*(y*y+z*z)))
 
 
-def _initial_vehicle_pose(client, name):
+def _initial_vehicle_pose(client, name, settings):
     """调用时应暂停物理更新，以一致地测量全局与局部坐标的平移量。"""
-    settings = json.loads(client.call("getSettingsString"))
     config = settings.get("Vehicles", {}).get(name)
     if config is None:
         raise RuntimeError(f"AirSim配置中没有 {name} 的初始位置")
@@ -89,11 +88,12 @@ def _clear_ground_reference(client, names):
 def _stop_and_lock(client, name):
     lock = vehicle_lock(name)
     deadline = time.monotonic() + 30.0
-    # 取消正在执行的 RPC 动作，等待现有飞行函数完成自身清理后再复位。
+    # 飞控检测到 API 控制权撤销后退出，然后由任务锁交接给复位。
     while True:
-        client.call("cancelLastTask", name)
         if lock.acquire(timeout=0.1):
             return lock
+        client.call("cancelLastTask", name)
+        client.call("enableApiControl", False, name)
         if time.monotonic() >= deadline:
             raise RuntimeError(f"{name} 的飞行任务未能停止，无法复位")
 
@@ -103,17 +103,21 @@ def _reset_one(client, name):
     client.call("simPause", True)
     controlling = False
     try:
-        pose = _initial_vehicle_pose(client, name)
+        settings = json.loads(client.call("getSettingsString"))
+        pose = _initial_vehicle_pose(client, name, settings)
         client.call("enableApiControl", True, name)
         controlling = True
         if client.call("isApiControlEnabled", name) is not True:
             raise RuntimeError(f"无法取得 {name} 的API控制权")
         # SimpleFlight 在已经上锁时也会返回 False，因此复位允许重复调用。
         client.call("armDisarm", False, name)
-        zero = {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}
-        state = {**pose, "linear_velocity": zero, "angular_velocity": zero,
-                 "linear_acceleration": zero, "angular_acceleration": zero}
-        client.call("simSetKinematics", state, True, name)
+        if uses_pose_flight(settings):
+            write_pose(client, name, pose, ignore_collision=True)
+        else:
+            zero = {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}
+            state = dict(pose, linear_velocity=zero, angular_velocity=zero,
+                         linear_acceleration=zero, angular_acceleration=zero)
+            client.call("simSetKinematics", state, True, name)
         _clear_ground_reference(client, [name])
     finally:
         try:

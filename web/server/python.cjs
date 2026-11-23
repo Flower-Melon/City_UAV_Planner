@@ -108,11 +108,11 @@ class PythonRuntime {
   fail(worker, error, {terminate = false, spawnFailure = false, exited = false} = {}) {
     if (worker.failed) return;
     worker.failed = true;
-    const flying = [...worker.pending.values()].some(call => ['search', 'monitor', 'deliver_medicine', 'respond_armed_person', 'pursue_vehicle'].includes(call.operation));
+    const flying = [...worker.pending.values()].some(call => ['search', 'monitor', 'deliver_medicine', 'respond_armed_person', 'track_vehicle'].includes(call.operation));
     for (const call of worker.pending.values()) {
       clearTimeout(call.timer);
       call.reject(Object.assign(new Error(error.message), {
-        statusCode: error.statusCode, uncertain: !spawnFailure && ['search', 'monitor', 'deliver_medicine', 'respond_armed_person', 'pursue_vehicle'].includes(call.operation)
+        statusCode: error.statusCode, uncertain: !spawnFailure && ['search', 'monitor', 'deliver_medicine', 'respond_armed_person', 'track_vehicle'].includes(call.operation)
       }));
     }
     worker.pending.clear();
@@ -127,6 +127,10 @@ class PythonRuntime {
   cancel(channel) {
     const worker = this.workers.get(channel);
     if (worker) this.fail(worker, Error('请求已取消。'), {terminate: true});
+  }
+
+  endInput(channel) {
+    this.workers.get(channel)?.child.stdin.end();
   }
 
   // “新任务”强制停止全部任务进程，等待退出后才允许复位，不能沿用飞行的优雅收尾。

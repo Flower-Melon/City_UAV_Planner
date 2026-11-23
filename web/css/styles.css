@@ -113,10 +113,23 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .abnormal-target-row .abnormal-target { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .abnormal-remove { flex-shrink: 0; align-self: center; padding: 6px 10px; font-size: 12px; color: #b5402b; }
 .abnormal-remove:hover { background: #fff1ee; }
-.abnormal-escape { align-self: center; padding: 6px 10px; font-size: 12px; }
-.pursuit-status { margin: 12px 0; color: #617887; font-size: 12px; }
+.abnormal-escape, .abnormal-person-action { align-self: center; padding: 6px 10px; font-size: 12px; }
+.pursuit-status { margin: 12px 0; padding: 12px; border: 1px solid #d6e2e9; border-radius: 8px; background: #fff; }
 .pursuit-status[hidden], .traffic-targets[hidden] { display: none; }
-.pursuit-map-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.pursuit-heading { margin-bottom: 10px; color: #1f4253; font-size: 14px; font-weight: 650; }
+.pursuit-preview { margin: 0; }
+.pursuit-shot { position: relative; overflow: hidden; aspect-ratio: 16 / 9; border-radius: 5px; background: #162d37; }
+.pursuit-shot canvas { display: block; width: 100%; height: 100%; }
+.pursuit-empty { display: grid; height: 100%; place-items: center; color: #d4e5ed; font-size: 12px; }
+.pursuit-preview [hidden] { display: none; }
+.pursuit-box { position: absolute; border: 2px solid #72f6be; border-radius: 2px; box-shadow: 0 0 4px #063c33; }
+.pursuit-box span { position: absolute; bottom: 100%; left: -2px; padding: 1px 4px; background: #72f6be; color: #092d26; font-size: 10px; white-space: nowrap; }
+.pursuit-preview figcaption { margin-top: 6px; color: #536d79; font-size: 12px; }
+.pursuit-roles { margin: 8px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.pursuit-roles li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; color: #536d79; }
+.pursuit-roles button { padding: 4px 9px; font-size: 12px; }
+.pursuit-roles button[aria-pressed="true"] { background: #eaf5fb; border-color: #4380a1; color: #214d64; }
+.map-markers { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
 .abnormal-target { text-align: left; width: 100%; border-left: 4px solid #df542f; }
 .abnormal-target[data-kind="armed_person"] { border-left-color: #914ac5; }
@@ -165,9 +178,6 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .llm-panel .llm-composer-footer button[type="submit"] { width: auto; gap: 16px; margin: 0; padding: 8px 12px; font-size: 12px; }
 .llm-settings-card { margin-top: 14px; padding: 13px 14px; border: 1px solid #dce5eb; border-radius: 10px; background: #f8fafc; }
 .llm-settings-card .llm-model-settings { margin-bottom: 0; }
-.llm-settings-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 11px; }
-.llm-settings-heading h3 { margin: 0; font-size: 12px; font-weight: 600; }
-.llm-settings-heading > span { font-size: 10px; color: #748694; }
 .llm-model-settings { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 4px 10px; margin-bottom: 12px; }
 .llm-model-settings > label { font-size: 12px; color: #617887; }
 #llm-model-select { min-width: 0; min-height: 34px; padding: 6px 10px; border-color: #c7d8e2; border-radius: 7px; background: #f5f9fc; font: inherit; font-size: 12px; cursor: pointer; }
@@ -177,19 +187,6 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .llm-model-settings p { grid-column: 2; margin: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 #llm-model-retry { grid-column: 2; justify-self: start; padding: 2px 0; border: 0; background: transparent; color: #147ba4; font-size: 11px; }
 #llm-model-info[data-error="true"] { color: #b5402b; }
-.llm-flight-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border-top: 1px solid #dce5eb; padding-top: 7px; }
-.llm-flight-settings button { position: relative; min-width: 0; padding: 8px 10px; border: 0; border-radius: 6px; text-align: left; background: transparent; transition: background-color .15s; }
-.llm-flight-settings button + button::before { content: ''; position: absolute; left: 0; top: 13px; bottom: 13px; width: 1px; background: #dce5eb; }
-.llm-flight-settings button:hover:not(:disabled) { background: #edf4f8; }
-.llm-flight-settings button:focus-visible { outline-offset: -3px; }
-.llm-flight-settings button > span { display: block; font-size: 11px; line-height: 1.5; color: #647b8a; }
-.llm-flight-settings strong { display: flex; align-items: baseline; gap: 4px; margin-top: 4px; font-size: 19px; line-height: 1.25; font-weight: 600; font-variant-numeric: tabular-nums; }
-.llm-flight-settings small { font-size: 11px; font-weight: 400; white-space: nowrap; color: #748694; }
-.llm-flight-dialog { width: min(90vw, 360px); padding: 20px; border: 1px solid #adc3d0; border-radius: 10px; color: #18334a; }
-.llm-flight-dialog::backdrop { background: #06152199; }
-.llm-flight-dialog input { width: 100%; padding: 9px 10px; border: 1px solid #c7d8e2; border-radius: 7px; color: #18334a; }
-.llm-flight-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.llm-flight-actions button[type="submit"] { background: #176080; border-color: #176080; color: white; }
 .llm-panel textarea { display: block; width: 100%; min-height: 74px; resize: vertical; border: 1px solid #c7d8e2; border-radius: 7px; padding: 10px 12px; font: inherit; line-height: 1.7; color: #18334a; background: #fbfdfe; }
 .llm-panel textarea::placeholder { color: #7c909e; }
 .llm-panel textarea:focus-visible { outline: 2px solid #147ba4; outline-offset: 2px; }
@@ -292,8 +289,6 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 @media (max-width: 400px) {
   .llm-composer-footer { flex-wrap: wrap; }
   .llm-panel .llm-composer-footer button[type="submit"] { width: 100%; }
-  .llm-flight-settings button { padding: 8px 6px; }
-  .llm-flight-settings strong { font-size: 17px; }
 }
 
 /* 机队工作区：与任务、场景、地图平级，画面不再固定挤在侧栏底部。 */
@@ -310,10 +305,36 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .fleet-summary > div + div { border-left: 1px solid #e6edf2; }
 .fleet-summary span { color: #748694; font-size: 10px; }
 .fleet-summary strong { font-size: 23px; line-height: 1.2; font-weight: 600; font-variant-numeric: tabular-nums; }
-.fleet-flight { margin-bottom: 20px; padding: 12px; border: 1px solid #dfe8ee; border-radius: 10px; background: white; }
-.fleet-flight .llm-settings-heading { margin-bottom: 5px; }
-.fleet-flight .llm-flight-settings { border-top: 0; padding-top: 0; }
-.fleet-flight .llm-flight-settings button { padding: 7px; }
+.fleet-panel .camera-controls .fleet-settings-trigger { color: #496477; border-color: #dce7ee; background: transparent; white-space: nowrap; }
+.fleet-panel .camera-controls .fleet-settings-trigger:hover { color: #176080; background: #edf5f9; }
+.fleet-flight-dialog { width: min(470px, calc(100vw - 28px)); max-height: calc(100dvh - 32px); padding: 0; overflow: auto; border: 1px solid #d4e1e9; border-radius: 16px; background: #fff; color: #18334a; box-shadow: 0 18px 60px #10253838; }
+.fleet-flight-dialog::backdrop { background: #12273863; }
+.fleet-flight-heading, .fleet-flight-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 18px; }
+.fleet-flight-heading { border-bottom: 1px solid #e1eaf0; }
+.fleet-flight-heading h2 { margin: 0; font-size: 17px; font-weight: 650; }
+#fleet-flight-close { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border-color: transparent; color: #506b7e; font-size: 24px; line-height: 1; }
+.fleet-flight-body { padding: 16px 18px 18px; }
+.fleet-flight-drone { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; padding: 8px 10px; border: 1px solid #e0e9ef; border-radius: 8px; background: #f6f9fb; color: #304f63; font-size: 13px; }
+.fleet-flight-drone select { width: auto; min-width: 108px; max-width: 100%; padding: 5px 8px; border-color: #d5e2ea; font-size: 13px; font-weight: 650; }
+.fleet-flight-fields { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
+.fleet-flight-fields:disabled { opacity: .6; }
+.fleet-flight-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; }
+.fleet-flight-inputs label { display: grid; min-width: 0; gap: 5px; color: #304f63; font-size: 12px; font-weight: 580; }
+.fleet-flight-hint { display: block; margin-top: 6px; color: #516b7c; font-size: 11px; line-height: 1.45; }
+.fleet-flight-input { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding: 9px 10px; border: 1px solid #d1e0e8; border-radius: 8px; background: #f8fbfc; }
+.fleet-flight-input:focus-within { border-color: #147ba4; outline: 1px solid #147ba4; background: #fff; }
+.fleet-flight-input input { flex: 1; width: 0; min-width: 0; padding: 0; border: 0; background: transparent; color: #18334a; font-size: 18px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.fleet-flight-input input:focus-visible { outline: none; }
+.fleet-flight-input small { color: #526c7e; font-size: 11px; white-space: nowrap; }
+.fleet-flight-footer { flex-wrap: wrap; border-top: 1px solid #e1eaf0; }
+.fleet-flight-footer p { margin: 0; color: #516b7c; font-size: 12px; }
+.fleet-flight-footer div { display: flex; flex-wrap: wrap; gap: 7px; margin-left: auto; }
+.fleet-flight-footer button { min-height: 34px; padding: 5px 10px; font-size: 12px; }
+.fleet-flight-footer button[type="submit"] { min-width: 64px; border-color: #176080; background: #176080; color: white; }
+.fleet-flight-footer button[type="submit"]:hover:not(:disabled) { background: #124d68; }
+@media (max-width: 480px) {
+  .fleet-flight-heading, .fleet-flight-body, .fleet-flight-footer { padding-inline: 14px; }
+}
 .fleet-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .fleet-toolbar h3 { margin: 0; font-size: 13px; font-weight: 600; }
 #fleet-visible-count { margin-left: 4px; color: #748694; font-size: 11px; font-weight: 400; }
@@ -335,7 +356,7 @@ dt { color: #748694; } dd { margin: 0; white-space: pre-line; overflow-wrap: any
 .drone-zoom { position: absolute; right: 6px; bottom: 6px; padding: 2px 6px; border: 1px solid #ffffff40; border-radius: 5px; background: #142f45c9; color: white; font-size: 10px; }
 .drone-zoom:hover { background: #214b69; }
 .camera-dialog .fleet-panel { overflow: hidden; padding: 18px; }
-.camera-dialog .fleet-flight, .camera-dialog .fleet-summary { display: none; }
+.camera-dialog .fleet-settings-trigger, .camera-dialog .fleet-summary, .camera-dialog .pursuit-status { display: none; }
 .camera-dialog .fleet-grid { flex: 1; min-height: 0; overflow-y: auto; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-content: start; }
 .camera-dialog .fleet-grid .drone-card { height: auto; }
 .camera-dialog .fleet-grid .camera-view { flex: none; aspect-ratio: 16 / 9; }

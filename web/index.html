@@ -4,12 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>城市无人机巡查平台</title>
-  <link rel="stylesheet" href="./css/styles.css?v=20261115-tracking-status">
-  <script src="./js/map.js?v=20261115-tracking-status" defer></script>
-  <script src="./js/airsim.js?v=20261114-fleet" defer></script>
-  <script src="./js/traffic.js?v=20261115-traffic-pursuit" defer></script>
-  <script src="./js/llm.js?v=20261115-tracking-status" defer></script>
-  <script src="./js/abnormal.js?v=20261115-tracking-status" defer></script>
+  <link rel="stylesheet" href="./css/styles.css?v=20261123-fleet-profile">
+  <script src="./js/map.js?v=20261123-map-motion" defer></script>
+  <script src="./js/flight-settings.js?v=20261123-fleet-profile" defer></script>
+  <script src="./js/airsim.js?v=20261123-pursuit-stability" defer></script>
+  <script src="./js/traffic.js?v=20261123-pursuit-stability" defer></script>
+  <script src="./js/llm.js?v=20261123-person-action-return" defer></script>
+  <script src="./js/abnormal.js?v=20261123-fleet-profile" defer></script>
 </head>
 <body>
   <header>
@@ -82,7 +83,7 @@
       </section>
       </div>
       <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab">
-        <div class="section-heading llm-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" title="终止当前任务、复位全部无人机并清除轨迹">新任务</button></div>
+        <div class="section-heading llm-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" title="终止当前任务并复位全部无人机">新任务</button></div>
         <p class="muted llm-intro">描述巡查区域与目标，自动规划并执行。</p>
         <form id="llm-form" class="llm-composer">
           <label class="field" for="llm-instruction">你想巡查哪里？</label>
@@ -106,7 +107,6 @@
         <section id="llm-traffic" class="llm-vision traffic-workspace" hidden aria-label="车辆监管">
           <div class="section-heading traffic-heading"><h2><span id="llm-traffic-title">车辆监管</span> <span id="llm-speeding-count" class="llm-anomaly-count" hidden>0</span></h2><span id="llm-traffic-status" class="traffic-live"></span></div>
           <p id="llm-traffic-error" class="llm-vision-error" hidden></p>
-          <div class="pursuit-status" role="status" aria-live="polite" hidden></div>
           <div id="llm-traffic-targets" class="traffic-targets" aria-live="polite"></div>
         </section>
         <section id="llm-result" hidden>
@@ -142,7 +142,6 @@
         </div>
         <div id="abnormal-scenes" class="abnormal-scenes" aria-label="场景布置"></div>
         <div class="abnormal-pick-status"><p id="abnormal-operation" class="abnormal-status" role="status" aria-live="polite">选中街区后，添加需要演示的场景。</p><button id="abnormal-cancel" type="button" hidden>取消选点</button></div>
-        <div class="pursuit-status" role="status" aria-live="polite" hidden></div>
         <section>
           <div class="section-heading"><h2>街区目标 <span id="abnormal-count">0</span></h2><span id="abnormal-connection" class="muted" role="status">正在连接…</span></div>
           <div id="abnormal-list" class="abnormal-list" aria-label="异常目标列表"></div>
@@ -155,7 +154,7 @@
           <div id="abnormal-vehicle-controls" hidden>
             <label class="field" for="abnormal-behavior">车辆行为</label>
             <div class="abnormal-buttons"><select id="abnormal-behavior"><option value="speeding" selected>超速行驶</option><option value="wrong_way">逆向行驶（超速）</option><option value="mixed">混合（持续超速，偶尔逆行）</option></select><button id="abnormal-apply" type="button">应用</button></div>
-            <div class="abnormal-buttons"><button id="abnormal-escape" type="button">逃逸</button><span class="muted">停止车辆监测，启动两分钟协同追踪</span></div>
+            <div class="abnormal-buttons"><button id="abnormal-escape" type="button">启动逃逸</button><button id="abnormal-pursue" type="button">开始追踪</button></div>
           </div>
         </section>
       <section id="abnormal-camera-panel" class="camera-panel" aria-label="异常目标实时监控" hidden>
@@ -166,35 +165,59 @@
       <section id="uav-camera-panel" class="sidebar-content camera-panel fleet-panel" role="tabpanel" aria-labelledby="fleet-tab" hidden>
         <div class="camera-heading">
           <div><h2>无人机机队</h2><p class="muted">同时查看机队状态与现场画面</p></div>
-          <div class="camera-controls"><button id="camera-back" type="button" hidden>全部画面</button><button id="camera-expand" type="button" aria-haspopup="dialog" aria-controls="camera-dialog" aria-expanded="false" title="展开监控墙">展开监控墙</button></div>
+          <div class="camera-controls">
+            <button id="camera-back" type="button" hidden>全部画面</button>
+            <button id="fleet-flight-open" class="fleet-settings-trigger" type="button" aria-haspopup="dialog" aria-controls="fleet-flight-dialog">飞行设置</button>
+            <button id="camera-expand" type="button" aria-haspopup="dialog" aria-controls="camera-dialog" aria-expanded="false" title="展开监控墙">展开监控墙</button>
+          </div>
           <span id="airsim-status" role="status">正在连接 AirSim…</span>
         </div>
         <div class="fleet-summary" aria-label="机队概况"><div><span>在线无人机</span><strong id="fleet-total">—</strong></div><div><span>飞行中</span><strong id="fleet-active">—</strong></div><div><span>地面待命</span><strong id="fleet-idle">—</strong></div></div>
-        <div class="fleet-flight">
-          <div class="llm-settings-heading"><h3>任务飞行参数</h3><span>本次任务通用 · 点击修改</span></div>
-          <div class="llm-flight-settings" role="group" aria-label="飞行参数设置">
-            <button type="button" data-flight-setting="max_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>高度上限</span><strong><span id="llm-max-height-value">60</span><small>米</small></strong></button>
-            <button type="button" data-flight-setting="flight_speed" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>飞行速度</span><strong><span id="llm-flight-speed-value">30</span><small>米/秒</small></strong></button>
-            <button type="button" data-flight-setting="flight_height" aria-haspopup="dialog" aria-controls="llm-flight-dialog"><span>巡查高度</span><strong><span id="llm-flight-height-value">15</span><small>米</small></strong></button>
-          </div>
-        </div>
+        <section id="fleet-pursuit" class="pursuit-status" aria-label="车辆追踪" hidden>
+          <div class="pursuit-heading" role="status" data-pursuit-label></div>
+          <figure class="pursuit-preview">
+            <div class="pursuit-shot">
+              <canvas width="800" height="450" data-pursuit-image role="img" aria-label="无人机追踪画面" hidden></canvas>
+              <div class="pursuit-empty" data-pursuit-empty>等待追踪画面</div>
+              <div class="pursuit-box" data-pursuit-box hidden><span>异常车辆</span></div>
+            </div>
+            <figcaption data-pursuit-camera hidden></figcaption>
+          </figure>
+          <ul class="pursuit-roles" aria-label="切换追踪视角">
+            <li><button type="button" data-pursuit-view="lead" aria-pressed="true">主追机</button><span></span></li>
+            <li><button type="button" data-pursuit-view="scout" aria-pressed="false">前哨机</button><span></span></li>
+            <li><button type="button" data-pursuit-view="wing" aria-pressed="false">侧翼机</button><span></span></li>
+          </ul>
+        </section>
         <div class="fleet-toolbar"><h3>实时视角 <span id="fleet-visible-count">0</span></h3><label class="sr-only" for="camera-filter">显示无人机</label><select id="camera-filter"><option value="active">飞行中</option><option value="all">全部无人机</option></select></div>
         <div id="fleet-empty" class="fleet-empty" role="status"><strong id="fleet-empty-title">等待仿真连接</strong><p id="fleet-empty-message">连接后将在这里显示无人机实时画面。</p><button id="fleet-show-all" type="button" hidden>查看全部无人机</button></div>
         <div id="drone-cameras" class="camera-grid fleet-grid"></div>
       </section>
     </aside>
   </main>
-  <dialog id="camera-dialog" class="camera-dialog" aria-label="放大的无人机实时监控"></dialog>
-  <dialog id="abnormal-camera-dialog" class="camera-dialog" aria-label="放大的异常目标实时监控"></dialog>
-  <dialog id="llm-flight-dialog" class="llm-flight-dialog" aria-labelledby="llm-flight-title" aria-describedby="llm-flight-help">
-    <form id="llm-flight-form">
-      <h2 id="llm-flight-title">设置飞行参数</h2>
-      <label id="llm-flight-label" class="field" for="llm-flight-value">数值</label>
-      <input id="llm-flight-value" type="number" step="any" required aria-describedby="llm-flight-help">
-      <p id="llm-flight-help" class="muted"></p>
-      <div class="llm-flight-actions"><button id="llm-flight-cancel" type="button">取消</button><button type="submit">保存</button></div>
+  <dialog id="fleet-flight-dialog" class="fleet-flight-dialog" aria-labelledby="fleet-flight-title">
+    <form id="fleet-flight-form">
+      <div class="fleet-flight-heading">
+        <h2 id="fleet-flight-title">飞行设置</h2>
+        <button id="fleet-flight-close" type="button" aria-label="关闭飞行设置" autofocus>×</button>
+      </div>
+      <div class="fleet-flight-body">
+        <label class="fleet-flight-drone" for="fleet-flight-drone">无人机
+          <select id="fleet-flight-drone" disabled><option value="">暂无无人机</option></select>
+        </label>
+        <fieldset id="fleet-flight-fields" class="fleet-flight-fields" disabled>
+          <legend class="sr-only">所选无人机的飞行参数</legend>
+          <div id="fleet-flight-inputs" class="fleet-flight-inputs"></div>
+        </fieldset>
+      </div>
+      <div class="fleet-flight-footer">
+        <p id="fleet-flight-status" role="status">保存后用于新提交的任务</p>
+        <div><button id="fleet-flight-reset" type="button" disabled>恢复默认</button><button id="fleet-flight-save" type="submit" disabled>保存</button></div>
+      </div>
     </form>
   </dialog>
+  <dialog id="camera-dialog" class="camera-dialog" aria-label="放大的无人机实时监控"></dialog>
+  <dialog id="abnormal-camera-dialog" class="camera-dialog" aria-label="放大的异常目标实时监控"></dialog>
   <dialog id="llm-image-dialog" class="llm-image-dialog">
     <div class="section-heading"><h2>异常照片</h2><button id="llm-image-close" type="button">关闭</button></div>
     <div id="llm-image-detail"></div>

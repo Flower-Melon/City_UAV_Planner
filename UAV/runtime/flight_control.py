@@ -1,6 +1,5 @@
 """无人机飞行执行与共用任务锁；调用者负责持有对应无人机的锁。"""
 
-from bisect import bisect_right
 import errno
 import hashlib
 import math
@@ -10,23 +9,13 @@ import tempfile
 import threading
 import time
 
-from .airsim_state import vector
-from ..utils.plan_flight_path import _clear_path, _coordinates, _positive, flight_route
+from .airsim_state import uses_pose_flight, vector
+from ..utils.plan_flight_path import _coordinates, _positive, plan_flight_path
 
 if os.name == "nt":
     import msvcrt
 else:
     import fcntl
-
-ROUTE_TOLERANCE_M = 10.0
-_CONTROL_PERIOD = 0.2
-_ARRIVAL_RADIUS_M = 3.0
-_ACCELERATION = 2.0
-# 本地SimpleFlight实测：零速度制动的速度衰减时间常数约2.8秒。
-_BRAKING_RESPONSE_SECONDS = 3.0
-_ALTITUDE_GAIN = 0.8
-_ALTITUDE_SPEED_MPS = 2.0
-
 
 class _TaskLock:
     """同一工程的线程/进程共享任务锁，进程退出后由系统释放。"""
@@ -104,297 +93,168 @@ def vehicle_lock(name):
         return _LOCKS[name]
 
 
-# 调用 AirSim 飞行动作，并要求服务明确返回成功。
-# 输入为 RPC 方法、参数和超时；失败抛出异常，成功无返回值。
-def _action(client, method, *args, timeout):
-    if client.call(method, *args, timeout=timeout + 5) is not True:
-        raise RuntimeError(f"AirSim执行{method}失败或超时")
+_AXES = ("x_val", "y_val", "z_val")
+_ZERO = dict.fromkeys(_AXES, 0.0)
+FLIGHT_PERIOD = 1 / 60
+_MAX_FRAME_TIME = 0.05
+_MAX_STEP_M = 1.5
+_YAW_SPEED = math.radians(120)
+_STATE_POLL = 0.1
+ROUTE_TOLERANCE_M = 10.0
 
 
-def _altitude_velocity(target_z, actual_z, scale=1.0):
-    """NED高度误差转换为有界垂直速度，避免混合位置/速度控制模式。"""
-    error_m = (target_z - actual_z) * scale
-    return max(-_ALTITUDE_SPEED_MPS, min(_ALTITUDE_SPEED_MPS, error_m * _ALTITUDE_GAIN)) / scale
+def write_pose(client, name, pose, *, ignore_collision=False):
+    """写入局部 NED 位姿，由 AirSim 物理线程按自身节拍更新传感器。"""
+    # simSetKinematics 会在 RPC 线程更新传感器；ExternalPhysicsEngine
+    # 也会更新同一个队列。simSetVehiclePose 不触发这次额外更新。
+    client.call("simSetVehiclePose", pose, ignore_collision, name)
 
 
-def hold_position(client, name, z, duration=0.5, *, scale=1.0):
-    """给定时长内保持零水平速度，并用垂直速度闭环维持NED高度。"""
-    # SimpleFlight的混合XY速度/Z位置模式会将绝对Z混入机身速度变换，
-    # 高空倾斜时可能出现失高；三轴统一使用速度控制并在此闭环定高。
-    remaining = duration
-    while remaining > 1e-8:
-        step = min(_CONTROL_PERIOD, remaining)
-        actual_z = vector(client.call("simGetVehiclePose", name)["position"])[2]
-        _action(
-            client, "moveByVelocity", 0.0, 0.0, _altitude_velocity(z, actual_z, scale),
-            step, 0, {"is_rate": True, "yaw_or_rate": 0.0}, name, timeout=5,
-        )
-        remaining -= step
+def pose_yaw(pose):
+    q = pose["orientation"]
+    w, x, y, z = (q[k + "_val"] for k in "wxyz")
+    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
 
 
-class _ForwardTrack:
-    """沿有序折线单向推进；采样航点只用于描述轨迹，不作为必须到达的目标。"""
-
-    def __init__(self, points, *, route_tolerance=ROUTE_TOLERANCE_M,
-                 arrival_radius=_ARRIVAL_RADIUS_M, altitude_tolerance=3.0):
-        self.points = points
-        self.route_tolerance = route_tolerance
-        self.arrival_radius = arrival_radius
-        self.altitude_tolerance = altitude_tolerance
-        self.offsets = [0.0]
-        for a, b in zip(points, points[1:]):
-            self.offsets.append(self.offsets[-1] + math.dist(a[:2], b[:2]))
-        self.index = 0
-        self.progress = 0.0
-
-    def update(self, position):
-        # 仅依次检查前方路段，不能在闭环/交叉口吸附到远处的后续路段。
-        while True:
-            a, b = self.points[self.index : self.index + 2]
-            length = self.offsets[self.index + 1] - self.offsets[self.index]
-            tangent = [(b[j] - a[j]) / length for j in (0, 1)]
-            along = sum((position[j] - a[j]) * tangent[j] for j in (0, 1))
-            near_end = (along >= length - self.arrival_radius / 2
-                        and math.dist(position[:2], b[:2]) <= self.arrival_radius)
-            if (along >= length or near_end) and self.index < len(self.points) - 2:
-                # 一次遥测可能跨过多个采样点，先推进，再检查当前前方路段偏差。
-                self.progress = max(self.progress, self.offsets[self.index + 1])
-                self.index += 1
-                continue
-            # 已过终点时只判断横向偏离；沿前进方向过冲不等于偏离轨迹。
-            projected = [a[j] + max(0.0, along) * tangent[j] for j in (0, 1)]
-            error = math.dist(position[:2], projected)
-            if error > self.route_tolerance:
-                raise RuntimeError(f"偏离飞行轨迹{error:.2f}米，停止飞行，不折返追补航点")
-            self.progress = max(
-                self.progress, self.offsets[self.index] + max(0.0, min(length, along))
-            )
-            return tangent, along >= length
-
-    def sample(self, offset):
-        offset = max(0.0, min(self.offsets[-1], offset))
-        i = min(len(self.points) - 2, bisect_right(self.offsets, offset) - 1)
-        fraction = (offset - self.offsets[i]) / (self.offsets[i + 1] - self.offsets[i])
-        return tuple(a + (b - a) * fraction for a, b in zip(self.points[i], self.points[i + 1]))
-
-    def command(self, position, measured_speed):
-        tangent, passed = self.update(position)
-        remaining = self.offsets[-1] - self.progress
-        end = self.points[-1]
-        arrived = passed or (
-            remaining <= self.arrival_radius
-            and math.dist(position[:2], end[:2]) <= self.route_tolerance
-        )
-        if arrived:
-            if abs(position[2] - end[2]) > self.altitude_tolerance:
-                raise RuntimeError("已越过终点但高度偏差过大，停止飞行，不折返追补航点")
-            return None
-
-        # 每次按前方限速与制动距离更新速度，不再把速度档位切成独立到站任务。
-        speed = self.points[self.index + 1][3]
-        for offset, point in zip(self.offsets[self.index + 1 :], self.points[self.index + 1 :]):
-            speed = min(
-                speed,
-                math.sqrt(point[3] ** 2 + 2 * _ACCELERATION * max(0, offset - self.progress)),
-            )
-        speed = min(
-            speed,
-            math.sqrt(2 * _ACCELERATION * max(0.0, remaining - self.arrival_radius / 2)),
-            # 先扣除实测速度继续滑行的距离，不能到点后才开始发零速度。
-            max(0.0, (remaining - measured_speed * _BRAKING_RESPONSE_SECONDS) / 2.0),
-            measured_speed + _ACCELERATION * _CONTROL_PERIOD,
-        )
-        lookahead = min(12.0, max(2.0, speed * 0.8))
-        # 急弯前限制前视距离，避免高速抄近路切过街角。
-        for i in range(self.index + 1, len(self.points) - 1):
-            a, b, c = self.points[i - 1 : i + 2]
-            u, v = [b[j] - a[j] for j in (0, 1)], [c[j] - b[j] for j in (0, 1)]
-            if (sum(x * y for x, y in zip(u, v))
-                    < math.cos(math.pi / 6) * math.hypot(*u) * math.hypot(*v)):
-                lookahead = min(lookahead, max(1.0, self.offsets[i] - self.progress))
-                break
-        target = self.sample(self.progress + lookahead)
-        direction = [target[j] - position[j] for j in (0, 1)]
-        forward = sum(x * y for x, y in zip(direction, tangent))
-        if forward < 0:
-            direction = [x - forward * y for x, y in zip(direction, tangent)]
-        norm = math.hypot(*direction)
-        if norm < 1e-9:
-            raise RuntimeError("前方轨迹无法继续跟随，停止飞行，不反向修正")
-        return [v * speed / norm for v in direction], target[2]
+def wait_for_flight_tick(started):
+    time.sleep(max(0, FLIGHT_PERIOD - (time.monotonic() - started)))
 
 
 class FlightControl:
-    """持锁后使用；沿显式路径飞行，不会把指定道路替换成另一条最短路。"""
+    """持有任务锁时使用。沿给定的世界坐标航点连续推进位姿。"""
 
-    # 所有任务统一使用的到达、升降和制动容差。
     route_tolerance = ROUTE_TOLERANCE_M
-    arrival_radius = _ARRIVAL_RADIUS_M
-    altitude_tolerance = 3.0
-    track_altitude_tolerance = 3.0
-    vertical_arrival_tolerance = 2.0
-    vertical_move_tolerance = 2.0
-    stop_speed_tolerance = 0.5
-    stop_attempts = 30
 
-    # 保存飞行所需连接、坐标转换和无人机名称。
-    # 初始化控制状态；尚不解锁或启动无人机。
     def __init__(self, client, frame, name, origin):
         self.client, self.frame, self.name, self.origin = client, frame, name, origin
-        self.controlling, self.z = False, None
-        self.collision_timestamp = None
+        self.controlling = False
+        self.position = None
+        self.yaw = 0.0
         self.diagnostics = {}
+        self.collision_timestamp = None
+        self.next_state_check = 0.0
+        self.last_pose_at = 0.0
 
-    def prepare(self, world, local, height=None, validate_altitude=lambda *_: None):
-        """接管并解锁。三维航线不传height，后续升降完全按航点执行。"""
-        client, name, frame = self.client, self.name, self.frame
-        landed = client.call("getMultirotorState", name)["landed_state"] == 0
-        ground = frame.ground_z(world if landed else self.origin, name, remember=landed)
-        self.z = local[2]
-        if height is not None:
-            height = _positive(height, "飞行高度")
-            validate_altitude(ground + height)
-        self.collision_timestamp = client.call("simGetCollisionInfo", name).get("time_stamp")
-        client.call("enableApiControl", True, name)
+    def prepare(self):
+        """从当前 UE 位姿接管。外部物理模式让悬停和进程退出后的位姿稳定。"""
+        if not uses_pose_flight(self.frame.settings):
+            raise RuntimeError('演示飞控需要 AirSim 设置 "PhysicsEngineName": "ExternalPhysicsEngine"，请退出并重新进入 Play')
+        pose = self.client.call("simGetVehiclePose", self.name)
+        self.position = self._world(vector(pose["position"]))
+        self.yaw = pose_yaw(pose)
+        self.collision_timestamp = self.client.call("simGetCollisionInfo", self.name).get("time_stamp")
+        self.client.call("cancelLastTask", self.name)
+        self.client.call("enableApiControl", True, self.name)
+        self._check_control()
+        self.last_pose_at = time.monotonic() - FLIGHT_PERIOD
         self.controlling = True
-        if client.call("armDisarm", True, name) is not True:
-            raise RuntimeError("无人机无法解锁")
-        if not landed:
-            client.call("cancelLastTask", name)
-            hold_position(client, name, local[2], scale=frame.scale)
-        if height is not None:
-            target_z = (self.origin[2] - ground - height) / frame.scale
-            self._vertical(target_z, 2.0)
 
     def _ned(self, point):
-        return [
-            (point[0] - self.origin[0]) / self.frame.scale,
-            (point[1] - self.origin[1]) / self.frame.scale,
-            (self.origin[2] - point[2]) / self.frame.scale,
-        ]
+        x, y, z = self.origin
+        scale = self.frame.scale
+        return ((point[0] - x) / scale, (point[1] - y) / scale, (z - point[2]) / scale)
+
+    def _world(self, ned):
+        x, y, z = self.origin
+        scale = self.frame.scale
+        return (x + ned[0] * scale, y + ned[1] * scale, z - ned[2] * scale)
 
     def _collision(self):
         collision = self.client.call("simGetCollisionInfo", self.name)
-        if (
-            collision.get("has_collided")
-            and collision.get("time_stamp") != self.collision_timestamp
-        ):
-            raise RuntimeError("检测到新碰撞，飞行停止")
+        if (collision.get("has_collided") and collision.get("time_stamp") != self.collision_timestamp):
+            self.collision_timestamp = collision.get("time_stamp")
+            self.stop()
+            raise RuntimeError(f"{self.name} 检测到碰撞，飞行停止")
 
-    def _confirm_move(self, completed, destination, horizontal_limit, vertical_limit, label):
-        """仅核验升降结果；误差过大就停止，不发出回拉位置指令。"""
-        position = vector(self.client.call("simGetVehiclePose", self.name)["position"])
-        horizontal = math.dist(position[:2], destination[:2]) * self.frame.scale
-        vertical = abs(position[2] - destination[2]) * self.frame.scale
-        if (
-            type(completed) is not bool
-            or horizontal > horizontal_limit
-            or vertical > vertical_limit
-        ):
-            raise RuntimeError(
-                f"{self.name}{label}未到达目标：AirSim返回值{completed!r}，"
-                f"水平误差{horizontal:.2f}米，高度误差{vertical:.2f}米，"
-                f"目标NED高度{destination[2]:.3f}，实际{position[2]:.3f}"
-            )
-        if self.client.call("isApiControlEnabled", self.name) is not True:
-            raise RuntimeError(f"{self.name}{label}中断：API控制权已释放")
+    def _check_control(self):
+        if not self.client.call("isApiControlEnabled", self.name):
+            self.controlling = False
+            raise RuntimeError(f"{self.name} 的 API 控制权已释放")
+
+    def step(self, target, speed, *, yaw=None):
+        """执行一帧，按短时间步长推进；长延迟时最多移动一步。"""
+        if not self.controlling:
+            raise RuntimeError("执行飞行前必须先 prepare")
+        now = time.monotonic()
+        if now >= self.next_state_check:
+            self._check_control()
+            self._collision()
+            self.next_state_check = now + _STATE_POLL
+        # 上一帧尚未在 UE 生效时等待，避免暂停或卡顿期间堆积位移。
+        pose = self.client.call("simGetVehiclePose", self.name)
+        actual = self._world(vector(pose["position"]))
+        if (math.dist(self.position, actual) > 0.10
+                or abs(math.remainder(self.yaw - pose_yaw(pose), math.tau)) > math.radians(1.0)):
+            return False
+        delta = tuple(b - a for a, b in zip(self.position, target))
+        distance = math.hypot(*delta)
+        dt = min(_MAX_FRAME_TIME, now - self.last_pose_at)
+        limit = min(speed * dt, _MAX_STEP_M)
+        arrived = distance <= limit
+        position = (tuple(target) if arrived else
+                    tuple(a + d * limit / distance for a, d in zip(self.position, delta)))
+        desired_yaw = yaw
+        if desired_yaw is None and math.hypot(*delta[:2]) > 1e-3:
+            desired_yaw = math.atan2(delta[1], delta[0])
+        turn = math.remainder(desired_yaw - self.yaw, math.tau) if desired_yaw is not None else 0.0
+        angle_limit = _YAW_SPEED * dt
+        heading = self.yaw + max(-angle_limit, min(angle_limit, turn))
+        if position != self.position or heading != self.yaw:
+            write_pose(self.client, self.name, {
+                "position": dict(zip(_AXES, self._ned(position))),
+                "orientation": dict(_ZERO, w_val=math.cos(heading / 2), z_val=math.sin(heading / 2)),
+            })
+            self.position, self.yaw = position, heading
+            self.last_pose_at = now
+        return arrived and (yaw is None or abs(turn) <= angle_limit)
+
+    def move_to(self, point, speed, *, yaw=None, on_progress=None):
+        """飞到一个世界坐标点；显式指定航向时同时完成转向。"""
+        speed = _positive(speed, "飞行速度")
+        while True:
+            started = time.monotonic()
+            arrived = self.step(point, speed, yaw=yaw)
+            if on_progress is not None:
+                on_progress(self.position)
+            wait_for_flight_tick(started)
+            if arrived:
+                return
+
+    def climb(self, altitude, speed):
+        self.move_to((*self.position[:2], altitude), speed)
+
+    def turn_to(self, yaw):
+        self.move_to(self.position, 1.0, yaw=yaw)
+        self.confirm_position(self.position, yaw=yaw)
+
+    def hold(self, duration=0.25):
+        time.sleep(duration)
+        self._check_control()
         self._collision()
 
-    def _vertical(self, target_z, speed):
-        """分段原地升降，确认高度后才允许执行下一条水平航段。"""
-        position = vector(self.client.call("simGetVehiclePose", self.name)["position"])
-        if abs(position[2] - target_z) * self.frame.scale <= self.vertical_arrival_tolerance:
-            # 高度已在容差内时，不为微小换层再次制动。
-            self.z = position[2]
-            return
-        self.stop()
-        position = vector(self.client.call("simGetVehiclePose", self.name)["position"])
-        deadline = time.monotonic() + max(
-            30, abs(position[2] - target_z) * self.frame.scale / speed * 3 + 15
-        )
-        while abs(position[2] - target_z) * self.frame.scale > self.vertical_arrival_tolerance:
-            if time.monotonic() > deadline:
-                raise RuntimeError(
-                    f"{self.name}原地升降超时：高度误差"
-                    f"{abs(position[2] - target_z) * self.frame.scale:.2f}米"
-                )
-            step = max(-5 / self.frame.scale, min(5 / self.frame.scale, target_z - position[2]))
-            next_z = position[2] + step
-            timeout = max(20.0, abs(step) * self.frame.scale / speed * 3 + 10)
-            completed = self.client.call(
-                "moveToZ",
-                next_z,
-                speed / self.frame.scale,
-                timeout,
-                {"is_rate": True, "yaw_or_rate": 0.0},
-                1.0 / self.frame.scale,
-                0.0,
-                self.name,
-                timeout=timeout + 5,
-            )
-            self._confirm_move(completed, [*position[:2], next_z], self.route_tolerance,
-                               self.vertical_move_tolerance, "原地升降")
-            position = vector(self.client.call("simGetVehiclePose", self.name)["position"])
-        self.z = target_z
-
     def fly_route(self, route, *, on_progress=None):
-        """连续跟随折线；可回调水平累计米数及世界XYZ，回调不得阻塞控制。"""
-        if not self.controlling:
-            raise RuntimeError("执行航线前必须先prepare")
+        """沿给定折线飞行，按水平里程和世界 XYZ 回调。"""
         points = [_coordinates(p, 4, "航点") for p in route]
         if not points:
             raise ValueError("航线不能为空")
-        for p in points:
-            _positive(p[3], "航点速度")
-        position = vector(self.client.call("simGetVehiclePose", self.name)["position"])
-        sections = list(_route_sections(points))
-        if (not sections or sections[0][1]) and (
-            math.dist(position[:2], self._ned(points[0])[:2]) * self.frame.scale > self.route_tolerance
-        ):
-            raise RuntimeError("原地升降起点偏离实际位置，需要重新规划")
-        completed_distance = 0.0
+        for point in points:
+            _positive(point[3], "航点速度")
+        if not self.controlling:
+            raise RuntimeError("执行航线前必须先 prepare")
+        if math.dist(self.position, points[0][:3]) > self.route_tolerance:
+            raise RuntimeError("航线起点偏离当前位置，请重新规划")
+        progress = 0.0
 
-        def report(progress, position):
-            if on_progress is not None:
-                on_progress(completed_distance + progress, position)
+        def report(position):
+            on_progress(progress + math.dist(start[:2], position[:2]), position)
 
         try:
-            for section, vertical in sections:
-                if vertical:
-                    self._vertical(self._ned(section[-1])[2], min(section[-1][3], 2.0))
-                else:
-                    self._fly_forward(section, report if on_progress is not None else None)
-                    completed_distance += sum(
-                        math.dist(a[:2], b[:2]) for a, b in zip(section, section[1:])
-                    )
-            self._brake()
-            actual = vector(self.client.call("simGetVehiclePose", self.name)["position"])
-            target = self._ned(points[-1])
-            horizontal = math.dist(actual[:2], target[:2]) * self.frame.scale
-            vertical = abs(actual[2] - target[2]) * self.frame.scale
-            cross_track = horizontal
-            for point in reversed(points[:-1]):
-                start = self._ned(point)
-                length = math.dist(start[:2], target[:2])
-                if length > 1e-8:
-                    tangent = [(target[j] - start[j]) / length for j in (0, 1)]
-                    overshoot = sum((actual[j] - target[j]) * tangent[j] for j in (0, 1))
-                    if overshoot > 0:
-                        cross_track = math.hypot(*[
-                            actual[j] - target[j] - overshoot * tangent[j] for j in (0, 1)
-                        ]) * self.frame.scale
-                    break
-            self.diagnostics.update(
-                actual_ned=actual, target_ned=target, horizontal_error_m=horizontal,
-                cross_track_error_m=cross_track, vertical_error_m=vertical,
-            )
-            if cross_track > self.route_tolerance or vertical > self.altitude_tolerance:
-                raise RuntimeError(
-                    f"航线结束时横向偏差{cross_track:.2f}米、高度偏差{vertical:.2f}米"
-                    f"（距端点{horizontal:.2f}米），已制动，不折返对位"
-                )
-            self.z = actual[2]
-            self._collision()
+            if math.dist(self.position, points[0][:3]) > 1e-4:
+                self.move_to(points[0][:3], points[0][3])
+            for start, end in zip(points, points[1:]):
+                self.move_to(end[:3], end[3], on_progress=report if on_progress is not None else None)
+                progress += math.dist(start[:2], end[:2])
+            self.confirm_position(points[-1][:3])
         except BaseException:
             try:
                 self.stop()
@@ -402,163 +262,55 @@ class FlightControl:
                 pass
             raise
 
-    def _brake(self):
-        """短暂制动即可拍照/切换航段，不要求精确坐标和极低的停稳速度。"""
-        self.z = vector(self.client.call("simGetVehiclePose", self.name)["position"])[2]
-        hold_position(self.client, self.name, self.z, 0.3, scale=self.frame.scale)
-
-    def _fly_forward(self, points, on_progress=None):
-        # 跟踪器统一使用米制局部NED，比例仅在RPC边界转换。
-        scale = self.frame.scale
-        track = _ForwardTrack(
-            [(*[v * scale for v in self._ned(p)], p[3]) for p in points],
-            route_tolerance=self.route_tolerance, arrival_radius=self.arrival_radius,
-            altitude_tolerance=self.track_altitude_tolerance,
-        )
-
-        def world(point):
-            return (self.origin[0] + point[0], self.origin[1] + point[1], self.origin[2] - point[2])
-
-        expected = sum(
-            math.dist(a[:3], b[:3]) / max(0.2, b[3]) for a, b in zip(points, points[1:])
-        )
-        deadline = time.monotonic() + max(30.0, expected * 5 + 30)
-        last_progress, progress_time = -1.0, time.monotonic()
+    def confirm_position(self, target, *, yaw=None, landing=False):
+        """等待 UE 画面应用最后一帧后核对到达。"""
+        deadline = time.monotonic() + 1.0
+        target_ned = self._ned(target)
         while True:
-            position = [
-                v * scale for v in vector(self.client.call("simGetVehiclePose", self.name)["position"])
-            ]
-            state = self.client.call("getMultirotorState", self.name)
-            velocity = vector(state["kinematics_estimated"]["linear_velocity"])
-            if self.client.call("isApiControlEnabled", self.name) is not True:
-                raise RuntimeError(f"{self.name}飞行中断：API控制权已释放")
-            self._collision()
-            command = track.command(position, math.hypot(*velocity[:2]) * scale)
-            self.diagnostics = {
-                "position_local_m": position, "velocity_mps": [v * scale for v in velocity],
-                "progress_m": track.progress, "remaining_m": track.offsets[-1] - track.progress,
-            }
-            if on_progress is not None:
-                on_progress(track.progress, world(position))
-            if command is None:
+            pose = self.client.call("simGetVehiclePose", self.name)
+            actual = vector(pose["position"])
+            horizontal = math.dist(actual[:2], target_ned[:2]) * self.frame.scale
+            vertical = abs(actual[2] - target_ned[2]) * self.frame.scale
+            heading_ok = yaw is None or abs(math.remainder(yaw - pose_yaw(pose), math.tau)) <= math.radians(1.0)
+            if max(horizontal, vertical) <= 0.15 and heading_ok:
+                self._check_control()
+                if not landing:
+                    self._collision()
                 return
-            now = time.monotonic()
-            if track.progress - last_progress >= 0.25:
-                last_progress, progress_time = track.progress, now
-            if now >= deadline or now - progress_time > 15:
-                raise RuntimeError("沿轨迹向前飞行超时，停止飞行，不回头追补航点")
-            horizontal, z = command
-            vertical = _altitude_velocity(z, position[2])
-            # 容许轨迹误差不等于容许穿楼；短时运动和惯性余量仍检查建筑净空。
-            horizon = _CONTROL_PERIOD + 0.3
-            predicted = [position[j] + horizontal[j] * horizon for j in (0, 1)] + [
-                position[2] + vertical * horizon
-            ]
-
-            if not _clear_path([world(position), world(predicted)], 1.0, 3.0):
-                raise RuntimeError("前方轨迹建筑净空不足，停止飞行，不反向修正")
-            _action(
-                self.client, "moveByVelocity", *[v / scale for v in horizontal], vertical / scale,
-                _CONTROL_PERIOD, 0, {"is_rate": True, "yaw_or_rate": 0.0}, self.name,
-                timeout=5,
-            )
-
-    def fly(self, path, speed):
-        """执行指定二维巡查折线；高度沿用当前值，不重新寻路。"""
-        if self.z is None:
-            raise RuntimeError("执行路径前必须先prepare")
-        altitude = self.origin[2] - self.z * self.frame.scale
-        self.fly_route(flight_route([(*p, altitude) for p in path], speed))
-
-    def land(self, home):
-        """在基点附近直接降落；不为精确对位而反向平移。"""
-        self.stop()
-        destination = [(home[i] - self.origin[i]) / self.frame.scale for i in (0, 1)] + [self.z]
-        position = vector(self.client.call("simGetVehiclePose", self.name)["position"])
-        if math.dist(position[:2], destination[:2]) * self.frame.scale > ROUTE_TOLERANCE_M:
-            raise RuntimeError(f"偏离返航基点超过{ROUTE_TOLERANCE_M:g}米，停止降落，不折返对位")
-        ground = self.frame.ground_z([
-            self.origin[0] + position[0] * self.frame.scale,
-            self.origin[1] + position[1] * self.frame.scale,
-            self.origin[2] - position[2] * self.frame.scale,
-        ])
-        height = self.origin[2] - position[2] * self.frame.scale - ground
-        # AirSim land 的下降速度为0.2米/秒；局部NED原点可能高于地面，不能用abs(self.z)估计航程。
-        timeout = max(30.0, max(0.0, height) / 0.2 + 30.0)
-        completed = self.client.call("land", timeout, self.name, timeout=timeout + 5)
-        # SimpleFlight可能在上锁后才更新landed_state；先确认近地且持续静止，再上锁。
-        deadline, stable_since = time.monotonic() + 3.0, None
-        while True:
-            state = self.client.call("getMultirotorState", self.name)
-            position = vector(self.client.call("simGetVehiclePose", self.name)["position"])
-            height = self.origin[2] - position[2] * self.frame.scale - ground
-            speed = (
-                math.hypot(*vector(state["kinematics_estimated"]["linear_velocity"]))
-                * self.frame.scale
-            )
-            now = time.monotonic()
-            if (
-                (completed is True or state["landed_state"] == 0)
-                and abs(height) <= 0.75
-                and speed <= 0.15
-            ):
-                if stable_since is None:
-                    stable_since = now
-                if now - stable_since >= 1.0:
-                    break
-            else:
-                stable_since = None
-            if now >= deadline:
-                raise RuntimeError(
-                    f"无人机未完成降落：离地高度{height:.2f}米，速度{speed:.2f}米/秒，"
-                    f"降落时限{timeout:.1f}秒，AirSim返回值{completed!r}"
-                )
-            time.sleep(0.1)
-        self.client.call("armDisarm", False, self.name)
-        deadline = time.monotonic() + 3.0
-        while self.client.call("getMultirotorState", self.name)["landed_state"] != 0:
+            self._collision()
             if time.monotonic() >= deadline:
-                raise RuntimeError("无人机着地上锁后仍未确认落地状态")
-            time.sleep(0.1)
+                self.diagnostics.update(actual_ned=actual, target_ned=target_ned,
+                                        horizontal_error_m=horizontal, vertical_error_m=vertical)
+                raise RuntimeError(f"{self.name} 位姿未到位，水平误差 {horizontal:.2f} 米，高度误差 {vertical:.2f} 米")
+            time.sleep(FLIGHT_PERIOD)
+
+    def return_home(self, max_height, flight_speed):
+        """沿规划的航线返航，在出生点上空逐步降落。"""
+        home = self.frame.home(self.name)
+        ground = self.frame.ground_z(home)
+        approach = (*home[:2], max(home[2] + 1.0, ground + min(3.0, max_height)))
+        self.fly_route(plan_flight_path(self.position, approach, max_height, flight_speed))
+        self.land(home[:2], speed=min(2.0, flight_speed))
+
+    def land(self, home_xy, *, speed=2.0):
+        home = self.frame.home(self.name)
+        if (math.dist(self.position[:2], home_xy) > self.route_tolerance
+                or math.dist(home[:2], home_xy) > self.route_tolerance):
+            raise RuntimeError("无人机未到达返航基点上空，无法降落")
+        self.move_to((*home[:2], self.position[2]), speed)
+        self.move_to(home, speed)
+        self.finish_landing(home)
+
+    def finish_landing(self, home, *, yaw=None):
+        self.confirm_position(home, yaw=yaw, landing=True)
         self.client.call("enableApiControl", False, self.name)
         self.controlling = False
-        if math.dist(position[:2], destination[:2]) * self.frame.scale > ROUTE_TOLERANCE_M or abs(height) > 2.0:
-            raise RuntimeError("无人机未在起飞基点落地")
 
-    # 取消当前飞行动作并重复发送制动指令，确认实际速度已降到悬停范围。
-    # 成功无返回值；达到重试上限仍未稳定则抛出异常。
     def stop(self):
+        """停止推进并保留当前位姿；碰撞时停在 UE 实际可达的位置。"""
         if self.controlling:
-            self.client.call("cancelLastTask", self.name)
-            z = vector(self.client.call("simGetVehiclePose", self.name)["position"])[2]
-            # 从巡航速度制动可能超过4秒；持续给出零速度指令并核实实际速度。
-            for _ in range(self.stop_attempts):
-                hold_position(self.client, self.name, z, 1.0, scale=self.frame.scale)
-                velocity = vector(
-                    self.client.call("getMultirotorState", self.name)["kinematics_estimated"][
-                        "linear_velocity"
-                    ]
-                )
-                if math.sqrt(sum(v * v for v in velocity)) * self.frame.scale <= self.stop_speed_tolerance:
-                    return
-            raise RuntimeError(f"{self.stop_attempts}次制动后仍未达到悬停速度范围"
-                               f"（允许速度{self.stop_speed_tolerance:g}米/秒）")
-
-
-def _route_sections(points):
-    """只在原地升降处断开；速度变化、采样点及20米边界不再切分任务。"""
-    section = [points[0]]
-    for a, b in zip(points, points[1:]):
-        distance = math.dist(a[:3], b[:3])
-        if distance < 1e-9:
-            continue
-        vertical = math.dist(a[:2], b[:2]) < 1e-8
-        if vertical:
-            if len(section) > 1:
-                yield section, False
-            yield [a, b], True
-            section = [b]
-        else:
-            section.append(b)
-    if len(section) > 1:
-        yield section, False
+            pose = self.client.call("simGetVehiclePose", self.name)
+            actual = self._world(vector(pose["position"]))
+            if math.dist(self.position, actual) > 0.15:
+                write_pose(self.client, self.name, pose)
+                self.position, self.yaw = actual, pose_yaw(pose)

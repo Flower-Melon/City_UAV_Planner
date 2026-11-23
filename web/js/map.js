@@ -108,19 +108,21 @@ class CityMapVisuals {
 const $ = id => document.getElementById(id);
 const canvas = $('map'), ctx = canvas.getContext('2d');
 const state = {scale: 1, ox: 0, oy: 0, width: 1, height: 1, ratio: 1,
-  selected: null, drag: null, frame: 0};
+  selected: null, drag: null, frame: 0, baseDirty: true};
 let zones, points, roads, background, buildings, probes;
 let probeRecords = [];
 let zoneParts = [], pointRecords = [], colors = new Map(), categoryNames = new Map();
 let ready = false, buildingRequest;
 let liveDrones = [];
+let droneSession = null;
 let abnormalTargets = [], abnormalSelected = null, pickHandler = null, pendingPoint = null;
+let abnormalRecords, abnormalSession;
 let trafficTargets = [];
-let pursuitSnapshot = null, pursuitFollowing = true, pursuitLocated = false, pursuitFrame = 0;
-const pursuitMotion = new Map();
-const pursuitCanvas = document.createElement('canvas'); pursuitCanvas.className = 'pursuit-map-layer';
-pursuitCanvas.setAttribute('aria-hidden', 'true'); canvas.after(pursuitCanvas);
-const pursuitContext = pursuitCanvas.getContext('2d');
+let pursuitSnapshot = null, pursuitFollowing = true, pursuitLocated = false, pursuitVehicle = null;
+const markerCanvas = document.createElement('canvas'); markerCanvas.className = 'map-markers';
+markerCanvas.setAttribute('aria-hidden', 'true'); canvas.after(markerCanvas);
+const markerContext = markerCanvas.getContext('2d');
+const droneDelay = 240, targetDelay = 340;
 const abnormalColors = {vehicle: '#df542f', armed_person: '#914ac5', patient: '#138b80'};
 const worldSize = 4000;
 const visuals = new CityMapVisuals();
@@ -200,6 +202,7 @@ function resize() {
   state.width = box.width; state.height = box.height;
   state.ratio = Math.min(2, devicePixelRatio || 1);
   canvas.width = Math.round(box.width * state.ratio); canvas.height = Math.round(box.height * state.ratio);
+  markerCanvas.width = canvas.width; markerCanvas.height = canvas.height;
 }
 function fit() {
   resize();
@@ -209,13 +212,55 @@ function fit() {
   schedule();
 }
 function schedule() {
-  if (!state.frame) state.frame = requestAnimationFrame(() => { state.frame = 0; draw(); });
+  state.baseDirty = true;
+  scheduleMarkers();
+}
+function scheduleMarkers() {
+  if (!state.frame) state.frame = requestAnimationFrame(drawFrame);
 }
 function visiblePoint(point) {
   const mode = $('point-mode').value;
   return mode === 'all' || (mode === 'verified' && point.properties.execution_enabled === true);
 }
-function draw() {
+function addMarkerSample(record, previous, angle, at, delay) {
+  const sample = {at, position: record.position_m, angle};
+  const last = previous?.samples.at(-1);
+  const distance = last ? Math.hypot(last.position[0] - sample.position[0],
+    last.position[1] - sample.position[1]) : 0;
+  if (!last || at - last.at > 1000 || distance > 60) {
+    return {...record, samples: [sample], movingUntil: 0};
+  }
+  // 保留少量实测点，让动画跨过下一次轮询和短暂延迟。
+  const moved = distance > 0 || last.angle !== angle;
+  return {...record, samples: [...previous.samples.slice(-7), sample],
+    movingUntil: moved ? at + delay : previous.movingUntil};
+}
+function sampledMarkers(records, previous, id, heading, delay) {
+  const now = performance.now();
+  const byId = new Map(previous.map(record => [record[id], record]));
+  return records.filter(record => Array.isArray(record.position_m) &&
+    record.position_m.length === 3 && record.position_m.every(Number.isFinite))
+    .map(record => {
+      const last = byId.get(record[id]);
+      if (record.updated_at !== undefined && record.updated_at === last?.updated_at) {
+        return {...last, ...record};
+      }
+      return addMarkerSample(record, last, record[heading], now, delay);
+    });
+}
+function markerAt(record, now, delay) {
+  const time = now - delay;
+  const samples = record.samples;
+  const i = samples.findIndex(sample => sample.at > time);
+  if (i <= 0) return i === 0 ? samples[0] : samples.at(-1);
+  const a = samples[i - 1], b = samples[i];
+  const t = (time - a.at) / (b.at - a.at);
+  const difference = b.angle - a.angle;
+  const angle = Number.isFinite(a.angle) && Number.isFinite(b.angle)
+    ? a.angle + Math.atan2(Math.sin(difference), Math.cos(difference)) * t : b.angle;
+  return {position: a.position.map((value, axis) => value + (b.position[axis] - value) * t), angle};
+}
+function drawBase() {
   const {ratio, scale, ox, oy, width, height} = state;
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.setTransform(ratio * scale, 0, 0, ratio * scale, ratio * ox, ratio * oy);
@@ -254,41 +299,27 @@ function draw() {
       ctx.beginPath(); ctx.arc(x, y, 8 / scale, 0, Math.PI * 2); ctx.stroke();
     } else for (const part of groups.get(state.selected.id) || []) ctx.stroke(part.path);
   }
-  for (const drone of liveDrones) {
-    const trail = drone.trail || [];
-    if (trail.length < 2) continue;
-    ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    const sections = Math.min(8, trail.length - 1);
-    for (let section = 0; section < sections; section++) {
-      const first = Math.floor(section * (trail.length - 1) / sections);
-      const last = Math.floor((section + 1) * (trail.length - 1) / sections);
-      ctx.beginPath(); ctx.moveTo(trail[first][1], trail[first][2]);
-      for (let i = first + 1; i <= last; i++) ctx.lineTo(trail[i][1], trail[i][2]);
-      ctx.globalAlpha = .25 + .7 * (section + 1) / sections;
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 5 / scale; ctx.stroke();
-      ctx.strokeStyle = drone.color; ctx.lineWidth = 3 / scale; ctx.stroke();
-    }
-    ctx.restore();
-  }
+}
+function drawDrones(context, now) {
+  const {scale} = state;
   liveDrones.forEach((drone, index) => {
-    const [x, y] = drone.position_m;
-    ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale);
-    ctx.beginPath();
-    if (Number.isFinite(drone.course_rad)) {
+    const {position: [x, y], angle} = markerAt(drone, now, droneDelay);
+    context.save(); context.translate(x, y); context.scale(1 / scale, 1 / scale);
+    context.beginPath();
+    if (Number.isFinite(angle)) {
       // 地图 X 向右、Y 向下，箭头沿实际水平速度方向旋转。
-      ctx.rotate(drone.course_rad);
-      ctx.moveTo(11, 0); ctx.lineTo(-7, -6); ctx.lineTo(-4, 0); ctx.lineTo(-7, 6); ctx.closePath();
+      context.rotate(angle);
+      context.moveTo(11, 0); context.lineTo(-7, -6); context.lineTo(-4, 0); context.lineTo(-7, 6); context.closePath();
     } else {
-      ctx.arc(0, 0, 6, 0, Math.PI * 2);
+      context.arc(0, 0, 6, 0, Math.PI * 2);
     }
-    ctx.fillStyle = drone.color; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke(); ctx.restore();
+    context.fillStyle = drone.color; context.strokeStyle = '#fff'; context.lineWidth = 2; context.fill(); context.stroke(); context.restore();
     const labelX = x + 14 / scale, labelY = y + (index * 18 - 10) / scale;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(labelX, labelY); ctx.strokeStyle = drone.color; ctx.lineWidth = 1 / scale; ctx.stroke();
-    ctx.font = `600 ${14 / scale}px "Microsoft YaHei", sans-serif`; ctx.textAlign = 'left';
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 / scale; ctx.lineJoin = 'round'; ctx.strokeText(drone.name, labelX, labelY);
-    ctx.fillStyle = drone.color; ctx.fillText(drone.name, labelX, labelY);
+    context.beginPath(); context.moveTo(x, y); context.lineTo(labelX, labelY); context.strokeStyle = drone.color; context.lineWidth = 1 / scale; context.stroke();
+    context.font = `600 ${14 / scale}px "Microsoft YaHei", sans-serif`; context.textAlign = 'left';
+    context.strokeStyle = '#fff'; context.lineWidth = 4 / scale; context.lineJoin = 'round'; context.strokeText(drone.name, labelX, labelY);
+    context.fillStyle = drone.color; context.fillText(drone.name, labelX, labelY);
   });
-  drawAbnormal();
 }
 function drawProbes() {
   if (!$('layer-probes').checked) return;
@@ -310,10 +341,10 @@ function drawProbes() {
     ctx.restore();
   }
 }
-function drawAbnormalTarget(context, target) {
+function drawAbnormalTarget(context, target, now) {
   const {scale} = state;
   const color = abnormalColors[target.kind];
-  const [x, y] = target.position_m;
+  const {position: [x, y], angle} = markerAt(target, now, targetDelay);
   context.save(); context.translate(x, y); context.scale(1 / scale, 1 / scale);
   if (target.id === abnormalSelected) {
     context.beginPath(); context.arc(0, 0, 14, 0, Math.PI * 2);
@@ -322,7 +353,7 @@ function drawAbnormalTarget(context, target) {
   context.fillStyle = color; context.strokeStyle = '#fff'; context.lineWidth = 2;
   context.beginPath();
   if (target.kind === 'vehicle') {
-    context.rotate(target.yaw_rad || 0); context.rect(-8, -5, 16, 10); context.fill(); context.stroke();
+    context.rotate(angle || 0); context.rect(-8, -5, 16, 10); context.fill(); context.stroke();
     context.beginPath(); context.moveTo(8, 0); context.lineTo(3, -3); context.lineTo(3, 3); context.closePath(); context.fillStyle = '#fff'; context.fill();
   } else {
     context.moveTo(0, -9); context.lineTo(8, 0); context.lineTo(0, 9); context.lineTo(-8, 0); context.closePath(); context.fill(); context.stroke();
@@ -334,18 +365,17 @@ function drawAbnormalTarget(context, target) {
   context.strokeStyle = '#fff'; context.lineWidth = 4 / scale; context.strokeText(label, x + 16 / scale, y - 8 / scale);
   context.fillStyle = color; context.fillText(label, x + 16 / scale, y - 8 / scale);
 }
-function drawAbnormal() {
+function drawAbnormal(context, now, tracked) {
   const {scale} = state;
-  drawTraffic();
+  drawTraffic(context);
   for (const target of abnormalTargets) {
-    if (target.id === pursuitSnapshot?.vehicle_id && pursuitSnapshot.target) continue;
-    drawAbnormalTarget(ctx, target);
+    if (target.id !== tracked?.id) drawAbnormalTarget(context, target, now);
   }
   if (pendingPoint) {
     const [x, y] = pendingPoint, r = 12 / scale;
-    ctx.strokeStyle = '#df542f'; ctx.lineWidth = 2 / scale; ctx.setLineDash([4 / scale, 3 / scale]);
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-    ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke();
+    context.strokeStyle = '#df542f'; context.lineWidth = 2 / scale; context.setLineDash([4 / scale, 3 / scale]);
+    context.beginPath(); context.arc(x, y, r, 0, Math.PI * 2); context.stroke(); context.setLineDash([]);
+    context.beginPath(); context.moveTo(x - r, y); context.lineTo(x + r, y); context.moveTo(x, y - r); context.lineTo(x, y + r); context.stroke();
   }
 }
 
@@ -353,89 +383,94 @@ function recentTrafficEvents(target) {
   return (target.recent_events || (target.events.length ? target.events : target.confirmed_evidence)).slice(-2);
 }
 
-function drawTraffic() {
+function drawTraffic(context) {
   const {scale} = state;
   for (const target of trafficTargets) {
     // 仅保留最近两次记录点，不连接观测点，也不代替实时车辆。
     for (const event of recentTrafficEvents(target)) {
       const [x, y] = event.position_m;
       const probe = event.source === 'probe', color = probe ? '#ad803c' : '#bc4b43';
-      ctx.save(); ctx.translate(x, y); ctx.scale(1 / scale, 1 / scale);
-      ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffffd9'; ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
-      ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+      context.save(); context.translate(x, y); context.scale(1 / scale, 1 / scale);
+      context.beginPath(); context.arc(0, 0, 9, 0, Math.PI * 2);
+      context.fillStyle = '#ffffffd9'; context.fill(); context.strokeStyle = color; context.lineWidth = 2; context.stroke();
+      context.beginPath(); context.arc(0, 0, 3, 0, Math.PI * 2); context.fillStyle = color; context.fill();
       const label = probe ? '路口监测点' : '超速记录点';
-      ctx.font = '600 11px "Microsoft YaHei", sans-serif'; ctx.textAlign = 'left'; ctx.lineJoin = 'round';
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.strokeText(label, 13, 17);
-      ctx.fillStyle = color; ctx.fillText(label, 13, 17);
-      ctx.restore();
+      context.font = '600 11px "Microsoft YaHei", sans-serif'; context.textAlign = 'left'; context.lineJoin = 'round';
+      context.strokeStyle = '#fff'; context.lineWidth = 4; context.strokeText(label, 13, 17);
+      context.fillStyle = color; context.fillText(label, 13, 17);
+      context.restore();
     }
   }
 }
 
-function pursuitPoint(key, now = performance.now()) {
-  const motion = pursuitMotion.get(key); if (!motion) return null;
-  const fraction = Math.min(1, Math.max(0, (now - motion.started) / motion.duration));
-  return motion.from.map((v, i) => v + (motion.to[i] - v) * fraction);
-}
-function movePursuitMarker(key, point) {
-  if (!point) return;
-  const previous = pursuitMotion.get(key);
-  if (previous && point.every((value, i) => value === previous.to[i])) return;
-  const now = performance.now();
-  const duration = previous ? Math.max(120, Math.min(1100, now - previous.started)) : 220;
-  pursuitMotion.set(key, {from: pursuitPoint(key, now) || point, to: point, started: now, duration});
+function trackedVehicle(now) {
+  if (pursuitSnapshot?.status !== 'tracking') return null;
+  const target = abnormalTargets.find(target => target.id === pursuitSnapshot.vehicle_id);
+  if (!target) return pursuitVehicle;
+  const last = target.samples.at(-1).at;
+  return pursuitVehicle && now - last >= targetDelay && pursuitVehicle.samples.at(-1).at > last
+    ? pursuitVehicle : target;
 }
 function setPursuit(value) {
-  if (value?.vehicle_id !== pursuitSnapshot?.vehicle_id) {
-    pursuitMotion.clear(); pursuitLocated = false; pursuitFollowing = true;
+  if (value?.pursuit_id !== pursuitSnapshot?.pursuit_id) {
+    pursuitVehicle = null; pursuitLocated = false; pursuitFollowing = true;
   }
   pursuitSnapshot = value;
-  if (!value) {
-    cancelAnimationFrame(pursuitFrame); pursuitFrame = 0;
-    pursuitContext.clearRect(0, 0, pursuitCanvas.width, pursuitCanvas.height); schedule(); return;
+  const target = value?.target;
+  if (target && (!pursuitVehicle || target.last_seen_s !== pursuitVehicle.last_seen_s)) {
+    // 同一辆车优先用场景实时坐标，场景查询中断时可用追踪采样继续显示。
+    pursuitVehicle = addMarkerSample({id: value.vehicle_id, kind: 'vehicle',
+      position_m: target.position_m, last_seen_s: target.last_seen_s},
+    pursuitVehicle, target.heading_rad, performance.now(), targetDelay);
   }
-  movePursuitMarker('target', value.target?.position_m);
-  if (!pursuitFrame) pursuitFrame = requestAnimationFrame(drawPursuit);
-  schedule();
+  scheduleMarkers();
 }
-function drawPursuit(now) {
-  pursuitFrame = 0; if (!pursuitSnapshot) return;
-  const target = pursuitPoint('target', now);
-  if (pursuitCanvas.width !== canvas.width || pursuitCanvas.height !== canvas.height) {
-    pursuitCanvas.width = canvas.width; pursuitCanvas.height = canvas.height;
+function followTrackedVehicle([x, y]) {
+  const {width, height, scale, ox, oy} = state;
+  if (!pursuitLocated) {
+    state.scale = Math.max(scale, .85); pursuitLocated = true;
+    state.ox = width / 2 - x * state.scale;
+    state.oy = height / 2 - y * state.scale;
+    return true;
   }
-  const p = pursuitContext;
-  p.setTransform(state.ratio, 0, 0, state.ratio, 0, 0); p.clearRect(0, 0, state.width, state.height);
-  if (ready && target) {
-    if (!pursuitLocated) {
-      state.scale = Math.max(state.scale, .85); pursuitLocated = true;
-      state.ox = state.width / 2 - target[0] * state.scale;
-      state.oy = state.height / 2 - target[1] * state.scale; schedule();
-    }
-    let x = target[0] * state.scale + state.ox, y = target[1] * state.scale + state.oy;
-    if (pursuitFollowing && !state.drag) {
-      const dx = state.width / 2 - x, dy = state.height / 2 - y;
-      if (Math.abs(dx) > state.width * .16 || Math.abs(dy) > state.height * .16) {
-        state.ox += dx * .045; state.oy += dy * .045; schedule();
-        x = target[0] * state.scale + state.ox; y = target[1] * state.scale + state.oy;
-      }
-    }
-    const screen = point => [point[0] * state.scale + state.ox, point[1] * state.scale + state.oy];
-    const trail = pursuitSnapshot.trail_m || [];
-    if (trail.length > 1) {
-      p.beginPath(); trail.forEach((point, i) => { const q = screen(point); i ? p.lineTo(...q) : p.moveTo(...q); }); p.lineTo(x, y);
-      p.strokeStyle = abnormalColors.vehicle; p.lineWidth = 1.5; p.lineCap = 'round'; p.lineJoin = 'round'; p.stroke();
-    }
-    // 追踪与非追踪共用原有车辆绘制函数，仅更新位置与朝向。
-    p.save();
-    p.setTransform(state.ratio * state.scale, 0, 0, state.ratio * state.scale,
-                   state.ratio * state.ox, state.ratio * state.oy);
-    drawAbnormalTarget(p, {id: pursuitSnapshot.vehicle_id, kind: 'vehicle',
-                           position_m: target, yaw_rad: pursuitSnapshot.target?.heading_rad || 0});
-    p.restore();
+  if (!pursuitFollowing || state.drag) return false;
+  const dx = width / 2 - (x * scale + ox), dy = height / 2 - (y * scale + oy);
+  if (Math.abs(dx) <= width * .16 && Math.abs(dy) <= height * .16) return false;
+  state.ox += dx * .045; state.oy += dy * .045;
+  return true;
+}
+function drawPursuitTrail(context, position) {
+  const trail = pursuitSnapshot.trail_m || [];
+  if (trail.length < 2) return;
+  context.save(); context.beginPath(); context.moveTo(...trail[0]);
+  for (let i = 1; i < trail.length; i++) context.lineTo(...trail[i]);
+  context.lineTo(position[0], position[1]);
+  context.strokeStyle = abnormalColors.vehicle; context.lineWidth = 1.5 / state.scale;
+  context.lineCap = 'round'; context.lineJoin = 'round'; context.stroke(); context.restore();
+}
+function drawFrame(now) {
+  state.frame = 0;
+  const tracked = ready ? trackedVehicle(now) : null;
+  const position = tracked && markerAt(tracked, now, targetDelay).position;
+  const cameraMoved = position && followTrackedVehicle(position);
+  if (state.baseDirty || cameraMoved) {
+    state.baseDirty = false;
+    drawBase();
   }
-  pursuitFrame = requestAnimationFrame(drawPursuit);
+  const context = markerContext;
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, markerCanvas.width, markerCanvas.height);
+  if (!ready) return;
+  const {ratio, scale, ox, oy} = state;
+  context.setTransform(ratio * scale, 0, 0, ratio * scale, ratio * ox, ratio * oy);
+  drawDrones(context, now);
+  drawAbnormal(context, now, tracked);
+  if (tracked) {
+    drawPursuitTrail(context, position);
+    drawAbnormalTarget(context, tracked, now);
+  }
+  if (cameraMoved || tracked?.movingUntil > now || liveDrones.some(drone => drone.movingUntil > now) ||
+      abnormalTargets.some(target => target.movingUntil > now)) scheduleMarkers();
 }
 function zoom(factor, x = state.width / 2, y = state.height / 2) {
   const wx = (x - state.ox) / state.scale, wy = (y - state.oy) / state.scale;
@@ -595,7 +630,13 @@ canvas.onpointerup = event => {
   if (ready && drag && !drag.moved) {
     const point = worldAt(event);
     if (pickHandler) { pickHandler(point); return; }
-    const target = abnormalTargets.map(target => ({target, distance: Math.hypot(target.position_m[0] - point[0], target.position_m[1] - point[1])}))
+    const now = performance.now();
+    const tracked = trackedVehicle(now);
+    const targets = tracked ? [...abnormalTargets.filter(target => target.id !== tracked.id), tracked] : abnormalTargets;
+    const target = targets.map(target => {
+      const [x, y] = markerAt(target, now, targetDelay).position;
+      return {target, distance: Math.hypot(x - point[0], y - point[1])};
+    })
       .filter(hit => hit.distance * state.scale < 15).sort((a, b) => a.distance - b.distance)[0]?.target;
     if (target) window.dispatchEvent(new CustomEvent('abnormal:select', {detail: {id: target.id}}));
     else showFeature(!$('abnormal-panel').hidden ? spawnZoneAt(point) : hitAt(...point));
@@ -640,13 +681,14 @@ background.onerror = () => { $('loading').textContent = '无法读取 assets/tow
 window.liveMap = {
   setPursuit,
   followPursuit() { pursuitFollowing = true; pursuitLocated = false; if (pursuitSnapshot) setPursuit(pursuitSnapshot); },
-  setTraffic(records) { trafficTargets = records; schedule(); },
+  setTraffic(records) { trafficTargets = records; scheduleMarkers(); },
   centerTraffic(id) {
     const target = trafficTargets.find(t => t.target_id === id);
     if (!target || !ready) return;
     const vehicle = abnormalTargets.find(t => t.kind === 'vehicle' && t.id === id);
     const events = recentTrafficEvents(target);
-    const points = [vehicle?.position_m, ...events.map(event => event.position_m)].filter(Boolean);
+    const position = vehicle && markerAt(vehicle, performance.now(), targetDelay).position;
+    const points = [position, ...events.map(event => event.position_m)].filter(Boolean);
     if (!points.length) return;
     const bounds = CityMapVisuals.bounds(points);
     state.scale = Math.min(5, state.width / (bounds[2] - bounds[0] + 160), state.height / (bounds[3] - bounds[1] + 160));
@@ -654,9 +696,14 @@ window.liveMap = {
     state.oy = state.height / 2 - (bounds[1] + bounds[3]) / 2 * state.scale;
     schedule();
   },
-  setAbnormal(records, selectedId) {
-    abnormalTargets = records.filter(target => Array.isArray(target.position_m) && target.position_m.length === 3 && target.position_m.every(Number.isFinite));
-    abnormalSelected = selectedId; schedule();
+  setAbnormal(records, selectedId, session) {
+    if (records !== abnormalRecords || session !== abnormalSession) {
+      abnormalTargets = sampledMarkers(records, session === abnormalSession ? abnormalTargets : [],
+        'id', 'yaw_rad', targetDelay);
+      abnormalRecords = records;
+      abnormalSession = session;
+    }
+    abnormalSelected = selectedId; scheduleMarkers();
   },
   setPickHandler(handler) { pickHandler = handler; canvas.classList.toggle('picking', !!handler); },
   spawnZoneAt,
@@ -671,30 +718,30 @@ window.liveMap = {
     const feature = zones?.features.find(zone => zone.id === id);
     if (feature) showFeature(feature);
   },
-  setPendingPoint(point) { pendingPoint = point; schedule(); },
+  setPendingPoint(point) { pendingPoint = point; scheduleMarkers(); },
   centerTarget(id) {
     const target = abnormalTargets.find(target => target.id === id);
     if (!target || !ready) return;
+    const [x, y] = markerAt(target, performance.now(), targetDelay).position;
     state.scale = Math.max(state.scale, 3);
-    state.ox = state.width / 2 - target.position_m[0] * state.scale;
-    state.oy = state.height / 2 - target.position_m[1] * state.scale;
+    state.ox = state.width / 2 - x * state.scale;
+    state.oy = state.height / 2 - y * state.scale;
     schedule();
   },
-  clearTrails() {
-    liveDrones = liveDrones.map(drone => ({...drone, trail: []}));
-    schedule();
-  },
-  setDrones(records) {
-    liveDrones = records.filter(drone => Array.isArray(drone.position_m) && drone.position_m.length === 3 && drone.position_m.every(Number.isFinite));
-    schedule();
+  setDrones(records, session = null) {
+    liveDrones = sampledMarkers(records, session === droneSession ? liveDrones : [],
+      'name', 'course_rad', droneDelay);
+    droneSession = session;
+    scheduleMarkers();
   },
   isReady: () => ready,
   centerDrone(name) {
     const drone = liveDrones.find(record => record.name === name);
     if (!drone || !ready) return;
+    const [x, y] = markerAt(drone, performance.now(), droneDelay).position;
     state.scale = Math.max(state.scale, 6);
-    state.ox = state.width / 2 - drone.position_m[0] * state.scale;
-    state.oy = state.height / 2 - drone.position_m[1] * state.scale;
+    state.ox = state.width / 2 - x * state.scale;
+    state.oy = state.height / 2 - y * state.scale;
     schedule();
   }
 };

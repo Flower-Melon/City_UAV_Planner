@@ -1,4 +1,4 @@
-"""向指定病人投递药品，完成绞盘投递后悬停。"""
+"""向指定病人投递药品，完成绞盘投递后返航降落。"""
 
 import json
 import logging
@@ -17,7 +17,7 @@ from .fly_to_point import _world_position
 from web.utils.people_state import get_person_state
 from ..runtime.airsim_client import AirSimClient
 from ..runtime.airsim_state import WorldFrame, editor_log, vehicle_name
-from ..runtime.flight_control import FlightControl, hold_position, vehicle_lock
+from ..runtime.flight_control import FlightControl, vehicle_lock
 from ..utils.plan_flight_path import NoPathError, _clear_path, _flight_graph, _positive, _xyz, plan_flight_path
 from ..utils.select_UAV import _reserve_nearest_UAV
 
@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 class _Delivery:
     """通过增量包的命令序号和状态文件确认动画执行结果。"""
 
-    def __init__(self, client):
+    def __init__(self, client, *, log_path=None):
         self.client = client
-        self.path = editor_log().parents[1] / "MedicalDelivery" / "latest_state.json"
+        self.path = (log_path or editor_log()).parents[1] / "MedicalDelivery" / "latest_state.json"
         self.sequence = None
 
     def read(self):
@@ -81,17 +81,13 @@ def _position(flight):
 
 
 def _hold(flight, anchor):
-    # 动画期间持续维持高度，避免沿用先前的移动指令。
-    hold_position(flight.client, flight.name, flight._ned(anchor)[2], 0.25, scale=flight.frame.scale)
-    if flight.client.call("isApiControlEnabled", flight.name) is not True:
-        raise RuntimeError("投递中断：无人机API控制权已释放")
-    flight._collision()
+    flight.hold()
     actual = _position(flight)
     if math.dist(actual[:2], anchor[:2]) > _POSITION_TOLERANCE or abs(actual[2] - anchor[2]) > _POSITION_TOLERANCE:
         raise RuntimeError("挂箱或投递时无人机偏离悬停点超过0.75米")
 
 
-def _align(flight, target, approach):
+def _align(flight, target, approach, speed):
     """沿规划的最后一段原地下降并低速对位，不跨越未检查的障碍。"""
     flight.stop()
     actual = _position(flight)
@@ -99,17 +95,7 @@ def _align(flight, target, approach):
         raise RuntimeError("无人机未到达投递点附近，停止投递")
     if not _clear_path([actual, target], 1.0, 1.0):
         raise RuntimeError("投递末端对位路径与建筑净空冲突")
-    ned = flight._ned(target)
-    timeout = max(30.0, math.dist(actual, target) * 3.0 + 15.0)
-    completed = flight.client.call(
-        "moveToPosition", *ned, 1.0 / flight.frame.scale, timeout,
-        0, {"is_rate": True, "yaw_or_rate": 0.0}, -1.0, 1.0, flight.name,
-        timeout=timeout + 5.0,
-    )
-    # SimpleFlight 到达后也可能返回 False，按实际位置、控制权及碰撞核验。
-    if type(completed) is not bool:
-        raise RuntimeError("无人机投递末端对位返回值无效")
-    flight.stop()
+    flight.move_to(target, min(1.0, speed))
     _hold(flight, target)
 
 
@@ -143,20 +129,20 @@ def _delivery_site(frame, start, requested, cap, speed, radius):
         if not _clear_path([target, hover], horizontal, vertical):
             continue
         try:
-            plan_flight_path(start, hover, cap, speed)
+            route = plan_flight_path(start, hover, cap, speed)
         except NoPathError:
             continue
-        return target, hover
+        return target, hover, route
     scope = "精确落点" if radius == 0 else f"病人周围{radius:g}米内"
     raise NoPathError(f"{scope}没有满足建筑净空、地面高差及最大高度{cap:g}米限制的可达投递点")
 
 
-def deliver_medicine(drone_id, person_id, max_height, flight_speed=25.0) -> None:
-    """向指定病人投递药箱；在离地15米处完成动画后悬停。
+def deliver_medicine(drone_id, person_id, max_height, flight_speed=25.0, *, by_drone=None) -> None:
+    """向指定病人投递药箱；在离地15米处完成投递和收绳后返航降落。
 
     person_id指定病人，落点按其实时地面位置确定，必要时在周围5米内选择可达落点。
     drone_id=None时自动选择离病人最近的落地空闲机。
-    不推进病人事件、不切换镜头、不返航；失败时制动并抛出异常。
+    返航使用相同的导航高度上限和飞行速度；失败时制动并抛出异常。
     """
     if not isinstance(person_id, str) or not re.fullmatch(r"patient_[0-9]+", person_id):
         raise ValueError("病人ID应为patient_编号")
@@ -173,8 +159,9 @@ def deliver_medicine(drone_id, person_id, max_height, flight_speed=25.0) -> None
                 raise ValueError("药品投递目标必须是病人")
             requested = _xyz(person["position_m"], "病人真实位置")
             logger.info("病人实时位置已确定", extra={"patient_position_m": list(requested)})
+            frame = WorldFrame(client)
             if drone_id is None:
-                name, lock = _reserve_nearest_UAV(requested)
+                name, lock = _reserve_nearest_UAV(requested, frame=frame)
             else:
                 name = vehicle_name(drone_id, client.call("listVehicles"))
                 lock = vehicle_lock(name)
@@ -182,45 +169,58 @@ def deliver_medicine(drone_id, person_id, max_height, flight_speed=25.0) -> None
                     raise RuntimeError(f"{name}已有任务正在执行")
             flight, delivery, attached = None, None, False
             try:
+                profile = (by_drone or {}).get(name, {})
+                cap = _positive(profile.get("max_height", cap), "最大离地高度")
+                speed = _positive(profile.get("flight_speed", speed), "飞行速度")
+                if cap < _HOVER_HEIGHT:
+                    raise ValueError("最大离地高度不得低于15米")
                 if not re.fullmatch(r"[\w.-]+", name):
                     raise ValueError("投递机名称只能包含字母、数字、下划线、点和连字符")
                 logger.info("救援无人机已选定", extra={"selected_drone_id": name})
-                frame = WorldFrame(client)
-                world, local, origin = frame.vehicle(name)
+                world, _, origin = frame.vehicle(name)
                 # 先确认挂箱升空段及投递点可达，再接管无人机。
                 ground = frame.ground_z(world)
                 pickup = (*world[:2], max(world[2], ground + 3.0))
                 if not _clear_path([world, pickup], 1.0, 1.0):
                     raise RuntimeError("挂箱升空路径与建筑净空冲突")
-                target, hover = _delivery_site(frame, pickup, requested, cap, speed, _DELIVERY_RADIUS)
+                target, hover, route = _delivery_site(frame, pickup, requested, cap, speed, _DELIVERY_RADIUS)
                 logger.info("药品投递落点已确定", extra={
                     "delivery_position_m": list(target), "requested_position_m": list(requested),
                 })
-                delivery = _Delivery(client)
+                delivery = _Delivery(client, log_path=frame.log_path)
                 state = delivery.command("status")
                 if state.get("state") not in ("idle", "delivered"):
                     raise RuntimeError("药箱正在使用，请先完成原投递或执行 citypeople medkit reset")
                 flight = FlightControl(client, frame, name, origin)
-                flight.prepare(world, local)
-                flight._vertical(flight._ned(pickup)[2], min(speed, 2.0))
+                flight.prepare()
+                logger.info("救援无人机正在起飞挂载药箱", extra={"delivery_phase": "loading"})
+                flight.climb(pickup[2], min(speed, 2.0))
                 flight.stop()
                 pickup = _position(flight)
                 delivery.command(f"attach {name}")
                 attached = True
                 delivery.wait("carrying", flight, pickup, max(40.0, (pickup[2] - ground) * 2.0 + 20.0))
-                # 挂箱期间实际位置可能改变，从当前坐标重新规划最短代价路线。
-                route = plan_flight_path(_position(flight), hover, cap, speed)
+                actual = _position(flight)
+                if math.dist(actual, route[0][:3]) > 0.15:
+                    route = plan_flight_path(actual, hover, cap, speed)
+                logger.info("救援无人机正在飞往投递点", extra={"delivery_phase": "en_route"})
                 approach = len(route) - 1
                 while approach > 0 and math.dist(route[approach - 1][:2], hover[:2]) < 1e-8:
                     approach -= 1
                 # 最终竖直段保持规划坐标，用低速位置控制完成下降和投递对位。
                 flight.fly_route(route[:approach + 1])
-                _align(flight, hover, route[approach])
+                _align(flight, hover, route[approach], speed)
                 current = get_person_state(person_id, client=client)
                 if math.dist(current["position_m"], requested) > 1.0:
                     raise RuntimeError("病人已离开投递点，停止投递")
                 delivery.command(f"drop {target[2]:.6f}")
+                logger.info("正在投递药品", extra={"delivery_phase": "delivering"})
                 delivery.wait("delivered", flight, hover, 90.0)
+                logger.info("药品已投递，正在返航", extra={"delivery_phase": "returning"})
+                try:
+                    flight.return_home(cap, speed)
+                except Exception as error:
+                    raise RuntimeError(f"药品已投递，返航降落失败（{error}）") from error
             except BaseException:
                 if flight is not None:
                     try:

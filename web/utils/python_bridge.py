@@ -1,14 +1,29 @@
 """网页与 Python 能力之间的通信适配；每条请求只完成一个操作。"""
 
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 import json
 import logging
 import os
 from pathlib import Path
 import re
 import sys
+from threading import Event, Thread
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+
+@contextmanager
+def person_action_lock(person_id):
+    """场景手动操作与巡查派发共用人物任务锁。"""
+    from UAV.runtime.flight_control import vehicle_lock
+
+    lock = vehicle_lock(f"person-action:{person_id}")
+    if not lock.acquire(blocking=False):
+        raise RuntimeError("该人物已有处置任务正在执行")
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def get_backend():
@@ -68,7 +83,7 @@ class PythonBridge:
         self.vision = None
         self.traffic = None
 
-    def handle(self, request, *, on_event=None):
+    def handle(self, request, *, on_event=None, stop=None, start_stop_reader=None):
         if not isinstance(request, dict):
             raise ValueError("请求必须是 JSON 对象")
         operation = request.get("operation")
@@ -101,37 +116,39 @@ class PythonBridge:
                 from web.utils.traffic_pipeline import close_session
                 close_session(session)
             return {'stopped': True}
-        if operation == "pursue_vehicle":
-            from UAV.API.track_vehicle import pursue_vehicle
+        if operation == "track_vehicle":
+            from UAV.API.track_vehicle import _track_vehicle
 
-            root = Path(__file__).resolve().parents[2]
-            directory = (root / request['output_directory']).resolve()
-            if directory.parent != (root / 'output' / 'vehicle_pursuit').resolve():
-                raise ValueError('追踪结果必须位于output/vehicle_pursuit的独立目录')
+            stop = stop or Event()
+            if start_stop_reader is not None:
+                # Windows 上，NumPy 初始化会被正在阻塞读取 stdin 的线程卡住。
+                start_stop_reader()
+
+            def publish_pursuit(event):
+                if on_event is not None:
+                    try:
+                        on_event(event)
+                    except BrokenPipeError:
+                        stop.set()
 
             class PursuitHandler(logging.Handler):
                 def emit(self, record):
                     state = getattr(record, 'pursuit_state', None)
-                    if state is not None and on_event is not None:
-                        on_event({'type': 'pursuit_state', 'state': state})
+                    if state is not None:
+                        publish_pursuit({'type': 'pursuit_state', 'state': state})
 
-            logger = logging.getLogger(pursue_vehicle.__module__)
+            logger = logging.getLogger(_track_vehicle.__module__)
             handler, previous_level = PursuitHandler(), logger.level
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
             try:
-                result = pursue_vehicle(request['target_id'], request['observer_id'],
-                                        output_dir=directory)
+                return _track_vehicle(request['target_id'], request['observer_id'], stop, auto_observer=False,
+                                      flight_speed=request.get('flight_speed', 30.0), by_drone=request.get('by_drone'),
+                                      on_frame=lambda frame: publish_pursuit({'type': 'pursuit_frame', 'frame': frame}))
             finally:
                 logger.removeHandler(handler)
                 logger.setLevel(previous_level)
                 handler.close()
-            return {'status': result['status'], 'elapsed_s': result['elapsed_s'],
-                    'target': result.get('target'), 'position_source': result['position_source'],
-                    'position_updates': result['position_updates'],
-                    'trail_m': result['trail_m'],
-                    'drone_states': result['drone_states'], 'evidence_count': len(result['evidence']),
-                    'travelled_m': result.get('escape', {}).get('travelled_m', 0)}
         if operation == "plan":
             if self.planner is None:
                 from llm.utils.catalog import ZoneCatalog
@@ -154,11 +171,6 @@ class PythonBridge:
             from UAV.API.deliver_medicine import _Delivery
             from UAV.API.respond_armed_person import _Response
             from UAV.runtime.airsim_client import AirSimClient
-            from Scene.vehicle.escape_vehicle import _request as escape_request
-
-            # 追踪进程已由网页终止；车辆行为在UE内计时，需单独制动。
-            with AirSimClient() as client:
-                escape_request(client, 'stop_all', vehicle_id='')
             reset_uav()
             # 同时清理历史或手动演示留下的部件，不依赖当前网页的任务记录。
             with AirSimClient() as client:
@@ -171,7 +183,7 @@ class PythonBridge:
             if "drone_id" in request:
                 raise ValueError("网页处置不接受drone_id，必须自动选择空闲机")
             flight = request.get("flight")
-            if not isinstance(flight, dict) or set(flight) != {"max_height", "flight_speed"}:
+            if not isinstance(flight, dict) or set(flight) - {"by_drone"} != {"max_height", "flight_speed"}:
                 raise ValueError("投网处置需要max_height和flight_speed")
             drone_id = None
 
@@ -193,19 +205,20 @@ class PythonBridge:
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
             try:
-                respond_armed_person(None, request["person_id"], **flight)
+                with person_action_lock(request["person_id"]):
+                    respond_armed_person(None, request["person_id"], **flight)
             finally:
                 logger.removeHandler(handler)
                 logger.setLevel(previous_level)
                 handler.close()
-            return {"resolved": True, "drone_id": drone_id, "person_id": request["person_id"],
+            return {"resolved": True, "returned": True, "drone_id": drone_id, "person_id": request["person_id"],
                     "target_position": get_person_state(request["person_id"])["position_m"]}
         if operation == "deliver_medicine":
             from UAV.API.deliver_medicine import deliver_medicine
             if "drone_id" in request:
                 raise ValueError("网页救援不接受drone_id，每次必须重新自动选机")
             flight = request.get("flight")
-            if not isinstance(flight, dict) or set(flight) != {"max_height", "flight_speed"}:
+            if not isinstance(flight, dict) or set(flight) - {"by_drone"} != {"max_height", "flight_speed"}:
                 raise ValueError("药品投递需要max_height和flight_speed")
             drone_id = None
             target_position = None
@@ -226,6 +239,9 @@ class PythonBridge:
                         target_position = list(actual)
                         if on_event is not None:
                             on_event({"type": "delivery_target_selected", "target_position": target_position})
+                    phase = getattr(record, "delivery_phase", None)
+                    if phase is not None and on_event is not None:
+                        on_event({"type": "delivery_phase", "phase": phase})
 
             logger = logging.getLogger(deliver_medicine.__module__)
             handler = RescueHandler()
@@ -233,12 +249,13 @@ class PythonBridge:
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
             try:
-                deliver_medicine(None, request["person_id"], **flight)
+                with person_action_lock(request["person_id"]):
+                    deliver_medicine(None, request["person_id"], **flight)
             finally:
                 logger.removeHandler(handler)
                 logger.setLevel(previous_level)
                 handler.close()
-            return {"delivered": True, "drone_id": drone_id, "target_position": target_position,
+            return {"delivered": True, "returned": True, "drone_id": drone_id, "target_position": target_position,
                     "person_id": request["person_id"]}
         if operation == "monitor":
             from UAV.API.monitor_area import monitor_area
@@ -263,8 +280,8 @@ class PythonBridge:
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
             try:
-                # 网页仅指定区域/复用监控机；高度使用monitor_area脚本中的默认值。
-                monitor_area(request.get("zone_id"), request.get("drone_id"))
+                drone_id = monitor_area(request.get("zone_id"), request.get("drone_id"),
+                                        **request.get("flight", {"by_drone": request.get("by_drone")}))
             finally:
                 logger.removeHandler(handler)
                 logger.setLevel(previous_level)
@@ -361,6 +378,10 @@ class PythonBridge:
             from Scene import set_vehicle_behavior
             set_vehicle_behavior(request["target_id"], request["behavior"])
             return {"target_id": request["target_id"]}
+        if operation == "abnormal_escape":
+            from Scene.vehicle.escape_vehicle import escape_vehicle
+            escape_vehicle(request["target_id"])
+            return {"target_id": request["target_id"]}
         if operation == "abnormal_remove":
             from Scene.vehicle.spawn_vehicle import AirSimClient, request as ue_request
             target_id = request["target_id"]
@@ -400,6 +421,7 @@ class PythonBridge:
         try:
             for line in stream:
                 request_id, operation = None, None
+                stop = stop_reader = None
                 try:
                     request = json.loads(line)
                     if not isinstance(request, dict):
@@ -408,9 +430,19 @@ class PythonBridge:
                     def publish(event):
                         print(json.dumps({"id": request_id, "event": event}, ensure_ascii=False,
                                          allow_nan=False), file=output, flush=True)
+                    if operation == 'track_vehicle':
+                        stop = Event()
+
+                        # 追踪使用独占通道。网页关闭输入时，让当前追踪完成返航。
+                        def watch_stop():
+                            stream.read()
+                            stop.set()
+
+                        stop_reader = Thread(target=watch_stop, name='track-stop')
                     # 能力内部的普通输出不进入 JSON 通信通道。
                     with redirect_stdout(sys.stderr):
-                        result = self.handle(request, on_event=publish)
+                        result = self.handle(request, on_event=publish, stop=stop,
+                                             start_stop_reader=stop_reader.start if stop_reader else None)
                     response = {"id": request_id, "result": result}
                 except Exception as error:
                     message = str(error) if isinstance(error, (ValueError, RuntimeError, OSError)) else type(error).__name__
@@ -425,6 +457,10 @@ class PythonBridge:
                             pass
                     response = {"id": request_id, "error": message, "error_type": type(error).__name__}
                 print(json.dumps(response, ensure_ascii=False, allow_nan=False), file=output, flush=True)
+                if stop_reader is not None:
+                    if stop_reader.ident is not None:
+                        stop_reader.join()
+                    break
         finally:
             self.close()
 

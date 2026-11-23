@@ -1,46 +1,145 @@
 'use strict';
 
 (() => {
-  const labels = {preparing: '正在准备追踪', tracking: '正在追踪', returning: '正在返航',
-    complete: '追踪完成', failed: '追踪失败', stopped: '追踪已停止'};
-  let current = null, pollTimer = 0, polling = false, endpointAvailable = true;
+  const labels = {preparing: '正在调度三机', tracking: '协同追踪中', returning: '无人机正在返航',
+    complete: '追踪完成', failed: '追踪未完成', stopped: '追踪已结束'};
+  const roleNames = {lead: '主追机', scout: '前哨机', wing: '侧翼机'};
+  const following = {lead: '正在跟随', scout: '已到前方', wing: '侧方观察'};
+  const phases = {waiting: '待入场', joining: '正在入场', approaching: '正在入场',
+    returning: '正在返航', complete: '已归位'};
+  const panel = document.getElementById('fleet-pursuit');
+  const heading = panel.querySelector('[data-pursuit-label]');
+  const image = panel.querySelector('[data-pursuit-image]');
+  const box = panel.querySelector('[data-pursuit-box]');
+  const caption = panel.querySelector('[data-pursuit-camera]');
+  const empty = panel.querySelector('[data-pursuit-empty]');
+  const viewButtons = panel.querySelectorAll('[data-pursuit-view]');
+
+  let current = null, pollTimer = 0, polling = false;
+  let frameTimer = 0, framePending = false, selectedRole = 'lead', drawnFrame = null;
+  const frames = new Map();
   const active = value => value && !['complete', 'failed', 'stopped'].includes(value.status);
+
+  function renderPursuit() {
+    panel.hidden = !current;
+    if (!current) return;
+    let title = labels[current.status];
+    if (current.status === 'tracking' && current.target?.intercept_state === 'braking') title = '车辆正在减速停车';
+    if (current.outcome === 'intercepted' && current.status === 'returning') title = '车辆已截停 · 无人机正在返航';
+    if (current.outcome === 'intercepted' && current.status === 'complete') title = '追踪完成 · 车辆已截停';
+    if (current.outcome === 'timeout' && current.status === 'returning') title = '追踪超时 · 无人机正在返航';
+    if (current.outcome === 'timeout' && current.status === 'failed') title = '追踪超时 · 车辆未截停';
+    if (heading.textContent !== title) heading.textContent = title;
+    heading.title = current.status === 'failed' ? current.error || '' : '';
+    const frame = frames.get(selectedRole);
+    const view = roleNames[selectedRole] + '视角';
+    empty.hidden = !!frame;
+    empty.textContent = active(current) ? `等待${view}` : `${view}未生成画面`;
+    image.hidden = !frame;
+    box.hidden = !frame?.bbox;
+    caption.hidden = !frame;
+    if (frame) {
+      if (drawnFrame !== frame) {
+        image.getContext('2d').drawImage(frame.pixels, 0, 0, image.width, image.height);
+        drawnFrame = frame;
+      }
+      caption.textContent = view + (frame.visible ? '' : ' · 目标暂时遮挡');
+      if (frame.bbox) {
+        const [left, top, right, bottom] = frame.bbox;
+        Object.assign(box.style, {left: left * 100 + '%', top: top * 100 + '%',
+          width: (right - left) * 100 + '%', height: (bottom - top) * 100 + '%'});
+      }
+    }
+    for (const button of viewButtons) {
+      const role = button.dataset.pursuitView;
+      const phase = current.drone_states?.find(drone => drone.role === role)?.phase;
+      button.setAttribute('aria-pressed', String(role === selectedRole));
+      button.nextElementSibling.textContent = phase === 'following' ? following[role] : phases[phase] || '待入场';
+    }
+  }
 
   function update(value) {
     if (!value) return;
-    if (current?.vehicle_id === value.vehicle_id &&
-        (value.target?.last_seen_s ?? -1) < (current.target?.last_seen_s ?? -1)) return;
-    current = value;
-    const message = labels[value.status] || '正在追踪';
-    for (const panel of document.querySelectorAll('.pursuit-status')) {
-      panel.hidden = false;
-      if (panel.textContent !== message) panel.textContent = message;
+    if (current && current.pursuit_id === value.pursuit_id &&
+        ((value.target?.last_seen_s ?? -1) < (current.target?.last_seen_s ?? -1) ||
+         current.outcome === 'intercepted' && value.outcome !== 'intercepted')) return;
+    if (current?.pursuit_id !== value.pursuit_id) {
+      selectedRole = 'lead';
+      frames.clear();
+      drawnFrame = null;
     }
-    window.liveMap?.setPursuit(value);
-    if (active(value) && endpointAvailable && !polling && !pollTimer) pollTimer = setTimeout(poll, 200);
+    current = value;
+    renderPursuit();
+    window.liveMap?.setPursuit(active(value) ? value : null);
+    if (active(value) && !polling && !pollTimer) pollTimer = setTimeout(poll, 220);
+    if (!frameTimer && !framePending) frameTimer = setTimeout(pollFrame, 0);
+  }
+
+  async function pollFrame() {
+    frameTimer = 0;
+    if (!current || framePending) return;
+    const role = selectedRole;
+    const camera = current.drone_states?.find(drone => drone.role === role)?.name;
+    if (!camera) return;
+    framePending = true;
+    const id = current.pursuit_id;
+    const wasActive = active(current);
+    try {
+      const query = new URLSearchParams({pursuit: id, camera, after: String(frames.get(role)?.sequence || 0)});
+      const response = await fetch('/api/llm/pursuit/frame?' + query, {signal: AbortSignal.timeout(2500)});
+      if (response.status === 200) {
+        const frame = await response.json();
+        const pixels = new Image();
+        pixels.src = 'data:image/jpeg;base64,' + frame.image;
+        await pixels.decode();
+        if (current?.pursuit_id === id && frame.camera === camera) {
+          frames.set(role, {...frame, pixels});
+          if (selectedRole === role) renderPursuit();
+        }
+      }
+    } catch { /* 保留最新画面，下一轮重试。 */ }
+    finally {
+      framePending = false;
+      if (current && (current.pursuit_id !== id || selectedRole !== role || (wasActive && !active(current)))) {
+        frameTimer = setTimeout(pollFrame, 0);
+      } else if (active(current)) frameTimer = setTimeout(pollFrame, 130);
+    }
   }
 
   async function poll() {
-    pollTimer = 0; if (!active(current) || polling || !endpointAvailable) return;
+    pollTimer = 0;
+    if (!active(current) || polling) return;
     polling = true;
     try {
       const response = await fetch('/api/llm/pursuit', {cache: 'no-store', signal: AbortSignal.timeout(2500)});
-      if (response.status === 404) { endpointAvailable = false; return; }
       if (response.ok) {
         const data = await response.json();
         if (data.pursuit) update(data.pursuit);
       }
-    } catch { /* 下一轮继续读取；已显示的信息保留。 */ }
-    finally { polling = false; if (active(current) && endpointAvailable) pollTimer = setTimeout(poll, 200); }
+    } catch { /* 下一轮继续读取。 */ }
+    finally {
+      polling = false;
+      if (active(current)) pollTimer = setTimeout(poll, 220);
+    }
   }
 
   function clear() {
-    current = null; clearTimeout(pollTimer); pollTimer = 0;
-    for (const panel of document.querySelectorAll('.pursuit-status')) {
-      panel.hidden = true; panel.textContent = '';
-    }
+    current = drawnFrame = null;
+    frames.clear();
+    clearTimeout(pollTimer);
+    clearTimeout(frameTimer);
+    pollTimer = frameTimer = 0;
+    renderPursuit();
     window.liveMap?.setPursuit(null);
   }
+  for (const button of viewButtons) button.onclick = () => {
+    selectedRole = button.dataset.pursuitView;
+    renderPursuit();
+    if (!framePending) {
+      clearTimeout(frameTimer);
+      frameTimer = setTimeout(pollFrame, 0);
+    }
+  };
   window.pursuitView = {update, clear, get current() { return current; }};
   window.addEventListener('mission:reset', clear);
 
@@ -105,11 +204,14 @@
     const locate = document.createElement('button'); locate.type = 'button'; locate.textContent = '地图定位';
     locate.onclick = () => window.liveMap?.centerTraffic(id);
     const expand = document.createElement('button'); expand.type = 'button'; expand.textContent = '展开取证';
-    const escape = document.createElement('button'); escape.type = 'button'; escape.textContent = '逃逸';
+    const escape = document.createElement('button'); escape.type = 'button'; escape.textContent = '启动逃逸';
     escape.dataset.escapeTarget = id;
-    escape.onclick = () => void window.vehiclePursuit?.start(id);
-    footer.append(locate, expand, escape); card.append(sources, chain, footer);
-    const view = {card, uav, probe, locate, escape, chain, state: card.querySelector('.traffic-card-state'),
+    escape.onclick = () => void window.vehiclePursuit?.escape(id);
+    const follow = document.createElement('button'); follow.type = 'button'; follow.textContent = '开始追踪';
+    follow.dataset.pursuitTarget = id;
+    follow.onclick = () => void window.vehiclePursuit?.start(id);
+    footer.append(locate, expand, escape, follow); card.append(sources, chain, footer);
+    const view = {card, uav, probe, locate, escape, follow, chain, state: card.querySelector('.traffic-card-state'),
       plate: card.querySelector('.traffic-card-plate'), zone: card.querySelector('.traffic-card-zone'),
       tags: card.querySelector('.traffic-violation-tags')};
     expand.onclick = () => {
@@ -189,7 +291,7 @@
     };
   }
 
-  function render(execution) {
+  function renderTraffic(execution) {
     const traffic = execution.traffic;
     const container = $('llm-traffic-targets');
     if (traffic.pursuit) {
@@ -230,11 +332,8 @@
         const tag = document.createElement('span'); tag.textContent = names[v]; return tag;
       }));
       view.locate.disabled = !record.position_m;
-      const pursuit = traffic.pursuit;
-      const active = pursuit && !['complete', 'failed', 'stopped'].includes(pursuit.status);
-      view.escape.disabled = !!active || !!window.vehiclePursuit?.busy;
-      view.escape.textContent = active && pursuit.vehicle_id === record.target_id ? '追踪中…' : '逃逸';
-      if (active && pursuit.vehicle_id === record.target_id) view.state.textContent = '逃逸追踪中';
+      view.escape.disabled = !!window.vehiclePursuit?.busy;
+      view.follow.disabled = !!window.vehiclePursuit?.active || !!window.vehiclePursuit?.busy;
       updateSource(view.uav, uav, record.drone_id || '空中巡查');
       updateSource(view.probe, probe, probe?.probe_id || '道路监控');
       updateProbe(view.probe, record, probe, confirmed);
@@ -249,7 +348,7 @@
     for (const [id, view] of cards) if (!records.some(r => r.target_id === id)) { view.card.remove(); cards.delete(id); }
   }
 
-  window.trafficView = {render, clear() {
+  window.trafficView = {render: renderTraffic, clear() {
     cards.clear(); $('llm-traffic-targets').replaceChildren(); delete $('llm-traffic-targets').dataset.empty;
     window.liveMap?.setTraffic([]);
     window.pursuitView?.clear(); $('llm-traffic-targets').hidden = false;

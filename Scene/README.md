@@ -30,6 +30,7 @@ vehicle_id = spawn_vehicle(position)
 ```
 
 同一街区最多一辆异常车；重复生成会报错，移除原目标后可重新生成。道路选点归最近街区，车辆始终保留生成时的街区归属。
+车辆按所选街区在地图中的主大区归属固定在 3-1、3-2、4-1 或 4-2 区内，普通行驶和逃逸均受该大区边界限制。
 
 ### 1.2 set_vehicle_behavior
 
@@ -68,92 +69,31 @@ result = set_vehicle_behavior(vehicle_id, "mixed")
 None  # result
 ```
 
-### 1.3 start_escape
+### 1.3 escape_vehicle
 
-让指定异常车离开原来的闭环路线，沿连通道路随机驶向远处街区。默认逃逸120个仿真秒，计时结束后制动。
-
-逃逸期间不跟随普通车流排队，允许穿过普通交通车；保留路面和障碍检查，弯道会减速。本函数只控制车辆，不派出无人机。需要同时追踪时，直接调用 `pursue_vehicle()`，无需先调用本函数。
+让指定异常车从当前位置沿前方路口驶离原巡行路线。UE 会在所属大区内提前接上下一段可持续通行的车道，优先避开原路线和刚走过的路段，车辆持续行驶。途中继续检查路面和其他障碍，弯道减速，仿真中的普通交通车会从障碍检查中跳过。
 
 | 入参 | 类型 | 含义 |
 |---|---|---|
 | `vehicle_id` | `str` | `spawn_vehicle()` 返回的车辆 ID |
-| `duration_s` | `float` | 逃逸时长，单位为仿真秒；默认 `120.0`，必须大于0且有限，不包含结束后的制动时间 |
-| `seed` | `int` 或 `None` | 随机选路种子；默认 `None`，可指定整数，在起点、朝向和道路条件相同时复现选路 |
+| `seed` | `int` 或 `None` | 可选种子，用于在同等条件的后续车道中选路 |
 
-| 出参 | 类型 | 含义 |
-|---|---|---|
-| 返回值 | `dict` | 车辆逃逸状态；确认启动后即返回，不等待逃逸结束 |
+函数确认切换成功后返回 `None`。可以在网页点击「启动逃逸」，或在项目根目录运行以下命令，自动选择当前仿真中编号最小的异常车。也可以在命令末尾传入车辆 ID。
+命令行仍接受 `--seed`，默认值为 `42`。
 
-入参样例与调用：
-
-```python
-from Scene.vehicle import spawn_vehicle
-from Scene.vehicle.escape_vehicle import start_escape
-
-vehicle_id = spawn_vehicle((2286.37, 18.91))
-result = start_escape(vehicle_id, duration_s=120.0, seed=42)
+```powershell
+python -m Scene.vehicle.escape_vehicle
 ```
 
-出参样例（仅列主要字段）：
+Python 调用：
 
 ```python
-{
-    "vehicle_id": "abnormal_vehicle_02",
-    "phase": "escaping",
-    "duration_s": 120.0,
-    "elapsed_s": 0.0,
-    "travelled_m": 0.0,
-}
+from Scene.vehicle.escape_vehicle import escape_vehicle
+
+escape_vehicle(vehicle_id)
 ```
 
-车辆不存在、已有未完成的逃逸任务或附近道路无法连通远处街区时抛出异常。
-
-### 1.4 escape_status
-
-查询指定车辆的逃逸状态，也可提前结束逃逸并请求制动。
-
-| 入参 | 类型 | 含义 |
-|---|---|---|
-| `vehicle_id` | `str` | 已通过 `start_escape()` 或 `pursue_vehicle()` 启动逃逸的车辆 ID |
-| `stop` | `bool` | 默认 `False`，仅查询；设为 `True` 时请求提前制动；仅限关键字传入 |
-
-| 出参 | 类型 | 含义 |
-|---|---|---|
-| 返回值 | `dict` | 当前逃逸状态；任务已结束时返回该次逃逸的完成状态 |
-
-主要返回字段：
-
-| 字段 | 含义 |
-|---|---|
-| `phase` | `"escaping"` 正在逃逸、`"stopping"` 正在制动、`"complete"` 制动完成 |
-| `duration_s` | 设定的逃逸时长，单位为仿真秒 |
-| `elapsed_s` | 从逃逸开始经过的仿真秒数，包含制动时间 |
-| `travelled_m` | 逃逸开始后的累计行驶距离，单位米 |
-
-入参样例与调用：
-
-```python
-from Scene.vehicle.escape_vehicle import escape_status
-
-vehicle_id = "abnormal_vehicle_02"
-state = escape_status(vehicle_id)
-# 需要提前结束时：
-state = escape_status(vehicle_id, stop=True)
-```
-
-出参样例（仅列主要字段，数值仅作示意）：
-
-```python
-{
-    "vehicle_id": "abnormal_vehicle_02",
-    "phase": "stopping",
-    "duration_s": 120.0,
-    "elapsed_s": 45.3,
-    "travelled_m": 620.5,
-}
-```
-
-`stop=True` 不等待制动完成，可再次查询，直到 `phase` 为 `"complete"`。车辆不存在或尚未启动逃逸时抛出异常。
+如需三机协同追踪，再调用 `track_vehicle(vehicle_id, observer_id)`。
 
 ## 2 持刀人员 API
 

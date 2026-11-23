@@ -196,7 +196,6 @@ class _DistanceCapture:
                 if pending is not None:
                     pending.result()
             self.distance += line.length
-            # 飞控允许在端点前约1.5米结束；记录未触达的阈值，不挪到下一条边冒充补拍。
             if self.next_distance <= self.distance + 1e-8:
                 count = math.floor((self.distance - self.next_distance + 1e-8) / self.interval) + 1
                 skip("end_not_reached", self.next_distance, count)
@@ -246,12 +245,12 @@ def _return_path(start, home, cap, speed):
     return plan_flight_path(start, home, cap, speed)
 
 
-def _complete_plan(segments, target, origin, home, cap, speed):
+def _complete_plan(segments, target, base, home, cap, speed):
     return {
         "target": {"zone_id": target["zone_id"]},
         "waypoint_fields": ["x_m", "y_m", "z_m", "speed_mps"],
         "segments": segments,
-        "home_position_m": list(origin),
+        "home_position_m": list(base),
         "return_path": _return_path(segments[-1][0][-1][:3], home, cap, speed),
     }
 
@@ -274,6 +273,7 @@ def search_area(
     max_height=60.0,
     capture_interval_m=15.0,
     output_dir=None,
+    by_drone=None,
 ) -> None:
     """三维导航接入街区、沿道路巡查拍照，完成后返航降落。
 
@@ -296,19 +296,23 @@ def search_area(
         pipeline = flight = None
         failure = None
         try:
+            profile = (by_drone or {}).get(name, {})
+            height = _positive(profile.get("flight_height", height), "flight_height")
+            speed = _positive(profile.get("flight_speed", speed), "flight_speed")
+            cap = _positive(profile.get("max_height", cap), "max_height")
+            interval = _positive(profile.get("capture_interval_m", interval), "capture_interval_m")
             logger.info("搜索无人机已选定", extra={"selected_drone_id": name})
             frame = WorldFrame(client)
-            world, local, origin = frame.vehicle(name)
-            landed = client.call("getMultirotorState", name)["landed_state"] == 0
-            ground = frame.ground_z(world if landed else origin, name, remember=landed)
+            world, _, origin = frame.vehicle(name)
+            # 选机时已确认无人机在基地待命。
+            ground = frame.ground_z(world, name, remember=True)
             altitude = ground + height
-            # 基点地面独立测量，避免无人机在其他地点起飞时复用错误地面缓存。
-            home_ground = frame.ground_z(origin)
-            home = (*origin[:2], home_ground + min(height, cap))
+            base = frame.home(name)
+            home = (*base[:2], ground + min(height, cap))
 
             def make_plan(start):
                 segments = plan_search_path(start, target, altitude, cap, speed)
-                return _complete_plan(segments, target, origin, home, cap, speed)
+                return _complete_plan(segments, target, base, home, cap, speed)
 
             plan = make_plan(world)
             directory = DEFAULT_OUTPUT if output_dir is None else Path(output_dir)
@@ -321,7 +325,7 @@ def search_area(
             # 此时已持有 _reserve_UAV 返回的跨进程独占锁，可以回收旧进程的残留会话。
             pipeline.preflight(reclaim_stale=True)
             flight = FlightControl(client, frame, name, origin)
-            flight.prepare(world, local)
+            flight.prepare()
             actual = _world_xyz(client, name, origin, frame.scale)
             if math.dist(actual, plan["segments"][0][0][0][:3]) > 0.1:
                 plan = make_plan(actual)
@@ -348,7 +352,7 @@ def search_area(
             plan["return_path"] = _return_path(actual, home, cap, speed)
             pipeline.write_records(route_file, plan)
             flight.fly_route(plan["return_path"])
-            flight.land(origin[:2])
+            flight.land(base[:2], speed=min(2.0, speed))
             if pipeline.images == 0:
                 raise RuntimeError("巡查未保存任何照片，本次搜索未完成")
         except BaseException as error:

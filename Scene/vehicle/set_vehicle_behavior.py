@@ -10,7 +10,9 @@ import re
 import sys
 import traceback
 from collections import deque
+from functools import lru_cache
 from pathlib import Path
+from runpy import run_path
 
 # 普通 Python 只调用公共接口；UE 加载同一脚本时启用下方控制实现。
 try:
@@ -53,21 +55,56 @@ def distance(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
+def _driving_bounds(tile_bounds, low, high):
+    xmin, ymin, xmax, ymax = tile_bounds
+    # 按模型离原点最远的水平角点留边距，转向时整个车身也留在区内。
+    clearance = math.hypot(max(abs(low.x), abs(high.x)), max(abs(low.y), abs(high.y))) / 100.0
+    return xmin + clearance, ymin + clearance, xmax - clearance, ymax - clearance
+
+
+def _within_bounds(xy, bounds):
+    x, y = xy
+    xmin, ymin, xmax, ymax = bounds
+    return xmin <= x <= xmax and ymin <= y <= ymax
+
+
 class Loop:
-    def __init__(self, points):
-        self.points = [tuple(p) for p in points]
-        if len(points) < 4 or distance(points[0], points[-1]) > 0.01:
+    def __init__(self, points, *, continuation=None):
+        if continuation is None and (len(points) < 4 or distance(points[0], points[-1]) > 0.01):
             raise ValueError("车辆路线必须为闭合折线")
+        if len(points) < 2:
+            raise ValueError("车辆路线至少需要两个路点")
+        self.continuation = continuation
+        self.points = [tuple(points[0])]
         self.ends = [0.0]
-        for a, b in zip(self.points, self.points[1:]):
-            length = distance(a, b)
+        self._append_points(points[1:])
+
+    def _append_points(self, points):
+        for point in points:
+            length = distance(self.points[-1], point)
             if length < 1e-7:
                 raise ValueError("路线包含重复路点")
+            self.points.append(tuple(point))
             self.ends.append(self.ends[-1] + length)
         self.length = self.ends[-1]
 
+    def extend_if_needed(self, progress):
+        if self.continuation is None or self.length - progress > 150.0:
+            return
+        # 保留定位和倒车所需的近处轨迹，避免长时间运行后路点不断累积。
+        keep = max(0, bisect.bisect_right(self.ends, progress - 50.0) - 1)
+        del self.points[:keep]
+        del self.ends[:keep]
+        while self.length - progress < 450.0:
+            points = next(self.continuation)
+            gap = distance(self.points[-1], points[0])
+            if gap > 0.1:
+                raise ValueError("逃逸路线的道路连接存在几何缺口")
+            self._append_points(points[1:] if gap <= 1e-6 else points)
+
     def sample(self, progress, offset=0.0):
-        s = progress % self.length
+        s = (progress % self.length if self.continuation is None
+             else clamp(progress, self.ends[0], self.length))
         i = min(bisect.bisect_right(self.ends, s) - 1, len(self.points) - 2)
         a, b = self.points[i:i + 2]
         length = self.ends[i + 1] - self.ends[i]
@@ -77,10 +114,15 @@ class Loop:
                 a[1] + (b[1] - a[1]) * t + dx * offset), math.atan2(dy, dx)
 
     def project_near(self, point, progress):
-        best = (float("inf"), progress)
         # 仅在当前位置前后 25 米查找，避免交叉路口跳到另一段路线。
-        for shift in (-self.length, 0, self.length):
-            s = progress % self.length + shift
+        if self.continuation is None:
+            progress %= self.length
+            shifts = (-self.length, 0, self.length)
+        else:
+            shifts = (0,)
+        best = (float("inf"), progress)
+        for shift in shifts:
+            s = progress + shift
             low = max(0, bisect.bisect_right(self.ends, s - 25) - 1)
             high = min(len(self.points) - 2, bisect.bisect_left(self.ends, s + 25))
             for i in range(low, high + 1):
@@ -91,7 +133,7 @@ class Loop:
                 candidate = (distance(point, q), self.ends[i] + (self.ends[i + 1] - self.ends[i]) * t)
                 if candidate < best:
                     best = candidate
-        return best[1] % self.length
+        return best[1] % self.length if self.continuation is None else best[1]
 
     def curve_limit(self, progress, speed, lateral_acceleration, maximum):
         _, previous = self.sample(progress)
@@ -112,6 +154,7 @@ class Motion:
         self.progress = self.speed = self.acceleration = self.steering = 0.0
         self.behavior = "speeding"
         self.behavior_seconds = 0.0
+        self.intercept_state = None
         self.safe_offset = 0.0
         self.guard = "None"
         self._random = random.Random()
@@ -130,6 +173,7 @@ class Motion:
             raise ValueError("不支持的车辆行为 " + str(behavior))
         self.behavior = behavior
         self.behavior_seconds = 0.0
+        self.intercept_state = None
         if behavior == "mixed":
             self._reset_mixed()
 
@@ -181,13 +225,15 @@ class Motion:
     def candidate(self, dt, speed_cap, offset):
         """计算候选状态；路面验证通过后由调用方提交，失败不会跨越障碍。"""
         s = self.settings
+        braking = self.intercept_state == "braking"
         target, _ = self.intention()
-        target = min(target, speed_cap)
+        target = 0.0 if braking else min(target, speed_cap)
         steering = self.steering_for(dt, speed_cap, offset)
         curvature = abs(math.tan(steering) / s["wheelbase_m"])
         if curvature > 1e-7:
             target = min(target, math.sqrt(s["lateral_acceleration_m_s2"] / curvature))
-        wanted = clamp((target - self.speed) * 1.5, -s["braking_m_s2"], s["acceleration_m_s2"])
+        wanted = -s["braking_m_s2"] if braking else clamp(
+            (target - self.speed) * 1.5, -s["braking_m_s2"], s["acceleration_m_s2"])
         acceleration = self.acceleration + clamp(wanted - self.acceleration, -s["jerk_m_s3"] * dt, s["jerk_m_s3"] * dt)
         speed = max(0.0, self.speed + acceleration * dt)
         if target == 0 and speed < 0.03:
@@ -355,10 +401,11 @@ class Vehicle:
         component.set_editor_property("receives_decals", False)
         low, high = component.get_local_bounds()
         self.half_size = ((high.x - low.x) / 200, (high.y - low.y) / 200, (high.z - low.z) / 200)
+        self.driving_bounds = _driving_bounds(route["tile_bounds"], low, high)
         tags = list(actor.get_editor_property("tags"))
         tags.extend([unreal.Name(actor.get_name()), unreal.Name("CityScriptAbnormalVehicle")])
         actor.set_editor_property("tags", tags)
-        self.z = _context.footprint(self.motion.xy, self.motion.yaw)
+        self.z = self.road_height(self.motion.xy, self.motion.yaw)
         if self.z is None:
             raise ValueError("出生点车身不能完整落在可行驶路面上")
         _context.place(actor, self.motion.xy, self.motion.yaw, self.z + lift)
@@ -373,11 +420,55 @@ class Vehicle:
         self.trail = deque([(self.motion.xy, self.motion.yaw, self.motion.steering)], maxlen=200)
         self.blocked_seconds = self.recovery_remaining = self.centering_remaining = 0.0
 
+    def road_height(self, xy, yaw):
+        if _within_bounds(xy, self.driving_bounds):
+            return _context.footprint(xy, yaw)
+        return None
+
+    def begin_escape(self, seed):
+        model = self.motion
+        original = model.loop
+        start = model.progress
+        ahead, exit_points, continuation = _escape_planner()(
+            self.route, original.ends, start, self.driving_bounds, seed)
+        # 保留车辆到出口之间的原车道折线，再拼上离开街区的接入路段。
+        points = [original.sample(start)[0]]
+        vertices = sorted(((s - start) % original.length, point)
+                          for s, point in zip(original.ends[:-1], original.points))
+        points.extend(point for s, point in vertices if 1e-6 < s < ahead - 1e-6)
+        for point in exit_points:
+            if distance(points[-1], point) > 1e-6:
+                points.append(point)
+
+        route = Loop(points, continuation=continuation)
+        route.extend_if_needed(0.0)
+        model.loop = route
+        model.progress = 0.0
+        model.set_behavior("speeding")
+        self.ignore_normal_traffic = True
+        self.recovery_remaining = self.centering_remaining = self.blocked_seconds = 0.0
+        self.plan_timer = self.offset = 0.0
+
+    def begin_intercept(self):
+        model = self.motion
+        if model.intercept_state is not None:
+            return
+        # 停车后即便遇到障碍也保持原地，避免自动倒车脱困。
+        self.recovery_remaining = self.centering_remaining = self.blocked_seconds = 0.0
+        self.plan_timer = 0.0
+        model.intercept_state = "braking" if model.speed > 0.0 else "stopped"
+        if model.intercept_state == "stopped":
+            model.acceleration = 0.0
+
     def note_progress(self, travel, dt):
         model = self.motion
         self.centering_remaining = max(0.0, self.centering_remaining - travel)
         if distance(self.trail[-1][0], model.xy) >= 0.2:
             self.trail.append((model.xy, model.yaw, model.steering))
+        if model.intercept_state == "braking":
+            if model.speed == 0.0:
+                model.intercept_state = "stopped"
+            return
         if model.guard in ("Road", "StaticObstacle") and travel < 0.002:
             self.blocked_seconds += dt
         else:
@@ -405,7 +496,7 @@ class Vehicle:
         xy = tuple(a + (b - a) * fraction for a, b in zip(model.xy, xy))
         turn = math.atan2(math.sin(yaw - model.yaw), math.cos(yaw - model.yaw))
         yaw = model.yaw + turn * fraction
-        z = _context.footprint(xy, yaw)
+        z = self.road_height(xy, yaw)
         heading = math.atan2(xy[1] - model.xy[1], xy[0] - model.xy[0])
         free = _context.clearance(self.actor, model.xy, yaw, self.z + self.lift, travel + 0.03,
                                   self.half_size, 0.0, heading,
@@ -429,7 +520,7 @@ class Vehicle:
         along = 0.0
         for xy, yaw, end in model.trajectory(length, speed_cap, offset):
             travel = distance(previous, xy)
-            z = _context.footprint(xy, yaw)
+            z = self.road_height(xy, yaw)
             if z is None or abs(z - previous_z) > max(0.15, travel * 0.8):
                 return along, "Road"
             heading = math.atan2(xy[1] - previous[1], xy[0] - previous[0])
@@ -445,6 +536,7 @@ class Vehicle:
 
     def plan(self):
         model, settings = self.motion, self.motion.settings
+        model.loop.extend_if_needed(model.progress)
         speed, desired = model.intention()
         if self.centering_remaining > 0:
             desired = 0.0
@@ -463,7 +555,7 @@ class Vehicle:
             good = True
             for ahead in (max(3, model.speed * 0.25), max(6, model.speed * 0.5)):
                 xy, yaw = model.loop.sample(model.progress + ahead, offset)
-                z = _context.footprint(xy, yaw)
+                z = self.road_height(xy, yaw)
                 center, _ = model.loop.sample(model.progress + ahead)
                 base = _context.ground(center)
                 if z is None or (not self.ignore_normal_traffic and
@@ -486,7 +578,7 @@ class Vehicle:
 
     def step(self, dt):
         model = self.motion
-        if self.error:
+        if self.error or model.intercept_state == "stopped":
             return
         if self.recovery_remaining > 0:
             self.recover(dt)
@@ -499,7 +591,7 @@ class Vehicle:
         margin = model.settings["traffic_clearance_m"]
         candidate = model.candidate(dt, self.speed_cap, self.offset)
         xy, yaw = candidate[:2]
-        z = _context.footprint(xy, yaw)
+        z = self.road_height(xy, yaw)
         travel = math.hypot(xy[0] - model.xy[0], xy[1] - model.xy[1])
         heading = math.atan2(xy[1] - model.xy[1], xy[0] - model.xy[0]) if travel > 1e-7 else model.yaw
         free = _context.clearance(self.actor, model.xy, yaw, self.z + self.lift,
@@ -519,7 +611,7 @@ class Vehicle:
     def snapshot(self):
         m = self.motion
         return {"vehicle_id": self.actor.get_name(), "behavior": m.behavior,
-                "active_behavior": m.active_behavior,
+                "active_behavior": m.active_behavior, "intercept_state": m.intercept_state,
                 "position_m": [m.xy[0], m.xy[1], self.z], "speed_m_s": m.speed,
                 "progress_m": m.progress, "route_length_m": m.loop.length,
                 "guard": m.guard, "error": self.error}
@@ -603,14 +695,18 @@ def _prepare(data, world):
                    for vehicle in _vehicles.values())
     if occupied or any(pending[0]["zone_id"] == route["zone_id"] for pending in _pending.values()):
         raise ValueError(f"{route['zone_name']}已有异常车辆，请先移除原目标")
+    mesh = unreal.load_asset(VEHICLE_ASSET)
+    if mesh is None:
+        raise RuntimeError("当前工程缺少异常车使用的 Toyota Prius 模型")
+    bounds = mesh.get_bounding_box()
+    driving_bounds = _driving_bounds(route["tile_bounds"], bounds.min, bounds.max)
+    if not all(_within_bounds(point, driving_bounds) for point in route["points"]):
+        raise ValueError("生成路线离所属大区边界过近，车辆无法完整留在区内")
     model = Motion(route["points"], settings)
     z = _context.footprint(model.xy, model.yaw)
     if z is None:
         raise ValueError("出生点未找到支持车身的机动车路面；请确认地图地块已加载")
-    mesh = unreal.load_asset(VEHICLE_ASSET)
-    if mesh is None:
-        raise RuntimeError("当前工程缺少异常车使用的 Toyota Prius 模型")
-    lift = max(0.0, -mesh.get_bounding_box().min.z / 100.0) + 0.015
+    lift = max(0.0, -bounds.min.z / 100.0) + 0.015
     used = set(_pending) | set(_vehicles) | _reserved_names
     for actor in unreal.GameplayStatics.get_all_actors_of_class(world, unreal.Actor):
         used.add(actor.get_name())
@@ -638,6 +734,11 @@ def _prepare(data, world):
                             "y_val": 0.0, "z_val": math.sin(model.yaw / 2)}}
     _pending[name] = (route, settings, lift)
     return {"vehicle_id": name, "pose": pose}
+
+
+@lru_cache(maxsize=1)
+def _escape_planner():
+    return run_path(str(Path(__file__).with_name("escape_vehicle.py")))["_plan_escape"]
 
 
 def _execute(data):
@@ -668,14 +769,34 @@ def _execute(data):
     if name not in _vehicles or not valid(_vehicles[name].actor):
         raise ValueError("当前仿真中没有由本接口管理的车辆 " + str(name))
     vehicle = _vehicles[name]
+    if operation in ("behavior", "escape", "intercept") and vehicle.error:
+        raise RuntimeError("车辆运行时已停止：" + vehicle.error)
+    if operation in ("behavior", "escape") and vehicle.motion.intercept_state == "braking":
+        raise ValueError("车辆正在减速停车，请等待截停完成")
     if operation == "behavior":
-        behavior = data["behavior"]
-        if vehicle.error:
-            raise RuntimeError("车辆运行时已停止：" + vehicle.error)
-        vehicle.motion.set_behavior(behavior)
+        vehicle.motion.set_behavior(data["behavior"])
         vehicle.plan_timer = 0.0
         return vehicle.snapshot()
     if operation == "inspect":
+        return vehicle.snapshot()
+    if operation == "observe":
+        location = vehicle.actor.get_actor_location()
+        origin = unreal.GameplayStatics.get_world_origin_location(world)
+        heading = math.radians(vehicle.actor.get_actor_rotation().yaw)
+        speed = vehicle.motion.speed
+        return {"position_m": [(location.x + origin.x) / 100.0,
+                               (location.y + origin.y) / 100.0,
+                               (location.z + origin.z) / 100.0],
+                "velocity_m_s": [speed * math.cos(heading), speed * math.sin(heading)],
+                "heading_rad": heading, "simulation_time_s": unreal.GameplayStatics.get_time_seconds(world),
+                "error": vehicle.error}
+    if operation == "intercept":
+        vehicle.begin_intercept()
+        return vehicle.snapshot()
+    if operation == "escape":
+        if vehicle.ignore_normal_traffic:
+            raise ValueError("该车辆已启动逃逸")
+        vehicle.begin_escape(data.get("seed"))
         return vehicle.snapshot()
     raise ValueError("未知异常车辆操作 " + str(operation))
 

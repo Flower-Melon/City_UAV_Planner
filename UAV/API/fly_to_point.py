@@ -41,10 +41,10 @@ def fly_to_point(drone_id, target_position, max_height, flight_speed=25.0) -> No
         flight = None
         try:
             frame = WorldFrame(client)
-            world, local, origin = frame.vehicle(name)
+            world, _, origin = frame.vehicle(name)
             route = plan_flight_path(world, target, cap, speed)
             flight = FlightControl(client, frame, name, origin)
-            flight.prepare(world, local)
+            flight.prepare()
             actual = _world_position(client, name, origin, frame.scale)
             if math.dist(actual, route[0][:3]) > 0.1:
                 route = plan_flight_path(actual, target, cap, speed)
