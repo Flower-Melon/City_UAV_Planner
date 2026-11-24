@@ -820,14 +820,6 @@ class MissionExecutor {
       targets: monitoredTargets(mission.tasks),
       errors: mission.tasks.filter(task => task.monitor.traffic.error)
         .map(task => ({task_id: task.task_id, error: task.monitor.traffic.error}))};
-    if (this.pursuit) {
-      mission.traffic.alerts = [];
-      mission.traffic.errors = [];
-      mission.traffic.targets = this.pursuit.target ? [{
-        target_id: this.pursuit.vehicle_id, zone_id: this.pursuit.zone_id, status: this.pursuit.status,
-        ...this.pursuit.target, trail: this.pursuit.trail_m || [], events: [], confirmed_evidence: []
-      }] : [];
-    }
     const summaries = mission.tasks.map(task => task.vision);
     mission.vision = Object.fromEntries(['total', 'analyzed', 'filtered', 'llm_analyzed', 'normal', 'abnormal',
       'patient', 'armed_person', 'uncertain', 'failed']

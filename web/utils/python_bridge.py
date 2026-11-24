@@ -294,6 +294,8 @@ class PythonBridge:
             flight = request.get("flight")
             if not isinstance(flight, dict):
                 raise ValueError("搜索需要飞行参数")
+            # 已启动的旧版网页服务仍可能发送固定间距，巡查统一按相机覆盖计算。
+            flight = {key: value for key, value in flight.items() if key != "capture_interval_m"}
             capture_directory = None
             drone_id = None
 

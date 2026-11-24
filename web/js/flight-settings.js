@@ -3,7 +3,7 @@
 (() => {
   const speed = defaultValue => ({
     label: '飞行速度上限', unit: '米/秒', defaultValue,
-    description: '起降、转弯和现场对位按航段限速。'
+    description: '导航按设定速度飞行，低空巡查会按相机覆盖范围和取图耗时调速。'
   });
   const navigation = {
     max_height: {
@@ -14,8 +14,7 @@
   };
   const tasks = {
     search: {...navigation,
-      flight_height: {label: '低空巡查高度', unit: '米', defaultValue: 15},
-      capture_interval_m: {label: '拍照间距', unit: '米', defaultValue: 15}
+      flight_height: {label: '低空巡查高度', unit: '米', defaultValue: 15}
     },
     monitor: {
       flight_height: {label: '监控高度下限', unit: '米', defaultValue: 200},

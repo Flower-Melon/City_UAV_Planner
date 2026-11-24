@@ -255,6 +255,7 @@ def respond_armed_person(drone_id, person_id, max_height, flight_speed=25.0, *, 
                 _wait(response, flight, hover, person_id)
                 # 现场处置已完成，返航异常时保留人物的已处置状态。
                 taken = False
+                response.command("kit strobe off")
                 response.command("kit spot off")
                 _phase("returning")
                 try:

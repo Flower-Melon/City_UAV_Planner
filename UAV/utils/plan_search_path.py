@@ -230,6 +230,7 @@ def plan_search_path(
 
     current_position为实际世界XYZ；search_height为巡查世界Z。
     首次接入使用三维飞行图，后续道路覆盖保留完整原始边及真实节点。
+    导航、转场和巡查航点均使用任务设定的飞行速度。
     """
     start = _xyz(current_position, "当前位置")
     altitude = float(search_height)
@@ -286,11 +287,10 @@ def plan_search_path(
         else:
             phases.append((list(points), patrol))
     check_building_clearance([points for points, _ in phases], altitude)
-    result = [(navigation, False)]
-    for points, patrol in phases:
-        route = flight_route([(*p, altitude) for p in points], speed)
-        result.append((route, patrol))
-    return result
+    return [(navigation, False)] + [
+        (flight_route(((*point, altitude) for point in points), speed), patrol)
+        for points, patrol in phases
+    ]
 
 
 def check_building_clearance(paths, altitude_world_m, margin_m=3):

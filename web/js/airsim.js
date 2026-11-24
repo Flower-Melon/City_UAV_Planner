@@ -187,7 +187,12 @@
     const title = document.createElement('strong'); title.textContent = name;
     const badge = document.createElement('span'); badge.className = 'drone-state';
     const locate = document.createElement('button'); locate.type = 'button'; locate.textContent = '定位';
-    locate.setAttribute('aria-label', `定位 ${name}`); locate.onclick = () => window.liveMap?.centerDrone(name);
+    locate.setAttribute('aria-label', `定位 ${name}`);
+    locate.onclick = () => {
+      if (dialog.open) dialog.close();
+      window.dispatchEvent(new Event('workspace:show-map'));
+      window.liveMap?.centerDrone(name);
+    };
     heading.append(title, badge, locate);
     const view = document.createElement('div'); view.className = 'camera-view';
     const canvas = document.createElement('canvas'); canvas.hidden = true;
@@ -279,15 +284,24 @@
 
   function render() {
     const active = new Set(records.filter(drone => drone.airborne === true).map(drone => drone.name));
-    const pursuit = window.pursuitView?.current;
-    const pursuitCameras = new Set(!dialog.open && pursuit?.status === 'tracking'
-      ? pursuit.drone_states.filter(drone => drone.phase !== 'waiting').map(drone => drone.name) : []);
     $('fleet-total').textContent = connected ? records.length : '—';
     $('fleet-active').textContent = connected ? active.size : '—';
     $('fleet-idle').textContent = connected ? records.filter(drone => drone.available === true && !active.has(drone.name)).length : '—';
+    const connection = $('workspace-connection');
+    const state = connected ? 'online' : 'offline';
+    if (connection.dataset.state !== state) {
+      connection.dataset.state = state;
+      connection.textContent = connected ? '仿真已连接' : '仿真未连接';
+    }
+    for (const [id, value] of [['workspace-airborne', active.size], ['workspace-fleet-total', records.length]]) {
+      const output = $(id);
+      const text = connected ? String(value) : '—';
+      if (output.textContent !== text) output.textContent = text;
+    }
     $('fleet-tab-count').textContent = active.size; $('fleet-tab-count').hidden = !connected || !active.size;
     const shown = connected ? records.filter(drone => filter.value === 'all' || active.has(drone.name)) : [];
     if (focused && !shown.some(drone => drone.name === focused)) focused = null;
+    panel.dataset.focused = String(!!focused);
     $('camera-back').hidden = !focused;
     $('fleet-visible-count').textContent = focused ? 1 : shown.length;
     container.dataset.count = String(focused ? 1 : shown.length);
@@ -315,8 +329,7 @@
         const speed = Number.isFinite(drone.speed_m_s) ? ` · ${drone.speed_m_s.toFixed(1)} m/s` : '';
         card.position.textContent = `X ${x.toFixed(1)} · Y ${y.toFixed(1)} · Z ${z.toFixed(1)} m${speed}`;
       } else card.position.textContent = '正在校准位置…';
-      if (included && visible() && pursuitCameras.has(drone.name)) stopStream(card, '在上方切换追踪视角');
-      else if (included && visible()) ensureStream(card, drone.name);
+      if (included && visible()) ensureStream(card, drone.name);
       else stopStream(card, '等待实时画面');
     }
   }

@@ -320,7 +320,7 @@
         } else {
           selected = job.result.target_id; clearFrame();
           message(job.result.warning || (route === 'escape' ? '车辆已启动逃逸。'
-            : route === 'pursue' ? '正在调度追踪，请到「机队」查看实时画面。'
+            : route === 'pursue' ? '正在调度追踪，可在「机队」查看追踪镜头。'
             : route === 'spawn'
             ? `已在${job.result.zone_name}添加${names[data.kind]}。` : '车辆行为已更新。'), !!job.result.warning);
         }
@@ -408,6 +408,7 @@
   }
   $('abnormal-zone-pick').onclick = () => {
     if (busy || !window.liveMap?.isReady()) return;
+    window.dispatchEvent(new Event('workspace:show-map'));
     picking = 'zone'; controls(); message('请在地图上点击要布置场景的街区，按 Esc 取消。');
     window.liveMap.setPickHandler(position => {
       const zone = window.liveMap.spawnZoneAt(position);

@@ -1,4 +1,4 @@
-"""无人机三维导航、速度规划及道路巡查共用的路网读取。"""
+"""无人机三维导航及道路巡查共用的路网读取。"""
 
 from __future__ import annotations
 
@@ -16,8 +16,6 @@ from shapely.strtree import STRtree
 
 __all__ = ["plan_flight_path", "flight_route", "NoPathError"]
 MAP_DIR = Path(__file__).resolve().parents[2] / "Map"
-_GAP_SPEED = 3.0
-_VERTICAL_SPEED = 2.0
 
 
 class NoPathError(ValueError):
@@ -259,7 +257,7 @@ class _FlightGraph:
             xy = a if t == 0 else b if t == 1 else tuple(x + (y - x) * t for x, y in zip(a, b))
             yield (*xy, self.ground(k, s) + height)
 
-    def route(self, start, target, layers, speed, altitude_cap):
+    def route(self, start, target, layers, altitude_cap):
         starts, goals = self.projections(start[:2], layers), self.projections(target[:2], layers)
         if not starts or not goals:
             raise NoPathError("给定高度内没有可接入的飞行路段")
@@ -274,7 +272,7 @@ class _FlightGraph:
                 self.rules["vertical_margin_m"],
             ):
                 raise NoPathError("当前位置与建筑净空冲突")
-            return [(*start, min(speed, 1.0))]
+            return [start]
         # 每条边上的接入投影作为临时节点，避免借空间相交跨接不同路段。
         extra, positions, attached = (
             defaultdict(list),
@@ -297,9 +295,8 @@ class _FlightGraph:
                 extra[a].append((b, k, begin, end))
                 extra[b].append((a, k, end, begin))
         gap_radius = self.rules["gap_margin_m"] + self.rules["drone_radius_m"]
-        cruise_radius = self.rules["cruise_margin_m"] + self.rules["drone_radius_m"]
         vertical = self.rules["vertical_margin_m"]
-        connectors, connector_speeds, vertical_checks = {}, {}, {}
+        connectors, vertical_checks = {}, {}
 
         def connector(side, n, li):
             key = (side, n, li)
@@ -313,12 +310,7 @@ class _FlightGraph:
                 points = [actual, (*actual[:2], ground + height), (*q[:2], q[2] + height)]
                 if side:
                     points.reverse()
-                if _clear_path(points, cruise_radius, vertical):
-                    connectors[key], connector_speeds[key] = points, min(speed, 5.0)
-                elif _clear_path(points, gap_radius, vertical):
-                    connectors[key], connector_speeds[key] = points, min(speed, _GAP_SPEED)
-                else:
-                    connectors[key] = None
+                connectors[key] = points if _clear_path(points, gap_radius, vertical) else None
             return connectors[key]
 
         def cost(points):
@@ -386,38 +378,16 @@ class _FlightGraph:
             parent, arc = previous[state]
             steps.append((parent, state, arc))
             state = parent
-        raw, caps = [], []
-
-        def add(point, cap):
-            point = tuple(point)
-            if raw and point == raw[-1]:
-                return
-            raw.append(point)
-            caps.append(min(speed, cap))
-
-        def append_connector(side, state):
-            points = connector(side, *state)
-            horizontal_speed = connector_speeds[(side, *state)]
-            for i, p in enumerate(points):
-                cap = (
-                    _VERTICAL_SPEED
-                    if i and math.dist(points[i - 1][:2], p[:2]) < 1e-8
-                    else horizontal_speed
-                )
-                add(p, cap)
-
-        append_connector(0, state)
-        for (n, li), (m, lj), arc in reversed(steps):
+        path = list(connector(0, *state))
+        for (_, li), (m, lj), arc in reversed(steps):
             if arc is None:
                 p = positions[m]
-                add((*p[:2], p[2] + layers[lj]), _VERTICAL_SPEED)
+                path.append((*p[:2], p[2] + layers[lj]))
             else:
                 k, begin, end = arc
-                cap = _GAP_SPEED if self.edges[k].width <= 2 * cruise_radius else speed
-                for point in self.points(k, begin, end, layers[li]):
-                    add(point, cap)
-        append_connector(1, goal)
-        return flight_route(raw, speed, limits=caps)
+                path.extend(self.points(k, begin, end, layers[li]))
+        path.extend(connector(1, *goal))
+        return path
 
 
 @lru_cache(maxsize=1)
@@ -426,66 +396,16 @@ def _flight_graph():
         return _FlightGraph(json.load(source))
 
 
-def flight_route(path, flight_speed, *, limits=None, stop_points=()):
-    """为指定XYZ折线标注到达速度；保留拐点、升降点及精确终点。"""
+def flight_route(path, flight_speed):
+    """为折线的各个航点标注同一任务速度，合并连续重合点。"""
     speed = _positive(flight_speed, "飞行速度")
-    original = [_xyz(p, "路径点") for p in path]
-    if not original:
+    route = []
+    for point in path:
+        waypoint = (*_xyz(point, "路径点"), speed)
+        if not route or waypoint != route[-1]:
+            route.append(waypoint)
+    if not route:
         raise ValueError("路径不能为空")
-    caps = [speed] * len(original) if limits is None else [_positive(v, "路段限速") for v in limits]
-    if len(caps) != len(original):
-        raise ValueError("路段限速数量与路径不一致")
-    points, incoming = [original[0]], [min(speed, caps[0])]
-    for a, b, cap in zip(original, original[1:], caps[1:]):
-        length = math.dist(a, b)
-        if length < 1e-9:
-            continue
-        vertical = math.dist(a[:2], b[:2]) < 1e-8
-        count = 1 if vertical else max(1, math.ceil(length / 5.0))
-        for i in range(1, count + 1):
-            points.append(b if i == count else tuple(x + (y - x) * i / count for x, y in zip(a, b)))
-            incoming.append(min(speed, cap, _VERTICAL_SPEED if vertical else speed))
-    if len(points) == 1:
-        return [(*points[0], min(speed, 1.0))]
-    stops = set(stop_points)
-    limits_at = [
-        min(incoming[i], incoming[i + 1] if i + 1 < len(points) else speed)
-        for i in range(len(points))
-    ]
-    offsets = [0.0]
-    for a, b in zip(points, points[1:]):
-        offsets.append(offsets[-1] + math.dist(a, b))
-    for i in range(1, len(points) - 1):
-        a, b, c = points[i - 1 : i + 2]
-        u, v = tuple(y - x for x, y in zip(a, b)), tuple(y - x for x, y in zip(b, c))
-        left, right = math.hypot(*u), math.hypot(*v)
-        angle = math.acos(max(-1.0, min(1.0, sum(x * y for x, y in zip(u, v)) / (left * right))))
-        if angle > math.radians(15):
-            cap = min(speed, 3.0 if angle > math.pi / 4 else 5.0)
-            low, high = bisect_right(offsets, offsets[i] - 20), bisect_right(
-                offsets, offsets[i] + 10
-            )
-            for j in range(max(0, low - 1), high):
-                limits_at[j] = min(limits_at[j], cap)
-    for i, p in enumerate(points):
-        if p[:2] in stops:
-            limits_at[i] = min(limits_at[i], 1.0)
-    limits_at[0] = min(limits_at[0], 2.0)
-    limits_at[-1] = min(limits_at[-1], 1.0)
-    for i in range(len(points) - 2, -1, -1):
-        limits_at[i] = min(
-            limits_at[i], math.sqrt(limits_at[i + 1] ** 2 + 6 * (offsets[i + 1] - offsets[i]))
-        )
-    for i in range(1, len(points)):
-        limits_at[i] = min(
-            limits_at[i], math.sqrt(limits_at[i - 1] ** 2 + 6 * (offsets[i] - offsets[i - 1]))
-        )
-    bands = sorted({min(speed, v) for v in (1, 2, 3, 5, 8, 12, 18, 25)} | {speed})
-    route = [(*points[0], min(speed, 2.0))]
-    for i in range(1, len(points)):
-        cap = min(limits_at[i - 1], limits_at[i], incoming[i])
-        velocity = max((v for v in bands if v <= cap), default=cap)
-        route.append((*points[i], velocity))
     return route
 
 
@@ -494,6 +414,7 @@ def plan_flight_path(current_position, target_position, max_height, flight_speed
 
     起终点均为UE世界XYZ米制坐标。高度上限相对沿途地面；按图中可用层
     规划道路、楼间通道和跨楼路线。路径包含起终点及必要升降点。
+    各航点使用调用方提供的飞行速度。
     起终点接入和换层用建筑轮廓检查；树、杆及动态障碍不在静态图内。
     不可达时抛出NoPathError，输入无效时抛出ValueError。
     """
@@ -503,7 +424,7 @@ def plan_flight_path(current_position, target_position, max_height, flight_speed
     layers = tuple(h for h in graph.layers if h <= cap)
     if not layers:
         raise ValueError(f"最大离地高度不得低于{graph.layers[0]:g}米")
-    return graph.route(start, target, layers, speed, cap)
+    return flight_route(graph.route(start, target, layers, cap), speed)
 
 
 if __name__ == "__main__":

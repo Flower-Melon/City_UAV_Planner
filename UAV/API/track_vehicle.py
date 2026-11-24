@@ -28,7 +28,7 @@ from ..utils.plan_flight_path import _buildings, _clear_path, _flight_graph, _po
 from ..utils.select_UAV import _reserve_pursuit_UAVs
 
 
-FOLLOW_SECONDS = 8.0
+FOLLOW_SECONDS = 40.0
 FORMATION_DISTANCE_M = 24.0
 FORMATION_GRACE_S = 1.5
 VISUAL_MAX_AGE_S = 4.0

@@ -63,13 +63,20 @@
     if (current && current.pursuit_id === value.pursuit_id &&
         ((value.target?.last_seen_s ?? -1) < (current.target?.last_seen_s ?? -1) ||
          current.outcome === 'intercepted' && value.outcome !== 'intercepted')) return;
-    if (current?.pursuit_id !== value.pursuit_id) {
+    const previousId = current?.pursuit_id;
+    const previousTitle = heading.textContent;
+    if (previousId !== value.pursuit_id) {
       selectedRole = 'lead';
       frames.clear();
       drawnFrame = null;
     }
     current = value;
     renderPursuit();
+    if (previousId !== value.pursuit_id || previousTitle !== heading.textContent) {
+      window.dispatchEvent(new CustomEvent('workspace:pursuit', {
+        detail: {pursuit: value, title: heading.textContent}
+      }));
+    }
     window.liveMap?.setPursuit(active(value) ? value : null);
     if (active(value) && !polling && !pollTimer) pollTimer = setTimeout(poll, 220);
     if (!frameTimer && !framePending) frameTimer = setTimeout(pollFrame, 0);
@@ -124,6 +131,7 @@
   }
 
   function clear() {
+    const wasVisible = !!current;
     current = drawnFrame = null;
     frames.clear();
     clearTimeout(pollTimer);
@@ -131,6 +139,7 @@
     pollTimer = frameTimer = 0;
     renderPursuit();
     window.liveMap?.setPursuit(null);
+    if (wasVisible) window.dispatchEvent(new CustomEvent('workspace:pursuit', {detail: null}));
   }
   for (const button of viewButtons) button.onclick = () => {
     selectedRole = button.dataset.pursuitView;
@@ -187,10 +196,13 @@
 
   function createCard(id) {
     const card = document.createElement('article'); card.className = 'traffic-target-card';
-    card.innerHTML = '<div class="traffic-card-top"><span class="traffic-card-eyebrow">车辆事件</span>' +
-      '<span class="traffic-card-state"></span></div><div class="traffic-card-identity"><div>' +
-      '<strong class="traffic-card-plate"></strong><p class="traffic-card-zone"></p></div>' +
-      '<div class="traffic-violation-tags"></div></div>';
+    card.innerHTML = '<div class="traffic-card-identity"><div><h4 class="traffic-card-plate"></h4>' +
+      '<p class="traffic-card-zone"></p></div><span class="traffic-card-state"></span></div>' +
+      '<div class="traffic-violation-tags"></div>';
+    const evidence = document.createElement('details'); evidence.className = 'traffic-evidence';
+    evidence.open = !cards.size;
+    const summary = document.createElement('summary');
+    summary.innerHTML = '<span>空地取证</span><span class="traffic-evidence-count"></span>';
     const sources = document.createElement('div'); sources.className = 'traffic-sources';
     const uav = sourcePanel('uav', '无人机抓拍', '目标抓拍');
     const probe = sourcePanel('probe', '路口监测', '位置关联示意');
@@ -202,21 +214,28 @@
     }
     const footer = document.createElement('div'); footer.className = 'traffic-card-actions';
     const locate = document.createElement('button'); locate.type = 'button'; locate.textContent = '地图定位';
-    locate.onclick = () => window.liveMap?.centerTraffic(id);
-    const expand = document.createElement('button'); expand.type = 'button'; expand.textContent = '展开取证';
+    locate.onclick = () => {
+      window.dispatchEvent(new Event('workspace:show-map'));
+      window.liveMap?.centerTraffic(id);
+    };
+    const expand = document.createElement('button'); expand.type = 'button'; expand.textContent = '放大取证';
     const escape = document.createElement('button'); escape.type = 'button'; escape.textContent = '启动逃逸';
     escape.dataset.escapeTarget = id;
     escape.onclick = () => void window.vehiclePursuit?.escape(id);
     const follow = document.createElement('button'); follow.type = 'button'; follow.textContent = '开始追踪';
     follow.dataset.pursuitTarget = id;
     follow.onclick = () => void window.vehiclePursuit?.start(id);
-    footer.append(locate, expand, escape, follow); card.append(sources, chain, footer);
-    const view = {card, uav, probe, locate, escape, follow, chain, state: card.querySelector('.traffic-card-state'),
+    evidence.append(summary, sources, chain);
+    footer.append(locate, expand, escape, follow); card.append(evidence, footer);
+    const view = {card, uav, probe, locate, expand, escape, follow, chain,
+      coverage: summary.querySelector('.traffic-evidence-count'), state: card.querySelector('.traffic-card-state'),
       plate: card.querySelector('.traffic-card-plate'), zone: card.querySelector('.traffic-card-zone'),
       tags: card.querySelector('.traffic-violation-tags')};
     expand.onclick = () => {
       const copy = card.cloneNode(true); copy.classList.add('traffic-evidence-expanded');
       copy.querySelector('.traffic-card-actions').remove();
+      const detail = copy.querySelector('.traffic-evidence');
+      detail.replaceWith(copy.querySelector('.traffic-sources'), copy.querySelector('.traffic-chain'));
       copy.querySelector('.traffic-uav-visual').onclick = uav.content.onclick;
       $('llm-image-dialog').querySelector('h2').textContent = '空地联合取证';
       $('llm-image-detail').replaceChildren(copy); $('llm-image-dialog').showModal();
@@ -294,37 +313,17 @@
   function renderTraffic(execution) {
     const traffic = execution.traffic;
     const container = $('llm-traffic-targets');
-    if (traffic.pursuit) {
-      window.pursuitView?.update(traffic.pursuit);
-      container.hidden = true;
-      window.liveMap?.setTraffic([]); return;
-    }
-    container.hidden = false;
     const records = (traffic.targets || []).filter(r => r.events.length || r.status === 'confirmed');
     window.liveMap?.setTraffic(records);
-    container.classList.toggle('traffic-empty', !records.length);
-    if (!records.length) {
-      if (container.dataset.empty !== 'true') {
-        container.innerHTML = '<strong>暂无异常车辆记录</strong><span></span>' +
-          '<div class="traffic-watch-sources"><span>无人机巡查</span><span>路口监测</span></div>';
-      }
-      const waiting = !traffic.active && execution.tasks.some(task => ['queued', 'flying'].includes(task.monitor.status));
-      const starting = execution.tasks.some(task => task.monitor.traffic.status === 'starting');
-      container.querySelector(':scope > strong').textContent = waiting ? '等待监控无人机就位'
-        : starting ? '正在启动监测' : '暂无异常车辆记录';
-      container.querySelector(':scope > span').textContent = waiting ? '就位后启动车辆监测'
-        : traffic.active ? '正在关注区域道路动态' : '等待监控任务';
-      container.dataset.empty = 'true'; cards.clear(); return;
-    }
-    if (!cards.size) container.replaceChildren();
-    container.dataset.empty = 'false';
     for (const record of records) {
       let view = cards.get(record.target_id);
       if (!view) { view = createCard(record.target_id); cards.set(record.target_id, view); container.append(view.card); }
       const confirmed = record.status === 'confirmed';
       const events = confirmed ? record.confirmed_evidence : record.events;
       const uav = events.find(e => e.source === 'uav'), probe = events.find(e => e.source === 'probe');
+      view.coverage.textContent = `${Number(!!uav) + Number(!!probe)} / 2 个来源`;
       view.card.dataset.status = record.status;
+      view.card.dataset.followed = String(traffic.pursuit?.vehicle_id === record.target_id);
       view.state.textContent = confirmed ? '已确认违规' : '正在核查';
       view.plate.textContent = confirmed ? record.plate || '违规车辆' : '待核查车辆';
       view.zone.textContent = window.liveMap?.getZone(record.zone_id)?.properties.name || '区域道路';
@@ -346,12 +345,18 @@
       });
     }
     for (const [id, view] of cards) if (!records.some(r => r.target_id === id)) { view.card.remove(); cards.delete(id); }
+    if (traffic.pursuit) window.pursuitView?.update(traffic.pursuit);
   }
 
-  window.trafficView = {render: renderTraffic, clear() {
-    cards.clear(); $('llm-traffic-targets').replaceChildren(); delete $('llm-traffic-targets').dataset.empty;
+  window.trafficView = {render: renderTraffic, has: id => cards.has(id), focus(id) {
+    const view = cards.get(id);
+    if (!view) return false;
+    view.card.scrollIntoView({block: 'nearest'});
+    view.expand.focus({preventScroll: true});
+    return true;
+  }, clear() {
+    cards.clear(); $('llm-traffic-targets').replaceChildren();
     window.liveMap?.setTraffic([]);
-    window.pursuitView?.clear(); $('llm-traffic-targets').hidden = false;
   }};
   $('llm-image-dialog').addEventListener('close', () => {
     $('llm-image-dialog').querySelector('h2').textContent = '异常照片';

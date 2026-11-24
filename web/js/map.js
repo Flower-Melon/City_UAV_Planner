@@ -73,12 +73,12 @@ class CityMapVisuals {
         for (const part of this.zones) {
           if (!visible(part) || (layers.category && part.feature.properties.category !== layers.category)) continue;
           const color = this.colors.get(part.feature.properties.category) || '#a0adb6';
-          c.fillStyle = color + '42'; c.strokeStyle = color;
+          c.fillStyle = color + '26'; c.strokeStyle = color + '94';
           c.fill(part.path, 'evenodd'); c.stroke(part.path);
         }
       }
       if (layers.roads) {
-        c.strokeStyle = '#dfe8fb'; c.lineWidth = .8 / scale;
+        c.strokeStyle = '#b4c8d4a8'; c.lineWidth = .8 / scale;
         for (const record of this.roads) if (visible(record)) c.stroke(record.path);
       }
       if (layers.buildings) {
@@ -115,14 +115,16 @@ let zoneParts = [], pointRecords = [], colors = new Map(), categoryNames = new M
 let ready = false, buildingRequest;
 let liveDrones = [];
 let droneSession = null;
+let locatedDrone = null;
 let abnormalTargets = [], abnormalSelected = null, pickHandler = null, pendingPoint = null;
 let abnormalRecords, abnormalSession;
-let trafficTargets = [];
+let trafficTargets = [], missionZones = [];
 let pursuitSnapshot = null, pursuitFollowing = true, pursuitLocated = false, pursuitVehicle = null;
 const markerCanvas = document.createElement('canvas'); markerCanvas.className = 'map-markers';
 markerCanvas.setAttribute('aria-hidden', 'true'); canvas.after(markerCanvas);
 const markerContext = markerCanvas.getContext('2d');
 const droneDelay = 240, targetDelay = 340;
+const droneTrailMs = 10_000, droneTrailFadeMs = 680, droneLocateMs = 2200;
 const abnormalColors = {vehicle: '#df542f', armed_person: '#914ac5', patient: '#138b80'};
 const worldSize = 4000;
 const visuals = new CityMapVisuals();
@@ -199,8 +201,12 @@ async function ensureBuildings() {
 
 function resize() {
   const box = canvas.getBoundingClientRect();
+  const ratio = Math.min(2, devicePixelRatio || 1);
+  if (box.width === state.width && box.height === state.height && ratio === state.ratio) return;
+  state.ox += (box.width - state.width) / 2;
+  state.oy += (box.height - state.height) / 2;
   state.width = box.width; state.height = box.height;
-  state.ratio = Math.min(2, devicePixelRatio || 1);
+  state.ratio = ratio;
   canvas.width = Math.round(box.width * state.ratio); canvas.height = Math.round(box.height * state.ratio);
   markerCanvas.width = canvas.width; markerCanvas.height = canvas.height;
 }
@@ -222,7 +228,7 @@ function visiblePoint(point) {
   const mode = $('point-mode').value;
   return mode === 'all' || (mode === 'verified' && point.properties.execution_enabled === true);
 }
-function addMarkerSample(record, previous, angle, at, delay) {
+function addMarkerSample(record, previous, angle, at, delay, historyMs) {
   const sample = {at, position: record.position_m, angle};
   const last = previous?.samples.at(-1);
   const distance = last ? Math.hypot(last.position[0] - sample.position[0],
@@ -230,12 +236,14 @@ function addMarkerSample(record, previous, angle, at, delay) {
   if (!last || at - last.at > 1000 || distance > 60) {
     return {...record, samples: [sample], movingUntil: 0};
   }
-  // 保留少量实测点，让动画跨过下一次轮询和短暂延迟。
+  // 保留一个窗口起点之前的实测点，便于在拖尾起点插值。
+  const first = historyMs === undefined ? -7
+    : Math.max(0, previous.samples.findLastIndex(point => point.at <= at - historyMs));
   const moved = distance > 0 || last.angle !== angle;
-  return {...record, samples: [...previous.samples.slice(-7), sample],
+  return {...record, samples: [...previous.samples.slice(first), sample],
     movingUntil: moved ? at + delay : previous.movingUntil};
 }
-function sampledMarkers(records, previous, id, heading, delay) {
+function sampledMarkers(records, previous, id, heading, delay, historyMs) {
   const now = performance.now();
   const byId = new Map(previous.map(record => [record[id], record]));
   return records.filter(record => Array.isArray(record.position_m) &&
@@ -245,7 +253,7 @@ function sampledMarkers(records, previous, id, heading, delay) {
       if (record.updated_at !== undefined && record.updated_at === last?.updated_at) {
         return {...last, ...record};
       }
-      return addMarkerSample(record, last, record[heading], now, delay);
+      return addMarkerSample(record, last, record[heading], now, delay, historyMs);
     });
 }
 function markerAt(record, now, delay) {
@@ -264,20 +272,24 @@ function drawBase() {
   const {ratio, scale, ox, oy, width, height} = state;
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.setTransform(ratio * scale, 0, 0, ratio * scale, ratio * ox, ratio * oy);
-  if ($('layer-base').checked && background?.complete && background.naturalWidth) ctx.drawImage(background, -1000, -3000, worldSize, worldSize);
+  if ($('layer-base').checked && background?.complete && background.naturalWidth) {
+    ctx.filter = 'brightness(.63) saturate(.55)';
+    ctx.drawImage(background, -1000, -3000, worldSize, worldSize);
+    ctx.filter = 'none';
+  }
   if (!ready) return;
   visuals.draw(ctx, state, {
     zones: $('layer-zones').checked, category: $('category').value,
     buildings: $('layer-buildings').checked, roads: $('layer-roads').checked
   });
   if ($('layer-zones').checked) {
-    ctx.font = `600 ${16 / scale}px system-ui, "Microsoft YaHei", sans-serif`;
+    ctx.font = `600 ${14 / scale}px system-ui, "Microsoft YaHei", sans-serif`;
     ctx.textAlign = 'center'; ctx.lineWidth = 4 / scale; ctx.lineJoin = 'round';
     for (const f of zones.features) {
       if (f.properties.object_type !== 'facility' || ($('category').value && f.properties.category !== $('category').value)) continue;
       const q = f.properties.label_xy_m;
       if (!q || q[0] * scale + ox < -80 || q[0] * scale + ox > width + 80 || q[1] * scale + oy < -20 || q[1] * scale + oy > height + 20) continue;
-      ctx.strokeStyle = '#142638'; ctx.fillStyle = '#fff';
+      ctx.strokeStyle = '#142530'; ctx.fillStyle = '#e8f0f1';
       ctx.strokeText(f.properties.name, q[0], q[1]); ctx.fillText(f.properties.name, q[0], q[1]);
     }
   }
@@ -292,18 +304,58 @@ function drawBase() {
     ctx.strokeStyle = point.properties.execution_enabled ? '#253c56' : '#dbe4ec'; ctx.fill(); ctx.stroke();
   }
   drawProbes();
+  ctx.lineWidth = 2 / scale;
+  for (const id of missionZones) {
+    for (const part of groups.get(id) || []) {
+      ctx.fillStyle = '#6de1bc20'; ctx.strokeStyle = '#6de1bca6';
+      ctx.fill(part.path, 'evenodd'); ctx.stroke(part.path);
+    }
+  }
   if (state.selected && (state.selected.properties.object_type !== 'traffic_probe' || $('layer-probes').checked)) {
-    ctx.strokeStyle = '#ff3d7b'; ctx.lineWidth = 3 / scale;
+    ctx.strokeStyle = '#83f7d2'; ctx.lineWidth = 3 / scale;
     if (state.selected.geometry.type === 'Point') {
       const [x, y] = state.selected.geometry.coordinates;
       ctx.beginPath(); ctx.arc(x, y, 8 / scale, 0, Math.PI * 2); ctx.stroke();
     } else for (const part of groups.get(state.selected.id) || []) ctx.stroke(part.path);
   }
 }
+function droneTrailActive(drone, now) {
+  return drone.airborne === true && drone.movingUntil > 0 && now < drone.movingUntil + droneTrailFadeMs;
+}
+function drawDroneTrail(context, drone, now, head) {
+  const end = now - droneDelay, start = end - droneTrailMs;
+  const fade = Math.min(1, (drone.movingUntil + droneTrailFadeMs - now) / droneTrailFadeMs);
+  let {position: [x, y]} = markerAt(drone, now - droneTrailMs, droneDelay);
+  let previousAt = start;
+  context.save();
+  context.strokeStyle = drone.color; context.lineWidth = 3 / state.scale; context.lineCap = 'round';
+  function strokeTo([px, py], at) {
+    if (px !== x || py !== y) {
+      const progress = ((previousAt + at) / 2 - start) / droneTrailMs;
+      context.globalAlpha = fade * (.13 + .69 * progress ** 1.4);
+      context.beginPath(); context.moveTo(x, y); context.lineTo(px, py); context.stroke();
+      x = px; y = py;
+    }
+    previousAt = at;
+  }
+  for (const sample of drone.samples) {
+    if (sample.at >= end) break;
+    if (sample.at > start) strokeTo(sample.position, sample.at);
+  }
+  strokeTo(head, end);
+  context.restore();
+}
 function drawDrones(context, now) {
   const {scale} = state;
-  liveDrones.forEach((drone, index) => {
-    const {position: [x, y], angle} = markerAt(drone, now, droneDelay);
+  const visible = liveDrones.filter(drone => drone.airborne === true ||
+    (drone.name === locatedDrone?.name && now < locatedDrone.until));
+  const poses = visible.map(drone => drone.airborne === true
+    ? markerAt(drone, now, droneDelay) : {position: drone.position_m});
+  visible.forEach((drone, index) => {
+    if (droneTrailActive(drone, now)) drawDroneTrail(context, drone, now, poses[index].position);
+  });
+  visible.forEach((drone, index) => {
+    const {position: [x, y], angle} = poses[index];
     context.save(); context.translate(x, y); context.scale(1 / scale, 1 / scale);
     context.beginPath();
     if (Number.isFinite(angle)) {
@@ -336,8 +388,8 @@ function drawProbes() {
       ctx.fillStyle = '#087c9826'; ctx.strokeStyle = '#087c98'; ctx.lineWidth = 1 / scale; ctx.fill(); ctx.stroke();
     }
     ctx.scale(1 / scale, 1 / scale);
-    ctx.beginPath(); ctx.moveTo(9, 0); ctx.lineTo(-4, -4); ctx.lineTo(-4, 4); ctx.closePath();
-    ctx.fillStyle = '#087c98'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(-3, -3); ctx.lineTo(-3, 3); ctx.closePath();
+    ctx.fillStyle = '#7ad2df'; ctx.strokeStyle = '#17313e'; ctx.lineWidth = 1; ctx.fill(); ctx.stroke();
     ctx.restore();
   }
 }
@@ -469,7 +521,7 @@ function drawFrame(now) {
     drawPursuitTrail(context, position);
     drawAbnormalTarget(context, tracked, now);
   }
-  if (cameraMoved || tracked?.movingUntil > now || liveDrones.some(drone => drone.movingUntil > now) ||
+  if (cameraMoved || tracked?.movingUntil > now || liveDrones.some(drone => droneTrailActive(drone, now)) ||
       abnormalTargets.some(target => target.movingUntil > now)) scheduleMarkers();
 }
 function zoom(factor, x = state.width / 2, y = state.height / 2) {
@@ -589,7 +641,11 @@ function exportSelection() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-$('fit').onclick = fit; $('zoom-in').onclick = () => zoom(1.5); $('zoom-out').onclick = () => zoom(1 / 1.5);
+$('fit').onclick = () => {
+  pursuitFollowing = false; pursuitLocated = !!pursuitSnapshot;
+  fit();
+};
+$('zoom-in').onclick = () => zoom(1.5); $('zoom-out').onclick = () => zoom(1 / 1.5);
 $('category').onchange = rebuildZones; $('point-mode').onchange = schedule;
 $('export').onclick = exportSelection;
 $('search').oninput = () => {
@@ -638,12 +694,19 @@ canvas.onpointerup = event => {
       return {target, distance: Math.hypot(x - point[0], y - point[1])};
     })
       .filter(hit => hit.distance * state.scale < 15).sort((a, b) => a.distance - b.distance)[0]?.target;
-    if (target) window.dispatchEvent(new CustomEvent('abnormal:select', {detail: {id: target.id}}));
+    const evidenceHit = trafficTargets.find(record => target ? record.target_id === target.id
+      : recentTrafficEvents(record).some(({position_m: [x, y]}) =>
+        Math.hypot(x - point[0], y - point[1]) * state.scale < 13));
+    const eventId = evidenceHit?.target_id || (target && target.id === pursuitSnapshot?.vehicle_id ? target.id : null);
+    if (eventId && $('abnormal-panel').hidden)
+      window.dispatchEvent(new CustomEvent('workspace:select-event', {detail: {id: eventId}}));
+    else if (target) window.dispatchEvent(new CustomEvent('abnormal:select', {detail: {id: target.id}}));
     else showFeature(!$('abnormal-panel').hidden ? spawnZoneAt(point) : hitAt(...point));
   }
 };
 canvas.onpointercancel = () => { state.drag = null; };
 window.addEventListener('resize', () => { resize(); schedule(); });
+new ResizeObserver(() => { resize(); schedule(); }).observe(canvas);
 
 async function initialize() {
   [zones, points, roads, probes] = await Promise.all([
@@ -674,6 +737,7 @@ async function initialize() {
   ready = true;
   for (const id of ['search', 'category', 'point-mode', 'layer-buildings']) $(id).disabled = false;
   $('loading').hidden = true; fit();
+  window.dispatchEvent(new Event('map:ready'));
 }
 
 background = new Image(); background.src = './assets/town12.png'; background.onload = schedule;
@@ -682,6 +746,11 @@ window.liveMap = {
   setPursuit,
   followPursuit() { pursuitFollowing = true; pursuitLocated = false; if (pursuitSnapshot) setPursuit(pursuitSnapshot); },
   setTraffic(records) { trafficTargets = records; scheduleMarkers(); },
+  setMissionZones(ids) {
+    if (ids.length === missionZones.length && ids.every((id, index) => id === missionZones[index])) return;
+    missionZones = ids;
+    schedule();
+  },
   centerTraffic(id) {
     const target = trafficTargets.find(t => t.target_id === id);
     if (!target || !ready) return;
@@ -714,9 +783,9 @@ window.liveMap = {
     return feature.geometry.type === 'Point' ? spawnZoneAt(feature.geometry.coordinates)
       : feature.properties.category !== 'transport' ? feature : null;
   },
-  selectZone(id) {
+  selectZone(id, center = false) {
     const feature = zones?.features.find(zone => zone.id === id);
-    if (feature) showFeature(feature);
+    if (feature) showFeature(feature, center);
   },
   setPendingPoint(point) { pendingPoint = point; scheduleMarkers(); },
   centerTarget(id) {
@@ -729,8 +798,10 @@ window.liveMap = {
     schedule();
   },
   setDrones(records, session = null) {
-    liveDrones = sampledMarkers(records, session === droneSession ? liveDrones : [],
-      'name', 'course_rad', droneDelay);
+    const sameSession = session === droneSession;
+    if (!sameSession) locatedDrone = null;
+    liveDrones = sampledMarkers(records, sameSession ? liveDrones.filter(drone => drone.airborne === true) : [],
+      'name', 'course_rad', droneDelay, droneTrailMs + droneDelay);
     droneSession = session;
     scheduleMarkers();
   },
@@ -738,7 +809,10 @@ window.liveMap = {
   centerDrone(name) {
     const drone = liveDrones.find(record => record.name === name);
     if (!drone || !ready) return;
-    const [x, y] = markerAt(drone, performance.now(), droneDelay).position;
+    const now = performance.now();
+    locatedDrone = drone.airborne === true ? null : {name, until: now + droneLocateMs};
+    if (locatedDrone) setTimeout(scheduleMarkers, droneLocateMs);
+    const [x, y] = drone.airborne === true ? markerAt(drone, now, droneDelay).position : drone.position_m;
     state.scale = Math.max(state.scale, 6);
     state.ox = state.width / 2 - x * state.scale;
     state.oy = state.height / 2 - y * state.scale;

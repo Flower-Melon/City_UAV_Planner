@@ -4,39 +4,81 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>城市无人机巡查平台</title>
-  <link rel="stylesheet" href="./css/styles.css?v=20261123-fleet-profile">
-  <script src="./js/map.js?v=20261123-map-motion" defer></script>
+  <link rel="stylesheet" href="./css/styles.css?v=20261124-fleet-pursuit">
+  <link rel="stylesheet" href="./css/workspace.css?v=20261124-fleet-pursuit">
+  <script src="./js/map.js?v=20261124-plan" defer></script>
   <script src="./js/flight-settings.js?v=20261123-fleet-profile" defer></script>
-  <script src="./js/airsim.js?v=20261123-pursuit-stability" defer></script>
-  <script src="./js/traffic.js?v=20261123-pursuit-stability" defer></script>
-  <script src="./js/llm.js?v=20261123-person-action-return" defer></script>
-  <script src="./js/abnormal.js?v=20261123-fleet-profile" defer></script>
+  <script src="./js/airsim.js?v=20261124-pursuit-live" defer></script>
+  <script src="./js/traffic.js?v=20261124-events" defer></script>
+  <script src="./js/llm.js?v=20261124-events" defer></script>
+  <script src="./js/abnormal.js?v=20261124-fleet-pursuit" defer></script>
+  <script src="./js/workspace.js?v=20261124-fleet-pursuit" defer></script>
 </head>
 <body>
-  <header>
-    <div><span class="eyebrow">任务规划与实时监控</span><h1>城市无人机巡查平台</h1></div>
-    <div class="version">4 × 4 km</div>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-drone" viewBox="0 0 24 24"><path d="m6 6 4 4m4 4 4 4M6 18l4-4m4-4 4-4"/><rect x="9" y="9" width="6" height="6" rx="2"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/></symbol>
+    <symbol id="i-task" viewBox="0 0 24 24"><path d="M8 5H5v15h14V5h-3M8 12h8m-8 4h5"/><rect x="8" y="3" width="8" height="4" rx="1"/></symbol>
+    <symbol id="i-event" viewBox="0 0 24 24"><path d="M4 12h4l2-6 4 12 2-6h4"/><rect x="2" y="3" width="20" height="18" rx="4"/></symbol>
+    <symbol id="i-scene" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Zm6-3v15m6-12v15"/></symbol>
+    <symbol id="i-focus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-3v10l-6-3"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+  </svg>
+  <header class="app-header">
+    <div class="app-brand">
+      <span class="app-mark"><svg aria-hidden="true"><use href="#i-drone"/></svg></span>
+      <h1>城市无人机巡查平台</h1>
+    </div>
+    <div class="app-status">
+      <span id="workspace-connection" class="connection-state" role="status" data-state="pending">正在连接仿真</span>
+      <button id="workspace-fleet" class="readout" type="button" data-workspace-tab="fleet-tab" aria-label="查看机队">
+        <svg aria-hidden="true"><use href="#i-drone"/></svg><span>在飞</span><strong id="workspace-airborne">—</strong><span class="readout-divider">/</span><strong id="workspace-fleet-total">—</strong>
+      </button>
+    </div>
   </header>
-  <main>
-    <section class="map-panel" aria-label="交互标定地图">
-      <canvas id="map" aria-label="滚轮缩放，拖动平移，点击区域或探头查看详情"></canvas>
-      <div class="map-tools">
-        <button id="fit" type="button">全图</button>
-        <button id="zoom-in" type="button" aria-label="放大">＋</button>
-        <button id="zoom-out" type="button" aria-label="缩小">－</button>
+  <main class="workspace">
+    <nav class="workspace-rail" aria-label="巡查导航">
+      <div class="sidebar-tabs workspace-tabs" role="tablist" aria-label="巡查工具" aria-orientation="vertical">
+        <button id="llm-tab" type="button" role="tab" aria-selected="true" aria-controls="llm-panel"><svg aria-hidden="true"><use href="#i-task"/></svg>任务</button>
+        <button id="events-tab" type="button" role="tab" aria-selected="false" aria-controls="events-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-event"/></svg>事件 <span id="events-tab-count" class="tab-count" hidden>0</span></button>
+        <button id="fleet-tab" type="button" role="tab" aria-selected="false" aria-controls="uav-camera-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-drone"/></svg>机队 <span id="fleet-tab-count" class="tab-count" hidden>0</span></button>
+        <button id="abnormal-tab" type="button" role="tab" aria-selected="false" aria-controls="abnormal-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-scene"/></svg>场景</button>
+        <button id="map-tools-tab" type="button" role="tab" aria-selected="false" aria-controls="map-tools-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-map"/></svg>地图</button>
       </div>
-      <div id="loading" role="status">正在读取标定数据…</div>
-      <div id="coords">X — · Y — m</div>
-      <div class="map-key" aria-label="地图符号图例"><span class="native">道路拓扑</span><span class="probe">交通探头</span><span class="drone">无人机</span></div>
-    </section>
-    <aside aria-label="巡查工作台">
-      <div class="workspace-heading"><div><span class="workspace-eyebrow">巡查控制台</span><strong>工作台</strong></div><span class="workspace-note">规划 · 监控 · 处置</span></div>
-      <div class="sidebar-tabs" role="tablist" aria-label="右侧工具切换">
-        <button id="llm-tab" type="button" role="tab" aria-selected="true" aria-controls="llm-panel">任务</button>
-        <button id="fleet-tab" type="button" role="tab" aria-selected="false" aria-controls="uav-camera-panel" tabindex="-1">机队 <span id="fleet-tab-count" class="tab-count" hidden>0</span></button>
-        <button id="abnormal-tab" type="button" role="tab" aria-selected="false" aria-controls="abnormal-panel" tabindex="-1">场景</button>
-        <button id="map-tools-tab" type="button" role="tab" aria-selected="false" aria-controls="map-tools-panel" tabindex="-1">地图</button>
+    </nav>
+    <div class="workspace-body">
+      <div class="workspace-heading">
+        <div><h2>巡查工作台</h2><p>Town12 城区 <span>·</span> 4 × 4 km</p></div>
+        <button id="workspace-fullscreen" class="icon-action" type="button" aria-pressed="false"><svg aria-hidden="true"><use href="#i-expand"/></svg><span>全屏工作台</span></button>
       </div>
+      <div class="workspace-grid">
+        <section id="workspace-stage" class="workspace-stage" aria-label="巡查主视图">
+          <div class="stage-heading">
+            <h3><svg aria-hidden="true"><use href="#i-map"/></svg>城区地图</h3>
+            <div class="stage-actions">
+              <button id="stage-pursuit" class="stage-view" type="button" data-open-pursuit aria-controls="fleet-pursuit" hidden><svg aria-hidden="true"><use href="#i-video"/></svg>追踪镜头</button>
+              <button id="stage-layers" class="stage-view" type="button" data-workspace-tab="map-tools-tab"><svg aria-hidden="true"><use href="#i-scene"/></svg>图层</button>
+            </div>
+          </div>
+          <section class="map-panel" aria-label="交互标定地图">
+            <canvas id="map" aria-label="滚轮缩放，拖动平移，点击区域或探头查看详情"></canvas>
+            <div class="map-tools" aria-label="地图缩放">
+              <button id="zoom-in" type="button" aria-label="放大">＋</button>
+              <button id="zoom-out" type="button" aria-label="缩小">－</button>
+              <button id="fit" type="button" aria-label="查看全图" title="查看全图"><svg aria-hidden="true"><use href="#i-focus"/></svg></button>
+              <button id="stage-follow" type="button" title="地图跟随车辆" aria-label="地图跟随车辆" hidden><svg aria-hidden="true"><use href="#i-event"/></svg></button>
+            </div>
+            <div id="loading" role="status">正在读取标定数据…</div>
+          </section>
+          <div class="stage-footer">
+            <div class="map-key" aria-label="地图符号图例"><span class="native">道路</span><span class="probe">探头</span><span class="drone">无人机</span></div>
+            <span id="stage-selection" hidden></span>
+            <div id="coords">X — · Y — m</div>
+          </div>
+        </section>
+        <aside class="workspace-dock" aria-label="任务、事件和设备">
       <div id="map-tools-panel" class="sidebar-content" role="tabpanel" aria-labelledby="map-tools-tab" hidden>
       <section id="zones-panel">
         <h2>查找区域、任务点与探头</h2>
@@ -62,7 +104,7 @@
         <select id="point-mode" disabled>
           <option value="verified">仅静态核验点（372）</option>
           <option value="all">全部点位（含定位参考）</option>
-          <option value="none">隐藏点位</option>
+          <option value="none" selected>隐藏点位</option>
         </select>
       </section>
       <section class="legend-panel" aria-label="功能区颜色图例">
@@ -83,15 +125,71 @@
       </section>
       </div>
       <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab">
-        <div class="section-heading llm-heading"><h2>自然语言任务 <span class="llm-badge">自动执行</span></h2><button id="llm-new-task" type="button" title="终止当前任务并复位全部无人机">新任务</button></div>
-        <p class="muted llm-intro">描述巡查区域与目标，自动规划并执行。</p>
+        <div class="section-heading llm-heading panel-heading"><h2>巡查任务</h2><button id="llm-new-task" type="button" title="终止当前任务并复位全部无人机" hidden>结束并复位</button></div>
+        <p id="llm-status" class="llm-status" role="status" aria-live="polite">正在检查执行状态…</p>
         <form id="llm-form" class="llm-composer">
-          <label class="field" for="llm-instruction">你想巡查哪里？</label>
-          <textarea id="llm-instruction" rows="3" maxlength="4000" required placeholder="例如：巡查第一学校，识别异常人员。"></textarea>
-          <div class="llm-composer-footer"><span>自动选机 · 沿路识别</span><button id="llm-submit" type="submit">规划并开始搜索 <span aria-hidden="true">→</span></button></div>
+          <label class="field" for="llm-instruction">任务指令</label>
+          <textarea id="llm-instruction" rows="3" maxlength="4000" required placeholder="输入要巡查的区域和目标"></textarea>
+          <div class="llm-composer-footer"><button id="llm-submit" type="submit"><span>规划并开始巡查</span><svg aria-hidden="true"><use href="#i-arrow"/></svg></button></div>
         </form>
-        <div class="llm-settings-card">
-          <div class="llm-settings-heading"><h3>模型设置</h3><span>任务规划与图像识别</span></div>
+        <section id="task-presets" class="task-presets" aria-label="快速填入任务">
+          <h3>快速填入</h3>
+          <button type="button" data-zone="F-SCHOOL-1" data-instruction="巡查第一学校所在街区，识别异常人员。"><span><strong>学校周边巡查</strong><small>第一学校所在街区</small></span><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+          <button type="button" data-zone="F-ADMIN" data-instruction="巡查城市服务中心所在街区。"><span><strong>街区联合巡查</strong><small>城市服务中心所在街区</small></span><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+          <button id="task-use-selection" type="button" hidden><span><strong>巡查所选区域</strong><small id="task-selection-name"></small></span><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+        </section>
+        <button id="task-open-events" class="panel-link" type="button" data-workspace-tab="events-tab" hidden><svg aria-hidden="true"><use href="#i-event"/></svg><span>查看巡查事件</span><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+        <section id="llm-result" class="llm-plan" aria-labelledby="llm-answer-heading" hidden>
+          <div class="llm-plan-heading">
+            <span class="llm-plan-icon"><svg aria-hidden="true"><use href="#i-task"/></svg></span>
+            <div>
+              <h2 id="llm-answer-heading">巡查计划</h2>
+              <p id="llm-submitted"></p>
+            </div>
+            <span id="llm-elapsed" class="llm-plan-time" hidden></span>
+          </div>
+          <div id="llm-plan-dispatch" class="llm-plan-dispatch" hidden>
+            <p id="llm-plan-count" class="llm-plan-count"></p>
+            <ul id="llm-queue" class="llm-plan-zones"></ul>
+          </div>
+          <div class="llm-plan-details">
+            <details id="llm-model-note" class="llm-plan-detail">
+              <summary>模型说明</summary>
+              <p id="llm-answer" class="llm-answer"></p>
+            </details>
+            <details id="llm-plan-actions" class="llm-plan-detail" hidden>
+              <summary>查看后续处理</summary>
+              <p id="llm-plan-action-log" class="llm-answer"></p>
+            </details>
+            <details id="llm-command-panel" class="llm-plan-detail" hidden>
+              <summary>查看任务指令</summary>
+              <pre id="llm-commands" tabindex="0" aria-label="通过校验的搜索指令"></pre>
+            </details>
+          </div>
+          <form id="llm-followup-form" class="llm-followup" hidden>
+            <label class="field" for="llm-followup-input">继续补充</label>
+            <textarea id="llm-followup-input" rows="2" maxlength="4000" required></textarea>
+            <button id="llm-followup-submit" type="submit">发送补充 <span aria-hidden="true">→</span></button>
+          </form>
+        </section>
+        <template id="llm-plan-zone">
+          <li class="llm-plan-zone">
+            <div class="llm-plan-zone-heading">
+              <div><h3 data-plan-zone></h3><code data-plan-code></code></div>
+              <span class="llm-plan-state" data-plan-state></span>
+            </div>
+            <dl class="llm-plan-aircraft">
+              <div><dt>巡查机</dt><dd data-plan-search></dd></div>
+              <div><dt>监控机</dt><dd data-plan-monitor></dd><dd data-plan-monitor-state></dd></div>
+            </dl>
+            <p class="llm-plan-error" data-plan-error hidden></p>
+          </li>
+        </template>
+        <details id="llm-history" class="llm-history" hidden>
+          <summary>前面的对话</summary><div id="llm-messages"></div>
+        </details>
+        <details class="llm-settings-card">
+          <summary>模型设置</summary>
           <div class="llm-model-settings">
             <label for="llm-model-select">模型服务</label>
             <select id="llm-model-select" aria-describedby="llm-model-info" disabled>
@@ -102,40 +200,42 @@
             <p id="llm-model-info" class="muted" role="status" aria-live="polite">正在读取模型配置…</p>
             <button id="llm-model-retry" type="button" hidden>重新读取</button>
           </div>
+        </details>
+      </div>
+      <section id="events-panel" class="sidebar-content events-panel" role="tabpanel" aria-labelledby="events-tab" hidden>
+        <div class="panel-heading"><h2>巡查事件</h2></div>
+        <div class="events-overview" aria-label="巡查监测概况">
+          <div><span>车辆监测</span><strong id="events-traffic-state" data-state="idle">待启动</strong></div>
+          <div><span>人员识别</span><strong id="events-vision-state" data-state="idle">待启动</strong></div>
         </div>
-        <p id="llm-status" class="llm-status" role="status" aria-live="polite">正在检查执行状态…</p>
-        <section id="llm-traffic" class="llm-vision traffic-workspace" hidden aria-label="车辆监管">
-          <div class="section-heading traffic-heading"><h2><span id="llm-traffic-title">车辆监管</span> <span id="llm-speeding-count" class="llm-anomaly-count" hidden>0</span></h2><span id="llm-traffic-status" class="traffic-live"></span></div>
+        <div class="events-filters" role="group" aria-label="按事件类型筛选">
+          <button type="button" data-event-filter="all" aria-pressed="true">全部<span data-event-count="all">0</span></button>
+          <button type="button" data-event-filter="vehicles" aria-pressed="false">车辆<span data-event-count="vehicles">0</span></button>
+          <button type="button" data-event-filter="people" aria-pressed="false">人员<span data-event-count="people">0</span></button>
+        </div>
+        <div id="events-empty" class="events-empty">
+          <span class="events-empty-icon"><svg aria-hidden="true"><use href="#i-event"/></svg></span>
+          <strong id="events-empty-title">暂无巡查事件</strong>
+          <p id="events-empty-message">开始巡查后，异常记录会显示在这里。</p>
+          <button id="events-create-task" class="panel-link" type="button" data-workspace-tab="llm-tab">前往巡查任务 <svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+        </div>
+        <section id="events-pursuit" class="event-pursuit" aria-label="车辆追踪状态" hidden>
+          <div><h3 id="events-pursuit-target"></h3><p id="events-pursuit-status"></p></div>
+          <button type="button" data-open-pursuit aria-controls="fleet-pursuit"><svg aria-hidden="true"><use href="#i-video"/></svg>查看镜头</button>
+        </section>
+        <section id="llm-traffic" class="events-group" hidden aria-labelledby="events-vehicles-title">
+          <h3 id="events-vehicles-title">车辆事件</h3>
           <p id="llm-traffic-error" class="llm-vision-error" hidden></p>
           <div id="llm-traffic-targets" class="traffic-targets" aria-live="polite"></div>
         </section>
-        <section id="llm-result" hidden>
-          <p id="llm-submitted" class="muted llm-submitted"></p>
-          <div class="section-heading"><h2 id="llm-answer-heading">模型回答</h2><span id="llm-elapsed" class="muted"></span></div>
-          <p id="llm-answer" class="llm-answer"></p>
-          <p id="llm-queue" class="llm-answer llm-queue" hidden></p>
-          <details id="llm-command-panel" class="llm-command-panel" hidden>
-            <summary>查看任务指令</summary>
-            <pre id="llm-commands" tabindex="0" aria-label="通过校验的搜索指令"></pre>
-          </details>
-          <form id="llm-followup-form" class="llm-followup" hidden>
-            <label class="field" for="llm-followup-input">继续补充</label>
-            <textarea id="llm-followup-input" rows="2" maxlength="4000" required></textarea>
-            <button id="llm-followup-submit" type="submit">发送补充 <span aria-hidden="true">→</span></button>
-          </form>
-        </section>
-        <section id="llm-vision" class="llm-vision" hidden aria-label="巡查异常识别">
-          <div class="section-heading"><h2>人员异常识别 <span id="llm-anomaly-count" class="llm-anomaly-count">0</span></h2></div>
+        <section id="llm-vision" class="events-group" hidden aria-labelledby="events-people-title">
+          <h3 id="events-people-title">人员事件</h3>
           <p id="llm-vision-error" class="llm-vision-error" hidden></p>
           <div id="llm-anomalies" class="llm-anomalies"></div>
         </section>
-        <details id="llm-history" class="llm-history" hidden>
-          <summary>前面的对话</summary><div id="llm-messages"></div>
-        </details>
-      </div>
+      </section>
       <div id="abnormal-panel" class="sidebar-content abnormal-panel" role="tabpanel" aria-labelledby="abnormal-tab" hidden>
-        <h2>异常场景</h2>
-        <p class="muted">选择街区，布置场景并查看现场画面。</p>
+        <div class="panel-heading"><h2>场景配置</h2><p>选择街区，布置目标并查看现场</p></div>
         <div class="abnormal-zone-card">
           <div><span class="abnormal-caption">当前街区</span><strong id="abnormal-zone-name">尚未选择</strong><span id="abnormal-zone-hint" class="muted">在地图上点击目标街区</span></div>
           <button id="abnormal-zone-pick" type="button">地图选择</button>
@@ -173,8 +273,8 @@
           <span id="airsim-status" role="status">正在连接 AirSim…</span>
         </div>
         <div class="fleet-summary" aria-label="机队概况"><div><span>在线无人机</span><strong id="fleet-total">—</strong></div><div><span>飞行中</span><strong id="fleet-active">—</strong></div><div><span>地面待命</span><strong id="fleet-idle">—</strong></div></div>
-        <section id="fleet-pursuit" class="pursuit-status" aria-label="车辆追踪" hidden>
-          <div class="pursuit-heading" role="status" data-pursuit-label></div>
+        <section id="fleet-pursuit" class="pursuit-status" aria-labelledby="fleet-pursuit-title" tabindex="-1" hidden>
+          <header class="pursuit-heading"><h3 id="fleet-pursuit-title">追踪镜头</h3><p role="status" data-pursuit-label></p></header>
           <figure class="pursuit-preview">
             <div class="pursuit-shot">
               <canvas width="800" height="450" data-pursuit-image role="img" aria-label="无人机追踪画面" hidden></canvas>
@@ -193,7 +293,9 @@
         <div id="fleet-empty" class="fleet-empty" role="status"><strong id="fleet-empty-title">等待仿真连接</strong><p id="fleet-empty-message">连接后将在这里显示无人机实时画面。</p><button id="fleet-show-all" type="button" hidden>查看全部无人机</button></div>
         <div id="drone-cameras" class="camera-grid fleet-grid"></div>
       </section>
-    </aside>
+        </aside>
+      </div>
+    </div>
   </main>
   <dialog id="fleet-flight-dialog" class="fleet-flight-dialog" aria-labelledby="fleet-flight-title">
     <form id="fleet-flight-form">
