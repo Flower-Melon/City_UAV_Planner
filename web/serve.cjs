@@ -19,6 +19,7 @@ const abnormalAPI = new AbnormalController({root,
 const identity = createHash('sha256').update('town12-live-viewer-v9-abnormal:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
 const revisionHash = createHash('sha256');
 for (const relative of ['web/serve.cjs', 'web/server/llm.cjs', 'web/server/python.cjs', 'web/js/flight-settings.js',
+  'web/server/mission-feed.cjs', 'llm/mission_briefing.py', 'llm/prompts/mission_briefing.txt',
   'web/server/airsim.cjs',
   'web/server/abnormal.cjs', 'UAV/API/track_vehicle.py', 'UAV/runtime/flight_control.py',
   'UAV/runtime/pursuit_camera.py', 'Scene/vehicle/escape_vehicle.py',

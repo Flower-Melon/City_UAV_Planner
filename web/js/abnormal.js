@@ -24,15 +24,9 @@
   const personPhases = {queued: '等待调度', selecting: '正在选机', planning: '正在规划航线',
     loading: '正在起飞挂载药箱', en_route: '正在飞往现场', delivering: '正在投递药品',
     treating: '正在现场处置', returning: '正在返航'};
-  const scenes = {
-    patient: {title: '医疗求助', icon: '+', description: '随机布置在街区人行道，也可手动选择位置。'},
-    armed_person: {title: '持刀人员', icon: '!', description: '随机布置巡游人员，与医疗救援现场保持距离。'},
-    vehicle: {title: '异常车辆', icon: '↗', description: '沿所选街区外围道路行驶，可调整驾驶行为。'}
-  };
-  const sceneCards = new Map();
-  const modes = {mixed: '混合', speeding: '超速行驶', wrong_way: '逆向行驶（超速）'};
-  const interceptLabels = {braking: '正在减速停车', stopped: '已截停'};
-  const actions = ['原地停留', '步行', '奔跑', '持刀威胁', '痛苦', '倒地中', '躺卧'];
+  const sceneKind = $('scene-kind');
+  const sceneAdd = $('scene-add');
+  const scenePlace = $('scene-place');
   const storageKey = 'city-abnormal-pending';
   const personJobs = new Map();
   let activePersonActions = new Set();
@@ -53,6 +47,27 @@
     busy = !!pending;
   } catch { /* 禁止存储时仍可使用。 */ }
   const visible = () => !$('abnormal-panel').hidden && !document.hidden;
+  const list = $('abnormal-list');
+
+  function positionTargetActions(menu, trigger) {
+    const {right, top, bottom} = trigger.getBoundingClientRect();
+    const width = document.documentElement.clientWidth;
+    const height = document.documentElement.clientHeight;
+    const spaceAbove = top - 14, spaceBelow = height - bottom - 14;
+    const above = spaceBelow < 128 && spaceAbove > spaceBelow;
+    menu.style.right = `${Math.max(8, width - right)}px`;
+    menu.style.top = above ? 'auto' : `${bottom + 6}px`;
+    menu.style.bottom = above ? `${height - top + 6}px` : 'auto';
+    menu.style.maxHeight = `${Math.max(0, above ? spaceAbove : spaceBelow)}px`;
+  }
+
+  function closeTargetActions(event) {
+    const menu = list.querySelector('.scene-target-actions:popover-open');
+    if (menu && !menu.contains(event.target instanceof Node ? event.target : null)) menu.hidePopover();
+  }
+
+  document.addEventListener('scroll', closeTargetActions, true);
+  window.addEventListener('resize', closeTargetActions);
 
   async function json(url, options = {}) {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
@@ -67,21 +82,14 @@
     $('abnormal-operation').textContent = text;
     $('abnormal-operation').dataset.error = String(error);
   }
-  function vehicleStatus(target) {
-    const label = interceptLabels[target.intercept_state] || modes[target.active_behavior] || '行驶中';
-    return `${label} · ${(target.speed_m_s * 3.6).toFixed(1)} km/h`;
-  }
   function controls() {
     $('abnormal-camera-panel').hidden = !dialog.open && (!visible() || !selected);
+    $('scene-preview-empty').hidden = !!selected;
     $('abnormal-zone-pick').disabled = busy || !window.liveMap?.isReady();
     $('abnormal-zone-pick').textContent = picking === 'zone' ? '请点击地图…' : currentZone ? '更换街区' : '地图选择';
     $('abnormal-zone-name').textContent = currentZone?.properties.name || '尚未选择';
     $('abnormal-zone-hint').textContent = currentZone ? '可自动布置，也可在地图上指定位置' : '在地图上点击目标街区';
     $('abnormal-cancel').hidden = !picking;
-    $('abnormal-apply').disabled = busy || !online || pursuitActive() && pursuit.vehicle_id === selected;
-    $('abnormal-behavior').disabled = $('abnormal-apply').disabled;
-    $('abnormal-escape').dataset.escapeTarget = selected || '';
-    $('abnormal-pursue').dataset.pursuitTarget = selected || '';
     for (const button of document.querySelectorAll('[data-escape-target]')) button.disabled = busy || !online;
     for (const button of document.querySelectorAll('[data-person-action-target]')) {
       const id = button.dataset.personActionTarget;
@@ -96,30 +104,14 @@
     for (const button of document.querySelectorAll('.abnormal-remove'))
       button.disabled = busy || !online || personBusy(button.dataset.target)
         || pursuitActive() && pursuit.vehicle_id === button.dataset.target;
-    for (const [kind, card] of sceneCards) {
-      const target = targets.find(target => target.zone_id === currentZone?.id && target.kind === kind);
-      const working = pending?.data.kind === kind && pending.data.zone_id === currentZone?.id
-        || pending?.route === 'remove' && pending.data.target_id === target?.id;
-      const acting = personBusy(target?.id);
-      const phase = personPhases[personJobs.get(target?.id)?.phase];
-      card.root.dataset.active = String(!!target);
-      card.state.textContent = working ? pending.route === 'remove' ? '正在移除…' : '正在添加…'
-        : acting ? phase || '执行中' : target ? target.error ? '需要关注' : interceptLabels[target.intercept_state] || '现场运行中'
-          : !currentZone ? '待选街区' : !online ? '等待连接' : '待布置';
-      card.description.textContent = target ? target.error ? '目标运行异常，可查看详情或重新布置。'
-        : target.kind === 'vehicle' ? vehicleStatus(target)
-        : `当前状态：${actions[target.action] || '等待更新'}` : scenes[kind].description;
-      card.primary.textContent = target ? '定位' : working ? '正在添加…' : '添加';
-      card.primary.setAttribute('aria-label', `${scenes[kind].title}：${target ? '定位' : '添加'}`);
-      card.primary.classList.toggle('abnormal-add', !target);
-      card.primary.disabled = busy || !currentZone || !window.liveMap?.isReady() || !target && !online;
-      card.secondary.textContent = target ? '移除' : '指定位置';
-      card.secondary.hidden = kind === 'vehicle' && !target;
-      card.secondary.setAttribute('aria-label', `${scenes[kind].title}：${target ? '移除' : '指定位置'}`);
-      card.secondary.disabled = busy || acting || !currentZone || !online || !window.liveMap?.isReady()
-        || pursuitActive() && pursuit.vehicle_id === target?.id;
-      card.root.setAttribute('aria-busy', String(!!working || acting));
-    }
+    const kind = sceneKind.value;
+    const existing = targets.some(target => target.zone_id === currentZone?.id && target.kind === kind);
+    const unavailable = busy || !currentZone || !window.liveMap?.isReady();
+    sceneKind.disabled = busy || !!picking;
+    sceneAdd.textContent = existing ? '定位' : '添加';
+    sceneAdd.disabled = unavailable || !!picking || (!existing && !online);
+    scenePlace.hidden = kind === 'vehicle' || existing;
+    scenePlace.disabled = unavailable || !!picking || !online;
   }
   function cancelPick() {
     picking = false; window.liveMap?.setPickHandler(null); controls();
@@ -143,64 +135,67 @@
     const localTargets = targets.filter(target => target.zone_id === currentZone?.id);
     $('abnormal-count').textContent = localTargets.length;
     $('abnormal-empty').hidden = localTargets.length > 0;
-    $('abnormal-empty').textContent = currentZone ? '尚未布置场景，可从上方添加。' : '选择街区后查看现场目标。';
-    const key = JSON.stringify([localTargets.map(t => [t.id, t.kind, t.zone_id]), selected]);
+    $('abnormal-empty').textContent = currentZone ? '尚未布置目标。' : '请先选择街区。';
+    const key = JSON.stringify(localTargets.map(t => [t.id, t.kind, t.zone_id]));
     if (key !== listKey) {
       listKey = key;
-      $('abnormal-list').replaceChildren(...localTargets.map(target => {
+      list.replaceChildren(...localTargets.map(target => {
         const row = document.createElement('div'); row.className = 'abnormal-target-row';
         const button = document.createElement('button'); button.type = 'button';
-        button.className = 'abnormal-target'; button.dataset.kind = target.kind;
-        button.setAttribute('aria-pressed', String(target.id === selected));
+        button.className = 'abnormal-target'; button.dataset.targetId = target.id;
+        button.title = target.id;
         const label = document.createElement('strong'), id = document.createElement('small');
-        label.textContent = names[target.kind]; id.textContent = `${target.zone_name} · ${target.id}`;
+        const number = target.id.match(/_(\d+)$/)?.[1];
+        label.textContent = names[target.kind]; id.textContent = number ? `编号 ${number}` : target.id;
         button.append(label, id); button.onclick = () => select(target.id);
         const remove = document.createElement('button'); remove.type = 'button';
         remove.className = 'abnormal-remove'; remove.textContent = '移除';
         remove.setAttribute('aria-label', `移除 ${names[target.kind]} ${target.id}`);
         remove.onclick = () => void runJob('remove', {target_id: target.id});
         remove.dataset.target = target.id;
-        row.append(button);
+        const menu = document.createElement('div'); menu.className = 'scene-target-actions';
+        menu.setAttribute('popover', 'auto');
+        const more = document.createElement('button'); more.type = 'button'; more.className = 'scene-target-more';
+        more.textContent = '⋯'; more.title = '更多操作';
+        more.setAttribute('aria-label', `${names[target.kind]} ${number ?? target.id} 的操作`);
+        more.popoverTargetElement = menu;
+        menu.addEventListener('beforetoggle', event => {
+          if (event.newState === 'open') positionTargetActions(menu, more);
+        });
+        menu.addEventListener('click', event => {
+          if (!event.target.closest('button')) return;
+          menu.hidePopover();
+          more.focus({preventScroll: true});
+        });
+        row.append(button, more, menu);
         if (target.kind === 'vehicle') {
           const escape = document.createElement('button'); escape.type = 'button';
-          escape.className = 'abnormal-escape'; escape.dataset.escapeTarget = target.id;
+          escape.dataset.escapeTarget = target.id;
           escape.textContent = '启动逃逸';
           escape.onclick = () => void runJob('escape', {target_id: target.id});
           const follow = document.createElement('button'); follow.type = 'button';
-          follow.className = 'abnormal-escape'; follow.dataset.pursuitTarget = target.id;
+          follow.dataset.pursuitTarget = target.id;
           follow.textContent = '开始追踪';
           follow.onclick = () => void runJob('pursue', {target_id: target.id});
-          row.append(escape, follow);
+          menu.append(escape, follow);
         } else if (personActions[target.kind]) {
           const {route, label} = personActions[target.kind];
           const action = document.createElement('button'); action.type = 'button';
-          action.className = 'abnormal-person-action'; action.textContent = label;
+          action.textContent = label;
           action.dataset.personActionTarget = target.id;
           action.setAttribute('aria-label', `${label} ${names[target.kind]} ${target.id}`);
           action.onclick = () => {
             select(target.id);
             void runJob(route, {target_id: target.id});
           };
-          row.append(action);
+          menu.append(action);
         }
-        row.append(remove);
+        menu.append(remove);
         return row;
       }));
     }
-    const target = targets.find(t => t.id === selected);
-    $('abnormal-detail').hidden = !target;
-    if (target) {
-      $('abnormal-title').textContent = `${target.zone_name} · ${names[target.kind]} · ${target.id.split('_').pop()}`;
-      $('abnormal-position').textContent = `UE X ${target.position_m[0].toFixed(1)} · Y ${target.position_m[1].toFixed(1)} · Z ${target.position_m[2].toFixed(1)} m`;
-      $('abnormal-action').textContent = target.error ? `运行异常：${target.error}` : target.kind === 'vehicle'
-        ? (target.intercept_state ? vehicleStatus(target) : `${modes[target.behavior] || target.behavior} · 当前 ${vehicleStatus(target)}`)
-        : `当前状态：${actions[target.action] || '等待更新'}`;
-      $('abnormal-action').dataset.error = String(!!target.error);
-      $('abnormal-vehicle-controls').hidden = target.kind !== 'vehicle';
-      if ($('abnormal-behavior').dataset.target !== selected) {
-        $('abnormal-behavior').value = target.behavior || 'speeding';
-        $('abnormal-behavior').dataset.target = selected;
-      }
+    for (const button of list.querySelectorAll('.abnormal-target')) {
+      button.setAttribute('aria-pressed', String(button.dataset.targetId === selected));
     }
     renderPursuit(); controls();
   }
@@ -220,14 +215,16 @@
     message(`已定位到${target.zone_name}的${names[target.kind]}。`);
   }
   function addScene(kind) {
-    if (busy || !online || !currentZone) return;
+    if (busy || !currentZone) return;
     const existing = targets.find(target => target.zone_id === currentZone.id && target.kind === kind);
     if (existing) { locate(existing); return; }
+    if (!online) return;
     void runJob('spawn', {kind, zone_id: currentZone.id, behavior: 'speeding'});
   }
   function pickPosition(kind) {
     if (busy || !online || !currentZone) return;
     const zone = currentZone;
+    window.dispatchEvent(new Event('workspace:show-map'));
     picking = kind; controls();
     message(`请在${zone.properties.name}附近点击${names[kind]}出现的位置，按 Esc 取消。`);
     window.liveMap.setPickHandler(position => {
@@ -418,10 +415,9 @@
     });
   };
   $('abnormal-cancel').onclick = () => { cancelPick(); message('已取消地图选点。'); };
-  $('abnormal-locate').onclick = () => window.liveMap?.centerTarget(selected);
-  $('abnormal-apply').onclick = () => void runJob('behavior', {target_id: selected, behavior: $('abnormal-behavior').value});
-  $('abnormal-escape').onclick = () => void runJob('escape', {target_id: selected});
-  $('abnormal-pursue').onclick = () => void runJob('pursue', {target_id: selected});
+  sceneKind.onchange = controls;
+  sceneAdd.onclick = () => addScene(sceneKind.value);
+  scenePlace.onclick = () => pickPosition(sceneKind.value);
   window.vehiclePursuit = {escape: id => runJob('escape', {target_id: id}),
     start: id => runJob('pursue', {target_id: id}),
     get active() { return !!pursuitActive(); }, get busy() { return busy; }};
@@ -431,36 +427,14 @@
     if (visible() && !busy && event.detail.feature?.geometry.type !== 'Point'
       && event.detail.feature?.properties.category !== 'transport') setZone(event.detail.feature);
   });
-  window.addEventListener('sidebar:change', () => {
+  window.addEventListener('sidebar:change', event => {
+    closeTargetActions(event);
     cancelPick();
     if (visible() && !busy) setZone(window.liveMap?.selectedZone());
     clearFrame(selected ? '正在等待实时画面…' : '选择一个已生成目标以查看画面');
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelPick(); clearFrame(); } });
   window.addEventListener('pagehide', () => { clearTimeout(timer); clearFrame(''); window.liveMap?.setPickHandler(null); });
-  for (const [kind, scene] of Object.entries(scenes)) {
-    const root = document.createElement('article'); root.className = 'abnormal-scene'; root.dataset.kind = kind;
-    const heading = document.createElement('div'); heading.className = 'abnormal-scene-heading';
-    const icon = document.createElement('span'); icon.className = 'abnormal-scene-icon'; icon.textContent = scene.icon;
-    icon.setAttribute('aria-hidden', 'true');
-    const title = document.createElement('strong'); title.textContent = scene.title;
-    const state = document.createElement('span'); state.className = 'abnormal-scene-state';
-    heading.append(icon, title, state);
-    const description = document.createElement('p'), actions = document.createElement('div');
-    actions.className = 'abnormal-scene-actions';
-    const primary = document.createElement('button'), secondary = document.createElement('button');
-    primary.type = secondary.type = 'button';
-    primary.onclick = () => {
-      const target = targets.find(target => target.zone_id === currentZone?.id && target.kind === kind);
-      if (target) locate(target); else addScene(kind);
-    };
-    secondary.onclick = () => {
-      const target = targets.find(target => target.zone_id === currentZone?.id && target.kind === kind);
-      if (target) void runJob('remove', {target_id: target.id}); else pickPosition(kind);
-    };
-    actions.append(primary, secondary); root.append(heading, description, actions);
-    sceneCards.set(kind, {root, state, description, primary, secondary}); $('abnormal-scenes').append(root);
-  }
   controls();
   if (pending || personJobs.size) message('正在恢复操作状态…');
   if (pending) void pollJob(pending);

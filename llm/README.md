@@ -1,6 +1,6 @@
 # llm 功能说明
 
-`planner.py` 通过 `Planner` 生成区域搜索计划，`vision.py` 通过 `VisionAnalyzer` 判断图片中的异常意图。`utils/` 提供模型连接和地图查询，`prompts/` 保存判断规则。网页流程编排和图片标注由 `web/` 负责。
+`planner.py` 通过 `Planner` 生成区域搜索计划，`vision.py` 通过 `VisionAnalyzer` 判断图片中的异常意图，`mission_briefing.py` 通过 `MissionBriefing` 根据执行日志生成实时战报。`utils/` 提供模型连接和地图查询，`prompts/` 保存判断规则。网页流程编排和图片标注由 `web/` 负责。
 
 ## 1 主要接口
 
@@ -136,6 +136,10 @@ finally:
 ```
 
 单独运行 `python llm/vision.py` 时，只将意图识别结果保存到项目根目录下的 `output/temp/analysis.json`。
+
+### 1.3 mission_briefing
+
+`MissionBriefing(client, model, journal_directory).summarize(session_id, revision, previous_update=None)` 读取指定版本的执行快照和近期事件。提交上一则更新时，模型会获得该更新的日志版本和文本，据此重点说明新增变化。接口返回中文说明 `summary`、人工核验建议 `next_focus` 和经校验的日志引用 `evidence`，复用规划模型配置并通过独立的 Python 通道生成。
 
 ## 2 utils
 

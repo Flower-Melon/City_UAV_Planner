@@ -196,11 +196,11 @@
 
   function createCard(id) {
     const card = document.createElement('article'); card.className = 'traffic-target-card';
-    card.innerHTML = '<div class="traffic-card-identity"><div><h4 class="traffic-card-plate"></h4>' +
+    card.dataset.reviewId = `vehicle:${id}`;
+    card.innerHTML = '<header class="traffic-card-header"><div class="traffic-card-identity"><div><h4 class="traffic-card-plate"></h4>' +
       '<p class="traffic-card-zone"></p></div><span class="traffic-card-state"></span></div>' +
-      '<div class="traffic-violation-tags"></div>';
+      '<div class="traffic-violation-tags"></div></header>';
     const evidence = document.createElement('details'); evidence.className = 'traffic-evidence';
-    evidence.open = !cards.size;
     const summary = document.createElement('summary');
     summary.innerHTML = '<span>空地取证</span><span class="traffic-evidence-count"></span>';
     const sources = document.createElement('div'); sources.className = 'traffic-sources';
@@ -212,7 +212,7 @@
       const node = document.createElement('li'); node.innerHTML = '<i></i><span></span><time></time>';
       node.querySelector('span').textContent = label; chain.append(node);
     }
-    const footer = document.createElement('div'); footer.className = 'traffic-card-actions';
+    const actions = document.createElement('div'); actions.className = 'traffic-card-actions';
     const locate = document.createElement('button'); locate.type = 'button'; locate.textContent = '地图定位';
     locate.onclick = () => {
       window.dispatchEvent(new Event('workspace:show-map'));
@@ -225,8 +225,19 @@
     const follow = document.createElement('button'); follow.type = 'button'; follow.textContent = '开始追踪';
     follow.dataset.pursuitTarget = id;
     follow.onclick = () => void window.vehiclePursuit?.start(id);
+    const menu = document.createElement('details'); menu.className = 'traffic-action-menu';
+    const menuLabel = document.createElement('summary'); menuLabel.textContent = '操作';
+    const operations = document.createElement('div'); operations.append(escape, follow);
+    menu.append(menuLabel, operations);
+    operations.addEventListener('click', event => {
+      if (!event.target.closest('button')) return;
+      menu.open = false;
+      menuLabel.focus({preventScroll: true});
+    });
     evidence.append(summary, sources, chain);
-    footer.append(locate, expand, escape, follow); card.append(evidence, footer);
+    actions.append(locate, expand, menu);
+    card.querySelector('.traffic-card-header').append(actions);
+    card.append(evidence);
     const view = {card, uav, probe, locate, expand, escape, follow, chain,
       coverage: summary.querySelector('.traffic-evidence-count'), state: card.querySelector('.traffic-card-state'),
       plate: card.querySelector('.traffic-card-plate'), zone: card.querySelector('.traffic-card-zone'),
@@ -348,13 +359,7 @@
     if (traffic.pursuit) window.pursuitView?.update(traffic.pursuit);
   }
 
-  window.trafficView = {render: renderTraffic, has: id => cards.has(id), focus(id) {
-    const view = cards.get(id);
-    if (!view) return false;
-    view.card.scrollIntoView({block: 'nearest'});
-    view.expand.focus({preventScroll: true});
-    return true;
-  }, clear() {
+  window.trafficView = {render: renderTraffic, has: id => cards.has(id), clear() {
     cards.clear(); $('llm-traffic-targets').replaceChildren();
     window.liveMap?.setTraffic([]);
   }};

@@ -5,6 +5,7 @@ const {randomUUID} = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const PythonRuntime = require('./python.cjs');
+const MissionFeed = require('./mission-feed.cjs');
 const FLIGHT_TASKS = require('../js/flight-settings.js');
 const TERMINAL = new Set(['completed', 'failed']);
 
@@ -853,6 +854,8 @@ class LlmController {
     timeoutMs = 660000, executionTimeoutMs = 15000, runtime = null}) {
     this.runtime = runtime || new PythonRuntime({root, spawnProcess});
     this.executor = new MissionExecutor({root, runtime: this.runtime, timeoutMs: executionTimeoutMs});
+    this.briefing = new MissionFeed({root, runtime: this.runtime, getExecutor: () => this.executor,
+      getMonitoredTargets: monitoredTargets});
     this.getState = getState;
     this.restartMonitor = restartMonitor;
     this.timeoutMs = timeoutMs;
@@ -868,7 +871,7 @@ class LlmController {
     this.closed = false;
   }
 
-  start() { this.runtime.start(); }
+  start() { this.runtime.start(); this.briefing.start(); }
 
   startVehiclePursuit(target, flight) {
     if (this.resetting || this.planning || this.closed) throw requestError('正在规划、复位或停止，请稍后重试。', 409);
@@ -917,6 +920,7 @@ class LlmController {
     this.resetCompleted = false;
     this.generation++;
     this.planning = false;
+    this.briefing.stage('resetting', '任务结束，正在复位机队');
     const previous = this.executor;
     previous.close();
     this.resetPromise = (async () => {
@@ -932,8 +936,11 @@ class LlmController {
         this.executor = new MissionExecutor({root: previous.root, runtime: this.runtime, timeoutMs: this.executionTimeoutMs});
         this.plan = null;
         this.resetCompleted = true;
+        this.briefing.stage('reset', '机队复位完成');
+        this.briefing.clear();
       } catch (error) {
         this.resetError = error.message;
+        this.briefing.stage('reset_failed', '复位未确认', '请检查任务栏复位状态。');
       } finally {
         this.resetting = false;
         this.resetPromise = null;
@@ -976,6 +983,15 @@ class LlmController {
     if (url.pathname === '/api/llm/backend') return this.handleBackend(request, response);
     if (url.pathname === '/api/llm/plan') return this.handlePlan(request, response);
     if (url.pathname === '/api/llm/mission') return this.handleMission(request, response);
+    if (url.pathname === '/api/llm/briefing') {
+      if (request.method !== 'GET') {
+        response.setHeader('Allow', 'GET'); send(response, 405, {error: '请求方法错误。'}); return;
+      }
+      if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}`) {
+        send(response, 403, {error: '请从本地地图页面查看战报。'}); return;
+      }
+      send(response, 200, this.briefing.snapshot()); return;
+    }
     if (url.pathname === '/api/llm/image') return this.handleImage(request, response, url);
     if (url.pathname === '/api/llm/reset') return this.handleReset(request, response);
     send(response, 404, {error: '接口不存在'});
@@ -1041,6 +1057,7 @@ class LlmController {
     const generation = this.generation;
     const obsolete = () => generation !== this.generation;
     let cancelled = false, dispatching = false, phase = 'input';
+    let briefingSession = null;
     const disconnected = () => {
       if (!obsolete() && !response.writableEnded && !dispatching) {
         cancelled = true; this.runtime.cancel('planning'); this.runtime.cancel('fleet');
@@ -1061,11 +1078,13 @@ class LlmController {
       if (obsolete()) throw requestError('任务已取消。', 409);
       if (cancelled || response.destroyed || this.closed) return;
       phase = 'fleet';
+      briefingSession = this.briefing.begin();
       const fleet = planningFleet(this.getState()) || await this.runtime.request('fleet', {},
         {channel: 'fleet', timeoutMs: this.executionTimeoutMs});
       if (obsolete()) throw requestError('任务已取消。', 409);
       if (cancelled || this.closed) return;
       phase = 'plan';
+      this.briefing.stage('planning', '模型正在解析巡查指令', '结合地图和机队状态确定巡查区域。');
       const result = await this.runtime.request('plan', {instruction, conversation, fleet},
         {channel: 'planning', timeoutMs: this.timeoutMs});
       if (obsolete()) throw requestError('任务已取消。', 409);
@@ -1076,13 +1095,22 @@ class LlmController {
         throw Error('规划进程返回格式异常，请重试。');
       if (result.status === 'ready') {
         phase = 'dispatch'; dispatching = true; this.plan = structuredClone(result);
+        this.briefing.stage('dispatching', '已生成区域巡查计划', `准备派发 ${result.commands.length} 个巡查区域。`);
         const execution = await this.executor.start(result, flight, traffic);
         if (obsolete()) throw requestError('任务已取消。', 409);
+        this.briefing.bind(briefingSession, execution.mission_id);
         send(response, 200, {...result, execution});
-      } else send(response, 200, result);
+      } else {
+        this.briefing.stage('clarification', '等待补充巡查信息', '请查看任务计划中的模型提问。');
+        send(response, 200, result);
+      }
     } catch (error) {
+      if (briefingSession && !obsolete() && !this.closed && !cancelled)
+        this.briefing.stage('planning_failed', '任务未能启动', '请查看任务状态后重试。');
       send(response, error.statusCode || (phase === 'plan' ? 502 : 503), {error: error.message});
     } finally {
+      if (briefingSession && !obsolete() && !this.closed && cancelled)
+        this.briefing.stage('cancelled', '规划请求已取消');
       if (!obsolete()) this.planning = false;
       response.removeListener('close', disconnected);
     }
@@ -1139,6 +1167,7 @@ class LlmController {
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.briefing.close();
     this.executor.close();
     this.runtime.close();
   }

@@ -24,14 +24,15 @@ class PythonRuntime {
     if (this.closed) throw Error('执行服务已停止，请重启网页服务。');
     if (this.stopping) throw Error('正在终止后台进程，请等待无人机复位。');
     let fingerprint = '';
-    if (channel === 'planning' || channel.startsWith('vision:')) {
+    const modelChannel = channel === 'planning' || channel === 'briefing' || channel.startsWith('vision:');
+    if (modelChannel) {
       try {
         const stat = fs.statSync(path.join(this.root, 'llm', '.env'));
         fingerprint = `${stat.mtimeMs}:${stat.size}`;
       } catch { /* 模型也可以直接读取环境变量。 */ }
     }
     let worker = this.workers.get(channel);
-    if (worker && (channel === 'planning' || channel.startsWith('vision:')) && worker.fingerprint !== fingerprint) {
+    if (worker && modelChannel && worker.fingerprint !== fingerprint) {
       if (worker.pending.size) throw requestError('已有任务正在规划，请等待完成。', 409);
       this.cancel(channel);
       worker = null;

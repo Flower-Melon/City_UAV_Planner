@@ -80,6 +80,7 @@ class PythonBridge:
     def __init__(self):
         self.client = None
         self.planner = None
+        self.briefing = None
         self.vision = None
         self.traffic = None
 
@@ -92,6 +93,20 @@ class PythonBridge:
                 raise ValueError("人物任务需要person_id")
         if operation == "model_backend":
             return set_backend(request["backend"]) if "backend" in request else get_backend()
+        if operation == "mission_briefing":
+            if self.briefing is None:
+                from llm.mission_briefing import MissionBriefing
+                from llm.utils.client import create_client
+
+                client, model = create_client(timeout=40, max_retries=0)
+                try:
+                    directory = Path(__file__).resolve().parents[2] / "output" / "mission-briefings"
+                    self.briefing = MissionBriefing(client, model, directory)
+                except Exception:
+                    client.close()
+                    raise
+            return self.briefing.summarize(request.get("session_id"), request.get("revision"),
+                                           request.get("previous_update"))
         if operation == "traffic_start":
             from web.utils.traffic_pipeline import start_session
 
@@ -450,7 +465,7 @@ class PythonBridge:
                     message = str(error) if isinstance(error, (ValueError, RuntimeError, OSError)) else type(error).__name__
                     if isinstance(error, ModuleNotFoundError):
                         message = f"Python无法导入模块 {error.name}，请检查目录大小写及当前Python环境的依赖。"
-                    elif operation in ("plan", "vision"):
+                    elif operation in ("plan", "vision", "mission_briefing"):
                         try:
                             from llm.utils.client import error_message
                             message = error_message(error)
@@ -467,6 +482,9 @@ class PythonBridge:
             self.close()
 
     def close(self):
+        if self.briefing is not None:
+            self.briefing.client.close()
+            self.briefing = None
         if self.traffic is not None:
             from web.utils.traffic_pipeline import close_session
             close_session(self.traffic)

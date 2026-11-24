@@ -4,15 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>城市无人机巡查平台</title>
-  <link rel="stylesheet" href="./css/styles.css?v=20261124-fleet-pursuit">
-  <link rel="stylesheet" href="./css/workspace.css?v=20261124-fleet-pursuit">
-  <script src="./js/map.js?v=20261124-plan" defer></script>
+  <link rel="stylesheet" href="./css/styles.css?v=20261124-monitor-wall">
+  <link rel="stylesheet" href="./css/mission.css?v=20261124-controls">
+  <link rel="stylesheet" href="./css/dock.css?v=20261124-dock-media">
+  <script src="./js/map.js?v=20261124-map-legend" defer></script>
   <script src="./js/flight-settings.js?v=20261123-fleet-profile" defer></script>
-  <script src="./js/airsim.js?v=20261124-pursuit-live" defer></script>
-  <script src="./js/traffic.js?v=20261124-events" defer></script>
-  <script src="./js/llm.js?v=20261124-events" defer></script>
-  <script src="./js/abnormal.js?v=20261124-fleet-pursuit" defer></script>
-  <script src="./js/workspace.js?v=20261124-fleet-pursuit" defer></script>
+  <script src="./js/airsim.js?v=20261124-monitor-wall" defer></script>
+  <script src="./js/traffic.js?v=20261124-dock-media" defer></script>
+  <script src="./js/llm.js?v=20261124-review" defer></script>
+  <script src="./js/abnormal.js?v=20261124-scene-actions" defer></script>
+  <script src="./js/workspace.js?v=20261124-events-idle" defer></script>
+  <script src="./js/mission-briefing.js?v=20261124-workbench" defer></script>
 </head>
 <body>
   <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -25,6 +27,7 @@
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/></symbol>
     <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-3v10l-6-3"/></symbol>
     <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15h18"/></symbol>
   </svg>
   <header class="app-header">
     <div class="app-brand">
@@ -36,96 +39,25 @@
       <button id="workspace-fleet" class="readout" type="button" data-workspace-tab="fleet-tab" aria-label="查看机队">
         <svg aria-hidden="true"><use href="#i-drone"/></svg><span>在飞</span><strong id="workspace-airborne">—</strong><span class="readout-divider">/</span><strong id="workspace-fleet-total">—</strong>
       </button>
+      <button id="workspace-task" class="workspace-task-jump icon-action" type="button" data-show-task aria-label="前往巡查助手" title="前往巡查助手"><svg aria-hidden="true"><use href="#i-task"/></svg></button>
     </div>
   </header>
   <main class="workspace">
-    <nav class="workspace-rail" aria-label="巡查导航">
-      <div class="sidebar-tabs workspace-tabs" role="tablist" aria-label="巡查工具" aria-orientation="vertical">
-        <button id="llm-tab" type="button" role="tab" aria-selected="true" aria-controls="llm-panel"><svg aria-hidden="true"><use href="#i-task"/></svg>任务</button>
-        <button id="events-tab" type="button" role="tab" aria-selected="false" aria-controls="events-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-event"/></svg>事件 <span id="events-tab-count" class="tab-count" hidden>0</span></button>
-        <button id="fleet-tab" type="button" role="tab" aria-selected="false" aria-controls="uav-camera-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-drone"/></svg>机队 <span id="fleet-tab-count" class="tab-count" hidden>0</span></button>
-        <button id="abnormal-tab" type="button" role="tab" aria-selected="false" aria-controls="abnormal-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-scene"/></svg>场景</button>
-        <button id="map-tools-tab" type="button" role="tab" aria-selected="false" aria-controls="map-tools-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-map"/></svg>地图</button>
-      </div>
-    </nav>
-    <div class="workspace-body">
-      <div class="workspace-heading">
-        <div><h2>巡查工作台</h2><p>Town12 城区 <span>·</span> 4 × 4 km</p></div>
-        <button id="workspace-fullscreen" class="icon-action" type="button" aria-pressed="false"><svg aria-hidden="true"><use href="#i-expand"/></svg><span>全屏工作台</span></button>
-      </div>
-      <div class="workspace-grid">
-        <section id="workspace-stage" class="workspace-stage" aria-label="巡查主视图">
-          <div class="stage-heading">
-            <h3><svg aria-hidden="true"><use href="#i-map"/></svg>城区地图</h3>
-            <div class="stage-actions">
-              <button id="stage-pursuit" class="stage-view" type="button" data-open-pursuit aria-controls="fleet-pursuit" hidden><svg aria-hidden="true"><use href="#i-video"/></svg>追踪镜头</button>
-              <button id="stage-layers" class="stage-view" type="button" data-workspace-tab="map-tools-tab"><svg aria-hidden="true"><use href="#i-scene"/></svg>图层</button>
-            </div>
-          </div>
-          <section class="map-panel" aria-label="交互标定地图">
-            <canvas id="map" aria-label="滚轮缩放，拖动平移，点击区域或探头查看详情"></canvas>
-            <div class="map-tools" aria-label="地图缩放">
-              <button id="zoom-in" type="button" aria-label="放大">＋</button>
-              <button id="zoom-out" type="button" aria-label="缩小">－</button>
-              <button id="fit" type="button" aria-label="查看全图" title="查看全图"><svg aria-hidden="true"><use href="#i-focus"/></svg></button>
-              <button id="stage-follow" type="button" title="地图跟随车辆" aria-label="地图跟随车辆" hidden><svg aria-hidden="true"><use href="#i-event"/></svg></button>
-            </div>
-            <div id="loading" role="status">正在读取标定数据…</div>
-          </section>
-          <div class="stage-footer">
-            <div class="map-key" aria-label="地图符号图例"><span class="native">道路</span><span class="probe">探头</span><span class="drone">无人机</span></div>
-            <span id="stage-selection" hidden></span>
-            <div id="coords">X — · Y — m</div>
-          </div>
-        </section>
-        <aside class="workspace-dock" aria-label="任务、事件和设备">
-      <div id="map-tools-panel" class="sidebar-content" role="tabpanel" aria-labelledby="map-tools-tab" hidden>
-      <section id="zones-panel">
-        <h2>查找区域、任务点与探头</h2>
-        <label class="sr-only" for="search">名称或编号</label>
-        <input id="search" type="search" placeholder="搜索名称、探头编号或路口编号" disabled>
-        <div id="results" class="results" aria-live="polite"></div>
-        <label class="field" for="category">功能区类型</label>
-        <select id="category" disabled><option value="">全部类型</option></select>
-        <p id="zone-stats" class="muted"></p>
-      </section>
-      <section class="layers">
-        <div class="section-heading"><h2>显示图层</h2></div>
-        <div class="layer-grid">
-          <label><input id="layer-base" type="checkbox" checked>实景底图</label>
-          <label><input id="layer-zones" type="checkbox" checked>功能区</label>
-          <label title="叠加道路分段，不显示寻路连接线"><input id="layer-roads" type="checkbox" checked>道路拓扑</label>
-          <label><input id="layer-buildings" type="checkbox" disabled>建筑轮廓</label>
-          <label><input id="layer-probes" type="checkbox" checked>交通探头</label>
-          <label><input id="layer-probe-coverage" type="checkbox">探头感知范围</label>
-        </div>
-        <p id="probe-stats" class="muted"></p>
-        <label class="field" for="point-mode">任务点</label>
-        <select id="point-mode" disabled>
-          <option value="verified">仅静态核验点（372）</option>
-          <option value="all">全部点位（含定位参考）</option>
-          <option value="none" selected>隐藏点位</option>
-        </select>
-      </section>
-      <section class="legend-panel" aria-label="功能区颜色图例">
-        <details>
-          <summary>功能区类型</summary>
-          <div id="legend" class="legend"></div>
-          <div class="symbol-legend">
-            <span><i class="legend-building" aria-hidden="true"></i>建筑轮廓</span>
-            <span><i class="legend-selected" aria-hidden="true"></i>选中对象</span>
-            <span><i class="legend-point" aria-hidden="true"></i>核验任务点</span>
-            <span><i class="legend-access" aria-hidden="true"></i>道路接入点</span>
-          </div>
-        </details>
-      </section>
-      <section id="object-panel">
-        <div class="section-heading"><h2>选中对象</h2><button id="export" disabled>导出 JSON</button></div>
-        <div id="object-detail" class="object-detail">点击地图中的地块、任务点或探头，查看详情。</div>
-      </section>
-      </div>
-      <div id="llm-panel" class="sidebar-content llm-panel" role="tabpanel" aria-labelledby="llm-tab">
-        <div class="section-heading llm-heading panel-heading"><h2>巡查任务</h2><button id="llm-new-task" type="button" title="终止当前任务并复位全部无人机" hidden>结束并复位</button></div>
+        <aside id="llm-panel" class="mission-column llm-panel" aria-labelledby="mission-title">
+          <header class="mission-heading"><h2 id="mission-title" tabindex="-1">巡查助手</h2><button id="llm-new-task" type="button" title="终止当前任务并复位全部无人机" hidden>结束并复位</button></header>
+          <div class="sidebar-content mission-body">
+            <section class="mission-briefing" aria-label="任务更新">
+              <div id="briefing-current" class="briefing-current" aria-live="polite"></div>
+              <p id="briefing-state" class="briefing-state" role="status">输入巡查指令后，我会根据执行记录说明现场进展，并指出需要核验的情况。</p>
+              <details id="briefing-previous" class="briefing-history" hidden>
+                <summary>较早的更新</summary>
+                <div id="briefing-updates" class="briefing-updates"></div>
+              </details>
+              <details id="briefing-history" class="briefing-history" hidden>
+                <summary>执行记录</summary>
+                <ol id="briefing-events" class="briefing-events"></ol>
+              </details>
+            </section>
         <p id="llm-status" class="llm-status" role="status" aria-live="polite">正在检查执行状态…</p>
         <form id="llm-form" class="llm-composer">
           <label class="field" for="llm-instruction">任务指令</label>
@@ -134,20 +66,15 @@
         </form>
         <section id="task-presets" class="task-presets" aria-label="快速填入任务">
           <h3>快速填入</h3>
-          <button type="button" data-zone="F-SCHOOL-1" data-instruction="巡查第一学校所在街区，识别异常人员。"><span><strong>学校周边巡查</strong><small>第一学校所在街区</small></span><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
-          <button type="button" data-zone="F-ADMIN" data-instruction="巡查城市服务中心所在街区。"><span><strong>街区联合巡查</strong><small>城市服务中心所在街区</small></span><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
-          <button id="task-use-selection" type="button" hidden><span><strong>巡查所选区域</strong><small id="task-selection-name"></small></span><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+            <button type="button" data-zone="F-SCHOOL-1" data-instruction="巡查第一学校所在街区，识别异常人员。" title="第一学校所在街区">学校周边巡查</button>
+            <button type="button" data-zone="F-ADMIN" data-instruction="巡查城市服务中心所在街区。" title="城市服务中心所在街区">街区联合巡查</button>
+            <button id="task-use-selection" type="button" hidden>巡查所选区域 <small id="task-selection-name"></small></button>
         </section>
         <button id="task-open-events" class="panel-link" type="button" data-workspace-tab="events-tab" hidden><svg aria-hidden="true"><use href="#i-event"/></svg><span>查看巡查事件</span><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
-        <section id="llm-result" class="llm-plan" aria-labelledby="llm-answer-heading" hidden>
-          <div class="llm-plan-heading">
-            <span class="llm-plan-icon"><svg aria-hidden="true"><use href="#i-task"/></svg></span>
-            <div>
-              <h2 id="llm-answer-heading">巡查计划</h2>
-              <p id="llm-submitted"></p>
-            </div>
-            <span id="llm-elapsed" class="llm-plan-time" hidden></span>
-          </div>
+        <details id="llm-result" class="llm-plan" hidden>
+          <summary id="llm-answer-heading">巡查计划</summary>
+          <p id="llm-submitted"></p>
+          <span id="llm-elapsed" class="llm-plan-time" hidden></span>
           <div id="llm-plan-dispatch" class="llm-plan-dispatch" hidden>
             <p id="llm-plan-count" class="llm-plan-count"></p>
             <ul id="llm-queue" class="llm-plan-zones"></ul>
@@ -171,7 +98,7 @@
             <textarea id="llm-followup-input" rows="2" maxlength="4000" required></textarea>
             <button id="llm-followup-submit" type="submit">发送补充 <span aria-hidden="true">→</span></button>
           </form>
-        </section>
+        </details>
         <template id="llm-plan-zone">
           <li class="llm-plan-zone">
             <div class="llm-plan-zone-heading">
@@ -201,101 +128,219 @@
             <button id="llm-model-retry" type="button" hidden>重新读取</button>
           </div>
         </details>
-      </div>
-      <section id="events-panel" class="sidebar-content events-panel" role="tabpanel" aria-labelledby="events-tab" hidden>
-        <div class="panel-heading"><h2>巡查事件</h2></div>
-        <div class="events-overview" aria-label="巡查监测概况">
-          <div><span>车辆监测</span><strong id="events-traffic-state" data-state="idle">待启动</strong></div>
-          <div><span>人员识别</span><strong id="events-vision-state" data-state="idle">待启动</strong></div>
-        </div>
-        <div class="events-filters" role="group" aria-label="按事件类型筛选">
-          <button type="button" data-event-filter="all" aria-pressed="true">全部<span data-event-count="all">0</span></button>
-          <button type="button" data-event-filter="vehicles" aria-pressed="false">车辆<span data-event-count="vehicles">0</span></button>
-          <button type="button" data-event-filter="people" aria-pressed="false">人员<span data-event-count="people">0</span></button>
-        </div>
-        <div id="events-empty" class="events-empty">
-          <span class="events-empty-icon"><svg aria-hidden="true"><use href="#i-event"/></svg></span>
-          <strong id="events-empty-title">暂无巡查事件</strong>
-          <p id="events-empty-message">开始巡查后，异常记录会显示在这里。</p>
-          <button id="events-create-task" class="panel-link" type="button" data-workspace-tab="llm-tab">前往巡查任务 <svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
-        </div>
-        <section id="events-pursuit" class="event-pursuit" aria-label="车辆追踪状态" hidden>
-          <div><h3 id="events-pursuit-target"></h3><p id="events-pursuit-status"></p></div>
-          <button type="button" data-open-pursuit aria-controls="fleet-pursuit"><svg aria-hidden="true"><use href="#i-video"/></svg>查看镜头</button>
-        </section>
-        <section id="llm-traffic" class="events-group" hidden aria-labelledby="events-vehicles-title">
-          <h3 id="events-vehicles-title">车辆事件</h3>
-          <p id="llm-traffic-error" class="llm-vision-error" hidden></p>
-          <div id="llm-traffic-targets" class="traffic-targets" aria-live="polite"></div>
-        </section>
-        <section id="llm-vision" class="events-group" hidden aria-labelledby="events-people-title">
-          <h3 id="events-people-title">人员事件</h3>
-          <p id="llm-vision-error" class="llm-vision-error" hidden></p>
-          <div id="llm-anomalies" class="llm-anomalies"></div>
-        </section>
-      </section>
-      <div id="abnormal-panel" class="sidebar-content abnormal-panel" role="tabpanel" aria-labelledby="abnormal-tab" hidden>
-        <div class="panel-heading"><h2>场景配置</h2><p>选择街区，布置目标并查看现场</p></div>
-        <div class="abnormal-zone-card">
-          <div><span class="abnormal-caption">当前街区</span><strong id="abnormal-zone-name">尚未选择</strong><span id="abnormal-zone-hint" class="muted">在地图上点击目标街区</span></div>
-          <button id="abnormal-zone-pick" type="button">地图选择</button>
-        </div>
-        <div id="abnormal-scenes" class="abnormal-scenes" aria-label="场景布置"></div>
-        <div class="abnormal-pick-status"><p id="abnormal-operation" class="abnormal-status" role="status" aria-live="polite">选中街区后，添加需要演示的场景。</p><button id="abnormal-cancel" type="button" hidden>取消选点</button></div>
-        <section>
-          <div class="section-heading"><h2>街区目标 <span id="abnormal-count">0</span></h2><span id="abnormal-connection" class="muted" role="status">正在连接…</span></div>
-          <div id="abnormal-list" class="abnormal-list" aria-label="异常目标列表"></div>
-          <p id="abnormal-empty" class="muted">选择街区后查看现场目标。</p>
-        </section>
-        <section id="abnormal-detail" hidden>
-          <div class="section-heading"><h2 id="abnormal-title">当前目标</h2><button id="abnormal-locate" type="button">地图定位</button></div>
-          <p id="abnormal-position" class="muted"></p>
-          <p id="abnormal-action"></p>
-          <div id="abnormal-vehicle-controls" hidden>
-            <label class="field" for="abnormal-behavior">车辆行为</label>
-            <div class="abnormal-buttons"><select id="abnormal-behavior"><option value="speeding" selected>超速行驶</option><option value="wrong_way">逆向行驶（超速）</option><option value="mixed">混合（持续超速，偶尔逆行）</option></select><button id="abnormal-apply" type="button">应用</button></div>
-            <div class="abnormal-buttons"><button id="abnormal-escape" type="button">启动逃逸</button><button id="abnormal-pursue" type="button">开始追踪</button></div>
           </div>
-        </section>
-      <section id="abnormal-camera-panel" class="camera-panel" aria-label="异常目标实时监控" hidden>
-        <div class="camera-heading"><h2>异常目标视角</h2><div class="camera-controls"><span class="muted">独立跟随镜头</span><button id="abnormal-camera-expand" type="button" aria-haspopup="dialog" aria-controls="abnormal-camera-dialog" aria-expanded="false" title="放大实时画面">放大</button></div></div>
-        <div class="camera-view"><img id="abnormal-image" alt="所选异常目标的仿真实时画面" hidden><div id="abnormal-camera-message" class="camera-placeholder" role="status">选择一个已生成目标以查看画面</div></div>
-      </section>
-      </div>
-      <section id="uav-camera-panel" class="sidebar-content camera-panel fleet-panel" role="tabpanel" aria-labelledby="fleet-tab" hidden>
-        <div class="camera-heading">
-          <div><h2>无人机机队</h2><p class="muted">同时查看机队状态与现场画面</p></div>
-          <div class="camera-controls">
-            <button id="camera-back" type="button" hidden>全部画面</button>
-            <button id="fleet-flight-open" class="fleet-settings-trigger" type="button" aria-haspopup="dialog" aria-controls="fleet-flight-dialog">飞行设置</button>
-            <button id="camera-expand" type="button" aria-haspopup="dialog" aria-controls="camera-dialog" aria-expanded="false" title="展开监控墙">展开监控墙</button>
-          </div>
-          <span id="airsim-status" role="status">正在连接 AirSim…</span>
-        </div>
-        <div class="fleet-summary" aria-label="机队概况"><div><span>在线无人机</span><strong id="fleet-total">—</strong></div><div><span>飞行中</span><strong id="fleet-active">—</strong></div><div><span>地面待命</span><strong id="fleet-idle">—</strong></div></div>
-        <section id="fleet-pursuit" class="pursuit-status" aria-labelledby="fleet-pursuit-title" tabindex="-1" hidden>
-          <header class="pursuit-heading"><h3 id="fleet-pursuit-title">追踪镜头</h3><p role="status" data-pursuit-label></p></header>
-          <figure class="pursuit-preview">
-            <div class="pursuit-shot">
-              <canvas width="800" height="450" data-pursuit-image role="img" aria-label="无人机追踪画面" hidden></canvas>
-              <div class="pursuit-empty" data-pursuit-empty>等待追踪画面</div>
-              <div class="pursuit-box" data-pursuit-box hidden><span>异常车辆</span></div>
-            </div>
-            <figcaption data-pursuit-camera hidden></figcaption>
-          </figure>
-          <ul class="pursuit-roles" aria-label="切换追踪视角">
-            <li><button type="button" data-pursuit-view="lead" aria-pressed="true">主追机</button><span></span></li>
-            <li><button type="button" data-pursuit-view="scout" aria-pressed="false">前哨机</button><span></span></li>
-            <li><button type="button" data-pursuit-view="wing" aria-pressed="false">侧翼机</button><span></span></li>
-          </ul>
-        </section>
-        <div class="fleet-toolbar"><h3>实时视角 <span id="fleet-visible-count">0</span></h3><label class="sr-only" for="camera-filter">显示无人机</label><select id="camera-filter"><option value="active">飞行中</option><option value="all">全部无人机</option></select></div>
-        <div id="fleet-empty" class="fleet-empty" role="status"><strong id="fleet-empty-title">等待仿真连接</strong><p id="fleet-empty-message">连接后将在这里显示无人机实时画面。</p><button id="fleet-show-all" type="button" hidden>查看全部无人机</button></div>
-        <div id="drone-cameras" class="camera-grid fleet-grid"></div>
-      </section>
         </aside>
+        <section id="workspace-stage" class="workspace-stage" aria-label="巡查主视图">
+          <div class="stage-heading">
+            <h2><svg aria-hidden="true"><use href="#i-map"/></svg>Town12 城区地图</h2>
+            <div class="stage-actions">
+              <button id="stage-pursuit" class="stage-view" type="button" data-open-pursuit aria-controls="fleet-pursuit" hidden><svg aria-hidden="true"><use href="#i-video"/></svg>追踪镜头</button>
+              <button id="stage-layers" class="stage-view" type="button" data-workspace-tab="map-tools-tab"><svg aria-hidden="true"><use href="#i-scene"/></svg>图层</button>
+              <button id="workspace-fullscreen" class="stage-view" type="button" aria-pressed="false" aria-label="全屏工作台" title="全屏工作台"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
+            </div>
+          </div>
+          <section class="map-panel" aria-label="交互标定地图">
+            <canvas id="map" aria-label="滚轮缩放，拖动平移，点击区域或探头查看详情"></canvas>
+            <div class="map-tools" aria-label="地图缩放">
+              <button id="zoom-in" type="button" aria-label="放大">＋</button>
+              <button id="zoom-out" type="button" aria-label="缩小">－</button>
+              <button id="fit" type="button" aria-label="查看全图" title="查看全图"><svg aria-hidden="true"><use href="#i-focus"/></svg></button>
+              <button id="stage-follow" type="button" title="地图跟随车辆" aria-label="地图跟随车辆" hidden><svg aria-hidden="true"><use href="#i-event"/></svg></button>
+            </div>
+            <div id="loading" role="status">正在读取标定数据…</div>
+          </section>
+          <div class="stage-footer">
+            <div class="map-key" aria-label="地图符号图例"><span class="native">道路</span><span class="probe">探头</span><span class="drone">无人机</span></div>
+            <span id="stage-selection" hidden></span>
+            <div id="coords">X — · Y — m</div>
+          </div>
+        </section>
+    <aside class="workspace-dock" aria-label="巡查工具">
+      <div class="dock-bar">
+        <div class="workspace-tabs" role="tablist" aria-label="巡查工具">
+          <button id="events-tab" type="button" role="tab" aria-selected="true" aria-controls="events-panel"><svg aria-hidden="true"><use href="#i-event"/></svg>事件 <span id="events-tab-count" class="tab-count" hidden>0</span></button>
+          <button id="fleet-tab" type="button" role="tab" aria-selected="false" aria-controls="uav-camera-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-drone"/></svg>机队 <span id="fleet-tab-count" class="tab-count" hidden>0</span></button>
+          <button id="abnormal-tab" type="button" role="tab" aria-selected="false" aria-controls="abnormal-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-scene"/></svg>场景</button>
+          <button id="map-tools-tab" type="button" role="tab" aria-selected="false" aria-controls="map-tools-panel" tabindex="-1"><svg aria-hidden="true"><use href="#i-map"/></svg>图层</button>
+        </div>
+        <button id="workspace-dock-toggle" class="dock-toggle" type="button" aria-expanded="true" aria-controls="workspace-dock-content"><svg aria-hidden="true"><use href="#i-panel"/></svg><span>收起工具面板</span></button>
       </div>
-    </div>
+      <div id="workspace-dock-content" class="dock-content">
+        <div id="map-tools-panel" class="dock-panel" role="tabpanel" aria-labelledby="map-tools-tab" hidden>
+          <div class="dock-split map-tools-grid">
+            <section class="layers" aria-labelledby="map-layers-title">
+              <h2 id="map-layers-title">显示图层</h2>
+              <div class="layer-grid">
+                <label><input id="layer-base" type="checkbox" checked>实景底图</label>
+                <label><input id="layer-zones" type="checkbox" checked>功能区</label>
+                <label title="叠加道路分段，不显示寻路连接线"><input id="layer-roads" type="checkbox" checked>道路拓扑</label>
+                <label><input id="layer-buildings" type="checkbox" disabled>建筑轮廓</label>
+                <label><input id="layer-probes" type="checkbox" checked>交通探头</label>
+                <label><input id="layer-probe-coverage" type="checkbox">探头感知范围</label>
+              </div>
+              <label class="dock-field" for="point-mode"><span>任务点</span><select id="point-mode" disabled>
+                  <option value="verified">仅静态核验点（372）</option>
+                  <option value="all">全部点位（含定位参考）</option>
+                  <option value="none" selected>隐藏点位</option>
+                </select></label>
+              <details class="legend-panel">
+                <summary>地图图例</summary>
+                <div id="legend" class="legend"></div>
+                <div class="symbol-legend">
+                  <span><i class="legend-building" aria-hidden="true"></i>建筑轮廓</span>
+                  <span><i class="legend-selected" aria-hidden="true"></i>选中对象</span>
+                  <span><i class="legend-point" aria-hidden="true"></i>核验任务点</span>
+                  <span><i class="legend-access" aria-hidden="true"></i>道路接入点</span>
+                </div>
+              </details>
+            </section>
+            <div class="map-inspector">
+              <div class="map-toolbar">
+                <label class="dock-field map-query" for="search"><span class="sr-only">搜索地图</span><input id="search" type="search" placeholder="查找区域、点位或探头" disabled></label>
+                <label class="dock-field" for="category"><span>功能区</span><select id="category" disabled><option value="">全部类型</option></select></label>
+              </div>
+              <section class="map-matches" aria-labelledby="map-matches-title"><h2 id="map-matches-title">搜索结果</h2><div id="results" class="results" aria-live="polite"></div></section>
+              <section id="object-panel">
+                <div class="section-heading"><h2>选中对象</h2><button id="export" disabled>导出 JSON</button></div>
+                <div id="object-detail" class="object-detail">点击地图中的地块、任务点或探头，查看详情。</div>
+              </section>
+            </div>
+          </div>
+        </div>
+        <section id="events-panel" class="dock-panel events-panel" role="tabpanel" aria-labelledby="events-tab">
+          <div class="dock-toolbar">
+            <div class="events-filters" role="group" aria-label="按事件类型筛选">
+              <button type="button" data-event-filter="all" aria-pressed="true">全部<span data-event-count="all">0</span></button>
+              <button type="button" data-event-filter="vehicles" aria-pressed="false">车辆<span data-event-count="vehicles">0</span></button>
+              <button type="button" data-event-filter="people" aria-pressed="false">人员<span data-event-count="people">0</span></button>
+            </div>
+            <div class="events-overview" aria-label="巡查监测概况">
+              <div><span>车辆监测</span><strong id="events-traffic-state" data-state="idle">待启动</strong></div>
+              <div><span>人员识别</span><strong id="events-vision-state" data-state="idle">待启动</strong></div>
+            </div>
+          </div>
+          <div class="dock-split event-review">
+            <div class="events-rail">
+              <section id="events-pursuit" class="event-pursuit" aria-label="车辆追踪状态" hidden>
+                <div><h3 id="events-pursuit-target"></h3><p id="events-pursuit-status"></p></div>
+                <button type="button" data-open-pursuit aria-controls="fleet-pursuit"><svg aria-hidden="true"><use href="#i-video"/></svg>查看镜头</button>
+              </section>
+              <div id="events-queue" class="dock-list" aria-label="事件记录" hidden></div>
+            </div>
+            <div class="events-detail">
+              <div id="events-empty" class="events-empty" data-phase="idle">
+                <div class="events-empty-intro">
+                  <h2 id="events-empty-title">等待巡查任务</h2>
+                  <p id="events-empty-message">在巡查助手中指定区域。发现线索后，可在这里打开记录并复核证据。</p>
+                  <button id="events-create-task" type="button" data-show-task data-focus-instruction>编写巡查指令 <svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+                </div>
+                <div id="events-preview" class="events-preview" aria-label="巡查事件记录预览">
+                  <section class="event-preview" data-preview-kind="vehicles" aria-labelledby="vehicle-preview-title">
+                    <span class="event-preview-icon"><svg aria-hidden="true"><use href="#i-map"/></svg></span>
+                    <h3 id="vehicle-preview-title">车辆记录</h3>
+                    <p>核对车速、区域和可用的空地证据。</p>
+                    <ul aria-label="证据来源"><li>无人机抓拍</li><li>路口观测</li></ul>
+                  </section>
+                  <section class="event-preview" data-preview-kind="people" aria-labelledby="person-preview-title">
+                    <span class="event-preview-icon"><svg aria-hidden="true"><use href="#i-video"/></svg></span>
+                    <h3 id="person-preview-title">人员线索</h3>
+                    <p>查看原始影像和初步识别结果。</p>
+                    <ul aria-label="线索来源"><li>巡查照片</li><li>识别说明</li></ul>
+                  </section>
+                </div>
+              </div>
+              <div class="event-groups">
+                <section id="llm-traffic" class="events-group" hidden aria-label="车辆事件">
+                  <p id="llm-traffic-error" class="llm-vision-error" hidden></p>
+                  <div id="llm-traffic-targets" class="traffic-targets" aria-live="polite"></div>
+                </section>
+                <section id="llm-vision" class="events-group" hidden aria-label="人员事件">
+                  <p id="llm-vision-error" class="llm-vision-error" hidden></p>
+                  <div id="llm-anomalies" class="llm-anomalies"></div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </section>
+        <div id="abnormal-panel" class="dock-panel abnormal-panel" role="tabpanel" aria-labelledby="abnormal-tab" hidden>
+          <div class="dock-toolbar scene-toolbar">
+            <div class="abnormal-zone-card">
+              <div><span class="abnormal-caption">当前街区</span><strong id="abnormal-zone-name">尚未选择</strong><span id="abnormal-zone-hint" class="sr-only">在地图上点击目标街区</span></div>
+              <button id="abnormal-zone-pick" type="button">地图选择</button>
+            </div>
+            <span id="abnormal-connection" class="muted" role="status">正在连接…</span>
+            <div class="abnormal-pick-status"><p id="abnormal-operation" class="abnormal-status" role="status" aria-live="polite">选中街区后，添加需要演示的场景。</p><button id="abnormal-cancel" type="button" hidden>取消选点</button></div>
+          </div>
+          <div class="dock-split scene-layout">
+            <section class="scene-targets">
+              <div class="scene-compose">
+                <label class="sr-only" for="scene-kind">场景类型</label>
+                <select id="scene-kind"><option value="patient">医疗求助</option><option value="armed_person">持刀人员</option><option value="vehicle">异常车辆</option></select>
+                <button id="scene-add" class="dock-primary" type="button">添加</button>
+                <button id="scene-place" type="button">指定位置</button>
+              </div>
+              <h2>街区目标 <span id="abnormal-count">0</span></h2>
+              <div id="abnormal-list" class="abnormal-list" aria-label="异常目标列表"></div>
+              <p id="abnormal-empty" class="muted">选择街区后查看现场目标。</p>
+            </section>
+            <div class="scene-inspector">
+              <p id="scene-preview-empty" class="dock-placeholder">选择街区目标后查看现场画面。</p>
+              <section id="abnormal-camera-panel" class="camera-panel" aria-label="异常目标实时监控" hidden>
+                <div class="camera-heading"><h2>异常目标视角</h2><div class="camera-controls"><button id="abnormal-camera-expand" type="button" aria-haspopup="dialog" aria-controls="abnormal-camera-dialog" aria-expanded="false" title="放大实时画面">放大</button></div></div>
+                <div class="camera-view"><img id="abnormal-image" alt="所选异常目标的仿真实时画面" hidden><div id="abnormal-camera-message" class="camera-placeholder" role="status">选择一个已生成目标以查看画面</div></div>
+              </section>
+            </div>
+          </div>
+        </div>
+        <section id="uav-camera-panel" class="dock-panel camera-panel fleet-panel" role="tabpanel" aria-labelledby="fleet-tab" hidden>
+          <div class="camera-heading dock-toolbar">
+            <h2 class="sr-only">无人机机队</h2>
+            <div class="camera-wall-heading">
+              <h2 id="camera-wall-title">机队监控墙</h2>
+              <span id="camera-wall-context"></span>
+            </div>
+            <div class="camera-controls">
+              <button id="camera-back" type="button" hidden>全部画面</button>
+              <button id="camera-close" type="button" autofocus>关闭</button>
+              <button id="fleet-flight-open" class="fleet-settings-trigger" type="button" aria-haspopup="dialog" aria-controls="fleet-flight-dialog">飞行设置</button>
+              <button id="camera-expand" type="button" aria-haspopup="dialog" aria-controls="camera-dialog" aria-expanded="false" title="展开监控墙">展开监控墙</button>
+            </div>
+            <div class="fleet-readout">
+              <span id="airsim-status" role="status">正在连接 AirSim…</span>
+              <div class="fleet-summary" aria-label="机队概况"><div><span>在线</span><strong id="fleet-total">—</strong></div><div><span>飞行</span><strong id="fleet-active">—</strong></div><div><span>待命</span><strong id="fleet-idle">—</strong></div></div>
+            </div>
+          </div>
+          <div class="fleet-body">
+            <section id="fleet-pursuit" class="pursuit-status" aria-labelledby="fleet-pursuit-title" tabindex="-1" hidden>
+              <header class="pursuit-heading"><h3 id="fleet-pursuit-title">追踪镜头</h3><p role="status" data-pursuit-label></p></header>
+              <figure class="pursuit-preview">
+                <div class="pursuit-shot">
+                  <canvas width="800" height="450" data-pursuit-image role="img" aria-label="无人机追踪画面" hidden></canvas>
+                  <div class="pursuit-empty" data-pursuit-empty>等待追踪画面</div>
+                  <div class="pursuit-box" data-pursuit-box hidden><span>异常车辆</span></div>
+                </div>
+                <figcaption data-pursuit-camera hidden></figcaption>
+              </figure>
+              <ul class="pursuit-roles" aria-label="切换追踪视角">
+                <li><button type="button" data-pursuit-view="lead" aria-pressed="true">主追机</button><span></span></li>
+                <li><button type="button" data-pursuit-view="scout" aria-pressed="false">前哨机</button><span></span></li>
+                <li><button type="button" data-pursuit-view="wing" aria-pressed="false">侧翼机</button><span></span></li>
+              </ul>
+            </section>
+            <div class="dock-split fleet-layout">
+              <section class="fleet-roster" aria-label="选择无人机">
+                <label class="dock-field" for="camera-filter"><span>显示</span><select id="camera-filter"><option value="all">全部无人机</option><option value="active">飞行中</option></select></label>
+                <div id="fleet-roster" class="dock-list"></div>
+              </section>
+              <div class="fleet-view">
+                <div id="fleet-empty" class="fleet-empty" role="status"><div><strong id="fleet-empty-title">等待仿真连接</strong><p id="fleet-empty-message">连接后将在这里显示无人机实时画面。</p></div><button id="fleet-show-all" type="button" hidden>查看全部无人机</button></div>
+                <div id="drone-cameras" class="camera-grid fleet-grid"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </aside>
   </main>
   <dialog id="fleet-flight-dialog" class="fleet-flight-dialog" aria-labelledby="fleet-flight-title">
     <form id="fleet-flight-form">
@@ -318,7 +363,7 @@
       </div>
     </form>
   </dialog>
-  <dialog id="camera-dialog" class="camera-dialog" aria-label="放大的无人机实时监控"></dialog>
+  <dialog id="camera-dialog" class="camera-dialog" aria-labelledby="camera-wall-title"></dialog>
   <dialog id="abnormal-camera-dialog" class="camera-dialog" aria-label="放大的异常目标实时监控"></dialog>
   <dialog id="llm-image-dialog" class="llm-image-dialog">
     <div class="section-heading"><h2>异常照片</h2><button id="llm-image-close" type="button">关闭</button></div>

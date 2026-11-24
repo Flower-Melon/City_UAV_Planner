@@ -599,8 +599,10 @@ function showFeature(feature, center = false) {
     if (typeof value === 'boolean') value = value ? '是（仍需实时复核）' : '否';
     if (Array.isArray(value)) value = value.map(v => typeof v === 'number' ? v.toFixed(3) : v).join(', ');
     if (key === 'area_m2') value = Number(value).toFixed(1);
+    const field = document.createElement('div');
     const dt = document.createElement('dt'), dd = document.createElement('dd');
-    dt.textContent = label; dd.textContent = String(value); dl.append(dt, dd);
+    dt.textContent = label; dd.textContent = String(value);
+    field.append(dt, dd); dl.append(field);
   }
   target.append(dl);
   if (feature.properties.object_type === 'traffic_probe') {
@@ -720,7 +722,6 @@ async function initialize() {
   if (!Array.isArray(probes?.probes)) throw new Error('objects/traffic_probes.json 缺少 probes 数组');
   probeRecords = probes.probes.map(p => ({id: p.id, geometry: {type: 'Point', coordinates: p.xy_m},
     properties: {...p, name: `交通探头 ${p.id}`, object_type: 'traffic_probe'}}));
-  $('probe-stats').textContent = `${probeRecords.length} 个探头 · ${new Set(probes.probes.map(p => p.junction)).size} 个路口（布设数据，非实时启用状态）`;
   await background.decode();
   for (const category of zones.categories) {
     colors.set(category.code, category.color); categoryNames.set(category.code, category.name);
@@ -728,9 +729,6 @@ async function initialize() {
   }
   CityMapVisuals.legend(zones.categories, $('legend'));
   $('loading').textContent = '正在建立地图缓存…'; await prepareGeometry();
-  const roadCount = roads.edges.filter(edge => edge.kind === 'road').length;
-  const connectionCount = roads.edges.filter(edge => edge.kind !== 'road' && edge.enabled !== false).length;
-  $('zone-stats').textContent = `${zones.features.length} 个功能区 / 设施 · ${points.features.length} 个点位\n${roadCount.toLocaleString()} 条道路分段 · ${connectionCount.toLocaleString()} 条已启用连接`;
   const verifiedPoints = points.features.filter(point => point.properties.execution_enabled === true).length;
   $('point-mode').options[0].textContent = `仅静态核验点（${verifiedPoints}）`;
   $('point-mode').options[1].textContent = `全部点位（${points.features.length}，含定位参考）`;

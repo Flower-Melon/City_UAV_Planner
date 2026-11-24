@@ -5,6 +5,8 @@
   const colors = ['#e6553f', '#237fc1', '#1b9c78', '#925bcc', '#d89120'];
   const container = $('drone-cameras'), panel = $('uav-camera-panel'), status = $('airsim-status');
   const filter = $('camera-filter'), dialog = $('camera-dialog'), expand = $('camera-expand');
+  const back = $('camera-back'), close = $('camera-close'), wallContext = $('camera-wall-context');
+  const fleetBody = panel.querySelector('.fleet-body');
   const panelParent = panel.parentNode, panelNext = panel.nextSibling;
   const cards = new Map();
   const flightDialog = $('fleet-flight-dialog');
@@ -147,7 +149,9 @@
     storeFlightProfiles(name + ' 已恢复默认');
   };
   loadFlightDrones();
-  let records = [], connected = false, focused = null;
+  let records = [], connected = false, focused = null, preview = null, wallOpener = null;
+  const roster = $('fleet-roster');
+  const rosterRows = new Map();
   let stateRequest = null, timer, generation = 0;
   const params = new URLSearchParams(location.search);
   const video = {mode: params.get('mode') || 'capture', fps: params.get('fps')};
@@ -164,20 +168,32 @@
     card.canvas.hidden = true; card.placeholder.hidden = false; card.placeholder.textContent = message;
   }
   function stopAll(message) { for (const card of cards.values()) stopStream(card, message); }
-  function openMonitor(name = null) {
+  function openMonitor(name = null, opener = expand) {
     focused = name;
     if (!dialog.open) {
-      dialog.append(panel); dialog.showModal();
-      expand.textContent = '收起'; expand.setAttribute('aria-expanded', 'true');
+      wallOpener = opener;
+      dialog.append(panel);
+      dialog.showModal();
+      expand.setAttribute('aria-expanded', 'true');
     }
     render();
+    fleetBody.scrollTop = 0;
+    if (focused) back.focus();
   }
-  expand.onclick = () => { if (dialog.open) dialog.close(); else openMonitor(); };
-  $('camera-back').onclick = () => { focused = null; render(); };
+  expand.onclick = () => openMonitor();
+  close.onclick = () => dialog.close();
+  back.onclick = () => {
+    const previous = focused;
+    focused = null;
+    render();
+    (cards.get(previous)?.zoom ?? close).focus();
+  };
   dialog.addEventListener('close', () => {
     panelParent.insertBefore(panel, panelNext); focused = null;
-    expand.textContent = '展开监控墙'; expand.setAttribute('aria-expanded', 'false');
+    expand.setAttribute('aria-expanded', 'false');
     render();
+    wallOpener?.focus({preventScroll: true});
+    wallOpener = null;
   });
 
   function createCard(name, index) {
@@ -193,7 +209,8 @@
       window.dispatchEvent(new Event('workspace:show-map'));
       window.liveMap?.centerDrone(name);
     };
-    heading.append(title, badge, locate);
+    const actions = document.createElement('div'); actions.className = 'drone-actions';
+    heading.append(title, badge, actions);
     const view = document.createElement('div'); view.className = 'camera-view';
     const canvas = document.createElement('canvas'); canvas.hidden = true;
     canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', `${name} 第三人称实时画面`);
@@ -201,10 +218,11 @@
     placeholder.textContent = '正在连接画面…';
     const overlay = document.createElement('div'); overlay.className = 'camera-stats'; overlay.hidden = params.get('stats') !== '1';
     const zoom = document.createElement('button'); zoom.type = 'button'; zoom.className = 'drone-zoom';
-    zoom.textContent = '放大'; zoom.setAttribute('aria-label', `放大 ${name} 画面`); zoom.onclick = () => openMonitor(name);
+    zoom.textContent = '放大'; zoom.setAttribute('aria-label', `放大 ${name} 画面`); zoom.onclick = () => openMonitor(name, zoom);
     const position = document.createElement('p'); position.className = 'drone-position';
-    view.append(canvas, placeholder, overlay, zoom); root.append(heading, view, position); container.append(root);
-    const card = {root, badge, locate, canvas, context: canvas.getContext('2d'), placeholder, overlay, position,
+    actions.append(locate, zoom);
+    view.append(canvas, placeholder, overlay); root.append(heading, view, position); container.append(root);
+    const card = {root, badge, locate, zoom, canvas, context: canvas.getContext('2d'), placeholder, overlay, position,
       stream: null, frames: [], lastFrame: 0};
     cards.set(name, card); return card;
   }
@@ -299,26 +317,37 @@
       if (output.textContent !== text) output.textContent = text;
     }
     $('fleet-tab-count').textContent = active.size; $('fleet-tab-count').hidden = !connected || !active.size;
-    const shown = connected ? records.filter(drone => filter.value === 'all' || active.has(drone.name)) : [];
-    if (focused && !shown.some(drone => drone.name === focused)) focused = null;
+    const available = connected ? records : [];
+    const shown = available.filter(drone => filter.value === 'all' || active.has(drone.name));
+    if (!shown.some(drone => drone.name === preview)) preview = (shown.find(drone => active.has(drone.name)) || shown[0])?.name ?? null;
+    if (focused && !available.some(drone => drone.name === focused)) focused = null;
+    const views = dialog.open ? available.filter(drone => !focused || drone.name === focused)
+      : shown.filter(drone => drone.name === preview);
+    updateRoster(shown, active);
     panel.dataset.focused = String(!!focused);
-    $('camera-back').hidden = !focused;
-    $('fleet-visible-count').textContent = focused ? 1 : shown.length;
-    container.dataset.count = String(focused ? 1 : shown.length);
-    $('fleet-empty').hidden = shown.length > 0;
-    $('fleet-empty-title').textContent = connected ? '当前没有飞行中的无人机' : '等待仿真连接';
+    back.hidden = !focused;
+    if (dialog.open) {
+      const context = focused || `${views.length} 路画面`;
+      if (wallContext.textContent !== context) wallContext.textContent = context;
+    }
+    container.dataset.count = String(views.length);
+    $('fleet-empty').hidden = views.length > 0;
+    $('fleet-empty-title').textContent = !connected ? '等待仿真连接' : available.length ? '当前没有飞行中的无人机' : '暂无无人机';
     $('fleet-empty-message').textContent = connected ? '任务起飞后，实时画面会自动出现在这里。' : '请启动仿真，连接后即可查看机队与现场画面。';
-    $('fleet-show-all').hidden = !connected || filter.value === 'all';
+    $('fleet-show-all').hidden = !available.length || filter.value === 'all' || dialog.open;
     for (const [name, card] of cards) {
       if (!records.some(drone => drone.name === name)) {
         stopStream(card, ''); card.root.remove(); cards.delete(name);
       }
     }
     for (const [index, drone] of records.entries()) {
-      const included = shown.some(item => item.name === drone.name) && (!focused || focused === drone.name);
+      const included = views.some(item => item.name === drone.name);
       let card = cards.get(drone.name);
       if (!card && !included) continue;
       card ||= createCard(drone.name, index); card.root.hidden = !included;
+      if (dialog.open && !focused && included && container.children[index] !== card.root) {
+        container.insertBefore(card.root, container.children[index] || null);
+      }
       const airborne = active.has(drone.name);
       card.badge.textContent = airborne ? '飞行中' : drone.available ? '待命' : '准备中';
       card.badge.dataset.active = String(airborne);
@@ -331,6 +360,31 @@
       } else card.position.textContent = '正在校准位置…';
       if (included && visible()) ensureStream(card, drone.name);
       else stopStream(card, '等待实时画面');
+    }
+  }
+
+  function updateRoster(shown, active) {
+    const visibleNames = new Set(shown.map(drone => drone.name));
+    for (const [name, row] of rosterRows) {
+      if (visibleNames.has(name)) continue;
+      row.remove();
+      rosterRows.delete(name);
+    }
+    for (const [index, drone] of shown.entries()) {
+      let row = rosterRows.get(drone.name);
+      if (!row) {
+        row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'dock-list-item';
+        const name = document.createElement('strong'); name.textContent = drone.name;
+        row.append(name, document.createElement('small'));
+        row.addEventListener('click', () => { preview = drone.name; render(); });
+        rosterRows.set(drone.name, row);
+      }
+      const state = active.has(drone.name) ? '飞行中' : drone.available ? '待命' : '准备中';
+      if (row.lastElementChild.textContent !== state) row.lastElementChild.textContent = state;
+      row.setAttribute('aria-pressed', String(drone.name === preview));
+      if (roster.children[index] !== row) roster.insertBefore(row, roster.children[index] || null);
     }
   }
   function disconnected() {

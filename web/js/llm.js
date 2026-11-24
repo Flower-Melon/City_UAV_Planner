@@ -2,7 +2,6 @@
 
 (() => {
   const $ = id => document.getElementById(id);
-  const tabs = [...document.querySelectorAll('.sidebar-tabs [role="tab"]')];
   const form = $('llm-form'), input = $('llm-instruction'), submit = $('llm-submit');
   const followupForm = $('llm-followup-form'), followupInput = $('llm-followup-input');
   const followupSubmit = $('llm-followup-submit'), newTask = $('llm-new-task');
@@ -72,6 +71,7 @@
       let entry = shownAnomalies.get(key);
       if (!entry) {
         const card = document.createElement('article'); card.className = 'llm-anomaly-card';
+        card.dataset.reviewId = `person:${key}`;
         entry = {card, signature: null}; shownAnomalies.set(key, entry);
       }
       const card = entry.card;
@@ -220,6 +220,7 @@
       renderPlanZones(mission.tasks);
       showVision(mission);
       showTraffic(mission);
+      window.dispatchEvent(new CustomEvent('workspace:mission', {detail: mission}));
     }
   });
 
@@ -236,6 +237,7 @@
     $('llm-commands').textContent = clarification ? '' :
       JSON.stringify(commands.length === 1 ? commands[0] : {tasks: commands}, null, 2);
     resultPanel.hidden = false;
+    resultPanel.open = clarification;
     form.hidden = true;
   }
 
@@ -346,33 +348,9 @@
     return snapshot;
   }
 
-  function selectTab(selected) {
-    for (const tab of tabs) {
-      const active = tab === selected;
-      tab.setAttribute('aria-selected', String(active));
-      tab.tabIndex = active ? 0 : -1;
-      $(tab.getAttribute('aria-controls')).hidden = !active;
-    }
-    window.dispatchEvent(new CustomEvent('sidebar:change', {detail: {panel: selected.getAttribute('aria-controls')}}));
-  }
-  for (const [index, tab] of tabs.entries()) {
-    tab.onclick = () => selectTab(tab);
-    tab.onkeydown = event => {
-      const vertical = tab.closest('[role="tablist"]').getAttribute('aria-orientation') === 'vertical';
-      const previousKey = vertical ? 'ArrowUp' : 'ArrowLeft';
-      const nextKey = vertical ? 'ArrowDown' : 'ArrowRight';
-      const next = {[previousKey]: (index + tabs.length - 1) % tabs.length,
-        [nextKey]: (index + 1) % tabs.length, Home: 0, End: tabs.length - 1}[event.key];
-      if (next === undefined) return;
-      event.preventDefault(); selectTab(tabs[next]); tabs[next].focus();
-    };
-  }
-
   function setStatus(state, message) {
-    const changed = status.textContent !== message;
     status.dataset.state = state;
-    status.textContent = message;
-    if (changed && state === 'error' && !$('llm-panel').hidden) status.scrollIntoView({block: 'nearest'});
+    if (status.textContent !== message) status.textContent = message;
   }
 
   async function plan(source, button) {
@@ -438,7 +416,7 @@
         showMission({execution: result.execution, plan: result});
         if (flying) { clearTimeout(pollTimer); pollTimer = setTimeout(pollMission, 1000); }
       }
-      if (!$('llm-panel').hidden) resultPanel.scrollIntoView({block: 'nearest'});
+      if (needsClarification) followupInput.focus();
     } catch (error) {
       if (current !== generation) return;
       const message = error.name === 'AbortError' ? '规划请求超时，正在核实是否已开始执行。' : error.message;
