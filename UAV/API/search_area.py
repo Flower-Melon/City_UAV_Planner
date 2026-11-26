@@ -47,6 +47,7 @@ class CameraFrame:
     width: int
     height: int
     seconds: float
+    people: tuple = ()
 
     def ground_radius(self, fov, ground_z):
         """下视画面在水平地面上的保守内切半径，适用于任意航向。"""
@@ -69,7 +70,7 @@ class CameraFrame:
 class SearchCapture:
     """巡查途中按累计里程下视拍照，保存原图及曝光位置。"""
 
-    def __init__(self, directory, name, origin, scale, client_factory=None):
+    def __init__(self, directory, name, origin, scale, client_factory=None, *, object_offset=None):
         self.directory, self.name = Path(directory), name
         self.origin, self.scale = origin, scale
         self.capture_directory = self.directory / "capture"
@@ -77,6 +78,8 @@ class SearchCapture:
         self.camera = "bottom_center"
         self.camera_fov = None
         self.client = (client_factory or AirSimClient)(timeout=15)
+        self.object_offset = object_offset
+        self.people_client = (client_factory or AirSimClient)(timeout=0.15) if object_offset is not None else None
         self.tree_filter = CameraTreeFilter(self.client, name)
         self.images = 0
         self.records = {}
@@ -94,15 +97,44 @@ class SearchCapture:
         self.write_records(self.directory / filename, records)
         self.records[filename] = records
 
+    def person_positions(self, names=None):
+        """通过独立的轻量 RPC 读取仿真人物中心，失效时继续保存照片。"""
+        if self.people_client is None:
+            return {}
+        deadline = time.monotonic() + 0.15
+        try:
+            if names is None:
+                names = self.people_client.call("simListSceneObjects", r"^(patient|armed_person)_[0-9]+$")
+            positions = {}
+            for name in names:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return {}
+                xyz = vector(self.people_client.call("simGetObjectPose", name, timeout=remaining)["position"])
+                positions[name] = tuple(a + b * self.scale for a, b in zip(
+                    self.object_offset, (xyz[0], xyz[1], -xyz[2])))
+            return positions
+        except (OSError, RuntimeError, ValueError, KeyError):
+            return {}
+
     def acquire(self):
         started = time.monotonic()
         self.tree_filter.refresh()
+        people_before = self.person_positions()
+        exposure_started = time.monotonic()
         responses = self.client.call(
             "simGetImages",
             [{"camera_name": self.camera, "image_type": 0, "pixels_as_float": False, "compress": True}],
             self.name,
             False,
         )
+        people_after = self.person_positions(people_before) if people_before else {}
+        people = ()
+        if time.monotonic() - exposure_started <= 1.25 and people_before.keys() == people_after.keys():
+            people = tuple({"person_id": name,
+                            "center_m": [(a + b) / 2 for a, b in zip(before, people_after[name])],
+                            "movement_m": math.dist(before, people_after[name])}
+                           for name, before in people_before.items())
         if len(responses) != 1:
             raise RuntimeError("巡查相机未返回图片")
         response = responses[0]
@@ -119,7 +151,7 @@ class SearchCapture:
             self.origin[2] - local[2] * self.scale,
         )
         return CameraFrame(bytes(raw), position, response["camera_orientation"], width, height,
-                           time.monotonic() - started)
+                           time.monotonic() - started, people)
 
     def save(self, frame, sample):
         with Image.open(io.BytesIO(frame.raw)) as image:
@@ -136,12 +168,14 @@ class SearchCapture:
         record = {
             "image": filename, "position_m": frame.position, "edge_id": sample["edge_id"],
             "camera_orientation_ned": frame.orientation, "camera_fov_deg": self.camera_fov,
+            "people_at_capture": frame.people,
             "patrol_distance_m": sample["patrol_distance_m"], "sample_xy_m": sample["sample_xy_m"],
         }
         records = [*self.records.get("frame.json", []), record]
         self.write_records(self.capture_directory / "frame.json", records)
         self.records["frame.json"] = records
         self.images += 1
+        logger.info("巡查照片已保存", extra={"search_frame_saved": True})
 
     def preflight(self, *, reclaim_stale=False):
         # 用起飞前的一帧实测分辨率、挂载偏移和取图耗时。
@@ -158,6 +192,8 @@ class SearchCapture:
             self.tree_filter.close()
         finally:
             self.client.close()
+            if self.people_client is not None:
+                self.people_client.close()
 
 
 class PatrolSampler:
@@ -355,7 +391,7 @@ def search_area(
             plan = make_plan(world)
             directory = DEFAULT_OUTPUT if output_dir is None else Path(output_dir)
             directory.mkdir(parents=True, exist_ok=True)
-            pipeline = SearchCapture(directory, name, origin, frame.scale)
+            pipeline = SearchCapture(directory, name, origin, frame.scale, object_offset=frame.world_offset())
             logger.info("搜索照片目录已创建", extra={
                 "capture_directory": pipeline.capture_directory.resolve(),
             })
@@ -386,11 +422,15 @@ def search_area(
                     ThreadPoolExecutor(1, thread_name_prefix="search-writer") as writer:
                 sampler = PatrolSampler(pipeline, camera, world, _flight_graph().ground_near,
                                         grabber, writer)
+                searching = False
                 for points, patrol in plan["segments"]:
                     if not patrol:
                         flight.fly_route(points)
                         continue
                     for chunk in _patrol_chunks(points, node_positions, edge_lookup):
+                        if not searching:
+                            searching = True
+                            logger.info("无人机开始区域搜索", extra={"search_started": True})
                         sampler.fly_route(flight, chunk, _patrol_edge(chunk, edge_lookup))
                 sampler.finish()
             pipeline.close()

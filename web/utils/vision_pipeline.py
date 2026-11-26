@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,13 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 LOG_TIMEZONE = timezone(timedelta(hours=8))
+# 仅在仿真巡查使用，较低分数的框仍需与曝光时的场景人物唯一匹配。
+SIMULATION_PERSON_CONFIDENCE = 0.45
+SIMULATION_PERSON_ID = re.compile(r"(patient|armed_person)_[0-9]+")
+SIMULATION_DESCRIPTIONS = {
+    "patient": "画面中的人员已与仿真场景登记的救助对象匹配。",
+    "armed_person": "画面中的人员已与仿真场景登记的持刀人员匹配。",
+}
 
 
 def target_context(target):
@@ -74,6 +82,65 @@ def save_annotated_image(image_path, detections, output_path):
     temporary.replace(output)
 
 
+def _camera_geometry(frame, width):
+    fov = frame["camera_fov_deg"]
+    if type(fov) not in (int, float) or not math.isfinite(fov) or not 0 < fov < 180:
+        raise ValueError("曝光相机视场角无效")
+    q = [frame["camera_orientation_ned"][key + "_val"] for key in "wxyz"]
+    if any(type(v) not in (int, float) or not math.isfinite(v) for v in q):
+        raise ValueError("曝光相机姿态无效")
+    norm = math.hypot(*q)
+    if norm < 1e-8:
+        raise ValueError("曝光相机姿态无效")
+    return tuple(v / norm for v in q), width / (2 * math.tan(math.radians(fov) / 2))
+
+
+def _rotate(vector, quaternion):
+    w, x, y, z = quaternion
+    vx, vy, vz = vector
+    tx, ty, tz = 2 * (y * vz - z * vy), 2 * (z * vx - x * vz), 2 * (x * vy - y * vx)
+    return (vx + w * tx + y * tz - z * ty,
+            vy + w * ty + z * tx - x * tz,
+            vz + w * tz + x * ty - y * tx)
+
+
+def capture_person_matches(frame, detections, width, height):
+    """按曝光位置在每个原图框内查找唯一人物，匹配过程不使用分类结果。"""
+    matches = [None] * len(detections)
+    if not detections or not isinstance(frame, dict) or not frame.get("people_at_capture"):
+        return matches
+    try:
+        cx, cy, cz = frame["position_m"]
+        (w, x, y, z), focal = _camera_geometry(frame, width)
+    except (ValueError, KeyError, TypeError):
+        return matches
+    inverse = (w, -x, -y, -z)
+    # 站立、弯腰和倒地时，YOLO框可能覆盖胶囊不同高度，而非固定的地面点。
+    for index, detection in enumerate(detections):
+        left, top, right, bottom = (value * size / 1000
+                                    for value, size in zip(detection["bbox"], (width, height, width, height)))
+        candidates = set()
+        for person in frame["people_at_capture"]:
+            if not isinstance(person, dict) or not SIMULATION_PERSON_ID.fullmatch(str(person.get("person_id", ""))):
+                continue
+            if person["movement_m"] > 2.0:
+                continue
+            px, py, pz = person["center_m"]
+            for offset in (-0.85, 0, 0.85):
+                depth, rightward, downward = _rotate((px - cx, py - cy, cz - pz - offset), inverse)
+                if depth <= 0:
+                    continue
+                u, v = width / 2 + focal * rightward / depth, height / 2 + focal * downward / depth
+                dx, dy = max(left - u, 0, u - right), max(top - v, 0, v - bottom)
+                margin = focal * (0.85 + person["movement_m"] / 2) / depth
+                if math.hypot(dx, dy) <= margin:
+                    candidates.add(person["person_id"])
+                    break
+        if len(candidates) == 1:
+            matches[index] = candidates.pop()
+    return matches
+
+
 def locate_target(image_path, bbox):
     """bbox为原图0–1000归一化框；返回地面UE世界XYZ米制坐标。
 
@@ -94,27 +161,13 @@ def locate_target(image_path, bbox):
     if not frame or "camera_orientation_ned" not in frame or "camera_fov_deg" not in frame:
         raise ValueError("目标照片缺少曝光相机姿态或视场角，无法定位地面位置")
     position = _xyz(frame["position_m"], "曝光位置")
-    fov = frame["camera_fov_deg"]
-    if type(fov) not in (int, float) or not math.isfinite(fov) or not 0 < fov < 180:
-        raise ValueError("曝光相机视场角无效")
-    orientation = frame["camera_orientation_ned"]
-    q = [orientation[key] for key in ("w_val", "x_val", "y_val", "z_val")]
-    if any(type(v) not in (int, float) or not math.isfinite(v) for v in q):
-        raise ValueError("曝光相机姿态无效")
-    norm = math.hypot(*q)
-    if norm < 1e-8:
-        raise ValueError("曝光相机姿态无效")
-    w, x, y, z = (v / norm for v in q)
     with Image.open(path) as image:
         width, height = image.size
-    focal = width / (2 * math.tan(math.radians(fov) / 2))
+    quaternion, focal = _camera_geometry(frame, width)
     # AirSim相机局部轴：X向前、Y向右、Z向下。使用原图框中心。
     vx, vy, vz = (1.0, ((bbox[0] + bbox[2]) / 2000 * width - width / 2) / focal,
                   ((bbox[1] + bbox[3]) / 2000 * height - height / 2) / focal)
-    tx, ty, tz = 2 * (y * vz - z * vy), 2 * (z * vx - x * vz), 2 * (x * vy - y * vx)
-    ned = (vx + w * tx + y * tz - z * ty,
-           vy + w * ty + z * tx - x * tz,
-           vz + w * tz + x * ty - y * tx)
+    ned = _rotate((vx, vy, vz), quaternion)
     length = math.hypot(*ned)
     direction = (ned[0] / length, ned[1] / length, -ned[2] / length)
     if direction[2] >= -0.1:
@@ -153,12 +206,26 @@ class SearchVisionPipeline:
         from Model.yolov26.predict import YoloPredictor
 
         self.predictor = YoloPredictor()
-        # 没有目标的照片不创建大模型客户端，也不发出图片请求。
         self.analyzer = None
+        self.warmed = False
 
-    def __call__(self, image_path):
+    def _get_analyzer(self):
+        if self.analyzer is None:
+            from llm.vision import VisionAnalyzer
+
+            self.analyzer = VisionAnalyzer()
+        return self.analyzer
+
+    def warmup(self):
+        if not self.warmed:
+            self.predictor.warmup()
+            self.warmed = True
+
+    def __call__(self, image_path, *, frame=None):
         image_path = Path(image_path).resolve()
-        yolo = self.predictor.predict(image_path)
+        simulation = frame is not None
+        options = {"conf": SIMULATION_PERSON_CONFIDENCE} if simulation else {}
+        yolo = self.predictor.predict(image_path, dual_scale=True, **options)
         if not yolo["detections"]:
             # 只向网页返回计数信息，不创建任何检测或大模型输出文件。
             return {
@@ -170,6 +237,12 @@ class SearchVisionPipeline:
         yolo_dir = Path(yolo["artifacts"]["json"]).parent
         output_dir = image_path.parent.parent / "llm_analysis"
         width, height = yolo["image_size"]["width"], yolo["image_size"]["height"]
+        boxes = [
+            {"bbox": [x * 1000 / size for x, size in zip(target["bbox_xyxy"], (width, height, width, height))]}
+            for target in yolo["detections"]
+        ]
+        if simulation:
+            return self._simulation_result(image_path, output_dir, yolo["detections"], frame, boxes, width, height)
         targets, detections, errors = [], [], []
         llm_requested = False
         for index, target in enumerate(yolo["detections"], 1):
@@ -179,29 +252,24 @@ class SearchVisionPipeline:
             record["llm_request_started_at"] = None
             record["llm_request_finished_at"] = None
             try:
-                if self.analyzer is None:
-                    from llm.vision import VisionAnalyzer
-
-                    self.analyzer = VisionAnalyzer()
+                analyzer = self._get_analyzer()
                 llm_requested = True
                 context = target_context(target)
                 # 计时覆盖目标图片输入到结果返回（含失败），排除 YOLO 和客户端初始化。
                 record["llm_request_started_at"] = datetime.now(LOG_TIMEZONE).isoformat(timespec="milliseconds")
                 started = time.perf_counter()
                 try:
-                    analysis = self.analyzer(yolo_dir / target["crop_image"], context=context)
+                    analysis = analyzer(yolo_dir / target["crop_image"], context=context)
                 finally:
                     record["llm_duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
                     record["llm_request_finished_at"] = datetime.now(LOG_TIMEZONE).isoformat(timespec="milliseconds")
                 record.update(analysis)
                 if analysis["status"] in ("patient", "armed_person"):
-                    x1, y1, x2, y2 = target["bbox_xyxy"]
                     # 只转换 YOLO 原图像素框，大模型不生成或修正定位信息。
                     detections.append({
                         "status": analysis["status"],
                         "label": analysis["description"][:120],
-                        "bbox": [x1 / width * 1000, y1 / height * 1000,
-                                 x2 / width * 1000, y2 / height * 1000],
+                        **boxes[index - 1],
                     })
             except Exception as error:
                 from llm.utils.client import error_message
@@ -234,15 +302,44 @@ class SearchVisionPipeline:
         if not llm_requested:
             return result
 
+        self._write_result(image_path, output_dir, result, targets)
+        return result
+
+    def _simulation_result(self, image_path, output_dir, yolo_targets, frame, boxes, width, height):
+        associations = capture_person_matches(frame, boxes, width, height)
+        targets, detections, person_ids = [], [], []
+        for target, box, person_id in zip(yolo_targets, boxes, associations):
+            record = {**target, "crop_image": f"../yolo_detection/{target['crop_image']}"}
+            targets.append(record)
+            if person_id is None or person_id in person_ids:
+                record.update(status="unmatched" if person_id is None else "duplicate", person_id=person_id)
+                continue
+            kind = person_id.rsplit("_", 1)[0]
+            description = SIMULATION_DESCRIPTIONS[kind]
+            record.update(status=kind, description=description, person_id=person_id)
+            detections.append({"status": kind, "label": description, **box})
+            person_ids.append(person_id)
+        result = {
+            "status": "abnormal" if detections else "normal",
+            "description": "；".join(detection["label"] for detection in detections)[:2000],
+            "detections": detections, "person_matches": person_ids, "analysis_source": "simulation",
+            "yolo_detection_count": len(targets), "llm_skipped": True, "llm_requested": False,
+            "analysis_failed": False, "target_errors": [], "llm_duration_ms": 0,
+        }
+        self._write_result(image_path, output_dir, result, targets)
+        return result
+
+    @staticmethod
+    def _write_result(image_path, output_dir, result, targets):
         output_dir.mkdir(parents=True, exist_ok=True)
         report = {
             "source_image": f"../capture/{image_path.name}",
             "yolo_report": f"../yolo_detection/{image_path.stem}.json",
             **result, "targets": targets,
         }
-        if detections:
+        if result["detections"]:
             annotation = output_dir / "abnormal" / image_path.name
-            save_annotated_image(image_path, detections, annotation)
+            save_annotated_image(image_path, result["detections"], annotation)
             report["annotated_image"] = f"abnormal/{image_path.name}"
         report_path = output_dir / f"{image_path.stem}.json"
         temporary = report_path.with_suffix(".json.part")
@@ -250,7 +347,6 @@ class SearchVisionPipeline:
             json.dumps(report, ensure_ascii=False, allow_nan=False, indent=2) + "\n", encoding="utf-8"
         )
         temporary.replace(report_path)
-        return result
 
     def close(self):
         if self.analyzer is not None:

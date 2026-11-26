@@ -145,6 +145,8 @@ class SpatialGrid {
 }
 const zoneIndex = new SpatialGrid();
 const groups = new Map();
+// 这三个宿主地块的边界与第一学校、第一医院和第1公共运动场完全相同。
+const hiddenZoneIds = new Set(['R-4_1-1137', 'R-3_1-1183', 'R-3_1-0049']);
 const yieldFrame = () => new Promise(resolve => setTimeout(resolve, 0));
 
 async function loadJSON(name) {
@@ -170,6 +172,7 @@ function boundsOf(ring) {
   return b;
 }
 async function prepareGeometry() {
+  const visibleZoneParts = [];
   for (let i = 0; i < zones.features.length; i++) {
     const feature = zones.features[i];
     const polygons = feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates] : feature.geometry.coordinates;
@@ -177,13 +180,18 @@ async function prepareGeometry() {
     for (const rings of polygons) {
       const record = {feature, bounds: boundsOf(rings[0]), path: polygonPath(rings),
         exterior: rings[0], spawnPath: polygonPath([rings[0]])};
-      parts.push(record); zoneIndex.insert(record); zoneParts.push(record);
+      parts.push(record); zoneParts.push(record);
+      if (!hiddenZoneIds.has(feature.id)) {
+        zoneIndex.insert(record);
+        visibleZoneParts.push(record);
+      }
     }
     groups.set(feature.id, parts);
     if (i % 16 === 0) await yieldFrame();
   }
-  pointRecords = points.features;
-  await visuals.prepare(zoneParts, roads, colors);
+  pointRecords = points.features.filter(point => point.properties.point_type !== 'region_reference' ||
+    !hiddenZoneIds.has(point.properties.region_id));
+  await visuals.prepare(visibleZoneParts, roads, colors);
   rebuildZones();
 }
 function rebuildZones() {
@@ -653,7 +661,8 @@ $('export').onclick = exportSelection;
 $('search').oninput = () => {
   const query = $('search').value.trim().toLowerCase(); const target = $('results'); target.replaceChildren();
   if (!query || !ready) return;
-  const matches = [...zones.features, ...points.features, ...probeRecords].filter(f => [f.id, f.properties.name, f.properties.junction].some(v => String(v || '').toLowerCase().includes(query)));
+  const visibleZones = zones.features.filter(zone => !hiddenZoneIds.has(zone.id));
+  const matches = [...visibleZones, ...pointRecords, ...probeRecords].filter(f => [f.id, f.properties.name, f.properties.junction].some(v => String(v || '').toLowerCase().includes(query)));
   for (const f of matches.slice(0, 30)) target.append(resultButton(f));
   if (!matches.length) target.textContent = '没有匹配对象。';
 };
@@ -700,8 +709,7 @@ canvas.onpointerup = event => {
       : recentTrafficEvents(record).some(({position_m: [x, y]}) =>
         Math.hypot(x - point[0], y - point[1]) * state.scale < 13));
     const eventId = evidenceHit?.target_id || (target && target.id === pursuitSnapshot?.vehicle_id ? target.id : null);
-    if (eventId && $('abnormal-panel').hidden)
-      window.dispatchEvent(new CustomEvent('workspace:select-event', {detail: {id: eventId}}));
+    if ($('abnormal-panel').hidden && window.missionBriefingView?.focusTarget(eventId || target?.id)) return;
     else if (target) window.dispatchEvent(new CustomEvent('abnormal:select', {detail: {id: target.id}}));
     else showFeature(!$('abnormal-panel').hidden ? spawnZoneAt(point) : hitAt(...point));
   }
@@ -729,17 +737,17 @@ async function initialize() {
   }
   CityMapVisuals.legend(zones.categories, $('legend'));
   $('loading').textContent = '正在建立地图缓存…'; await prepareGeometry();
-  const verifiedPoints = points.features.filter(point => point.properties.execution_enabled === true).length;
+  const verifiedPoints = pointRecords.filter(point => point.properties.execution_enabled === true).length;
   $('point-mode').options[0].textContent = `仅静态核验点（${verifiedPoints}）`;
-  $('point-mode').options[1].textContent = `全部点位（${points.features.length}，含定位参考）`;
+  $('point-mode').options[1].textContent = `全部点位（${pointRecords.length}，含定位参考）`;
   ready = true;
   for (const id of ['search', 'category', 'point-mode', 'layer-buildings']) $(id).disabled = false;
   $('loading').hidden = true; fit();
   window.dispatchEvent(new Event('map:ready'));
 }
 
-background = new Image(); background.src = './assets/town12.png'; background.onload = schedule;
-background.onerror = () => { $('loading').textContent = '无法读取 assets/town12.png，请保留完整的 web 文件夹。'; };
+background = new Image(); background.src = './assets/city-map.png'; background.onload = schedule;
+background.onerror = () => { $('loading').textContent = '无法读取城区底图，请保留完整的 web 文件夹。'; };
 window.liveMap = {
   setPursuit,
   followPursuit() { pursuitFollowing = true; pursuitLocated = false; if (pursuitSnapshot) setPursuit(pursuitSnapshot); },
@@ -761,7 +769,10 @@ window.liveMap = {
     state.scale = Math.min(5, state.width / (bounds[2] - bounds[0] + 160), state.height / (bounds[3] - bounds[1] + 160));
     state.ox = state.width / 2 - (bounds[0] + bounds[2]) / 2 * state.scale;
     state.oy = state.height / 2 - (bounds[1] + bounds[3]) / 2 * state.scale;
+    pursuitFollowing = false;
+    window.dispatchEvent(new Event('workspace:show-map'));
     schedule();
+    return true;
   },
   setAbnormal(records, selectedId, session) {
     if (records !== abnormalRecords || session !== abnormalSession) {
@@ -784,6 +795,15 @@ window.liveMap = {
   selectZone(id, center = false) {
     const feature = zones?.features.find(zone => zone.id === id);
     if (feature) showFeature(feature, center);
+  },
+  centerEvidence(point) {
+    if (!ready || !Array.isArray(point) || point.length < 2 || !point.slice(0, 2).every(Number.isFinite)) return;
+    pursuitFollowing = false;
+    state.scale = Math.max(state.scale, 2.5);
+    state.ox = state.width / 2 - point[0] * state.scale;
+    state.oy = state.height / 2 - point[1] * state.scale;
+    window.dispatchEvent(new Event('workspace:show-map'));
+    schedule();
   },
   setPendingPoint(point) { pendingPoint = point; scheduleMarkers(); },
   centerTarget(id) {

@@ -420,7 +420,7 @@
   scenePlace.onclick = () => pickPosition(sceneKind.value);
   window.vehiclePursuit = {escape: id => runJob('escape', {target_id: id}),
     start: id => runJob('pursue', {target_id: id}),
-    get active() { return !!pursuitActive(); }, get busy() { return busy; }};
+    get active() { return !!pursuitActive(); }, get busy() { return busy; }, get online() { return online; }};
   window.addEventListener('keydown', event => { if (event.key === 'Escape' && picking) $('abnormal-cancel').click(); });
   window.addEventListener('abnormal:select', event => { $('abnormal-tab').click(); select(event.detail.id); });
   window.addEventListener('map:selection', event => {

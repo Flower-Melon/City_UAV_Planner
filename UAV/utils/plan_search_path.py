@@ -322,7 +322,7 @@ if __name__ == "__main__":
     root = Path(__file__).resolve().parents[2]
     output_path = root / "output" / "temp" / "plan_search_path.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with Image.open(root / "web" / "assets" / "town12.png") as background:
+    with Image.open(root / "web" / "assets" / "city-map.png") as background:
         picture = background.convert("RGB")
     drawing = ImageDraw.Draw(picture, "RGBA")
     try:

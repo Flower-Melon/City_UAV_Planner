@@ -11,7 +11,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "llm"
 
-from .utils.client import create_client, error_message
+from .utils.client import create_client, error_message, read_settings
 
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "search_vision.txt"
 
@@ -32,7 +32,13 @@ class VisionAnalyzer:
     def __init__(self, client=None, model=None):
         self.prompt = PROMPT_PATH.read_text(encoding="utf-8")
         self.owns_client = client is None
+        self.api = "responses"
         if client is None:
+            settings = read_settings()
+            if settings.get("LLM_BACKEND", "openai").strip().lower() == "openai":
+                self.api = settings.get("OPENAI_VISION_API", "responses").strip().lower()
+                if self.api not in ("responses", "qwen_chat"):
+                    raise ValueError("OPENAI_VISION_API 仅支持 responses 或 qwen_chat")
             client, default_model = create_client(timeout=25.0, max_retries=0, vision=True)
             # 超时分别应用于请求的各个网络阶段。
             model = model or default_model
@@ -51,17 +57,37 @@ class VisionAnalyzer:
         with Image.open(path) as image:
             width, height = image.size
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-        response = self.client.responses.create(
-            model=self.model, store=False, instructions=self.prompt, temperature=0,
-            reasoning={"effort": "minimal"}, text={"format": {"type": "json_object"}},
-            input=[{"role": "user", "content": [
-                {"type": "input_text", "text": (
-                    f"图片尺寸{width}×{height}像素。请将主要目标标识为normal、patient或armed_person，返回status和description，不返回坐标。"
-                    + (f"\n{context}" if context else ""))},
-                {"type": "input_image", "image_url": f"data:{mime};base64,{encoded}", "detail": "high"}]}])
-        if response.status != "completed":
-            raise RuntimeError("视觉模型响应未完成")
-        text = response.output_text.strip()
+        question = (
+            f"图片尺寸{width}×{height}像素。请将主要目标标识为normal、patient或armed_person，"
+            "返回status和description，不返回坐标。"
+            + (f"\n{context}" if context else "")
+        )
+        url = f"data:{mime};base64,{encoded}"
+        if self.api == "qwen_chat":
+            response = self.client.chat.completions.create(
+                model=self.model, store=False, temperature=0, max_tokens=160,
+                extra_body={"enable_thinking": False}, response_format={"type": "json_object"},
+                messages=[{"role": "system", "content": self.prompt}, {"role": "user", "content": [
+                    {"type": "text", "text": question},
+                    {"type": "image_url", "image_url": {"url": url}},
+                ]}])
+            if not response.choices or response.choices[0].finish_reason != "stop":
+                raise RuntimeError("视觉模型响应未完成")
+            output = response.choices[0].message.content
+        else:
+            response = self.client.responses.create(
+                model=self.model, store=False, instructions=self.prompt, temperature=0,
+                reasoning={"effort": "minimal"}, text={"format": {"type": "json_object"}},
+                input=[{"role": "user", "content": [
+                    {"type": "input_text", "text": question},
+                    {"type": "input_image", "image_url": url, "detail": "high"},
+                ]}])
+            if response.status != "completed":
+                raise RuntimeError("视觉模型响应未完成")
+            output = response.output_text
+        if not output:
+            raise RuntimeError("视觉模型未返回判断内容")
+        text = output.strip()
         if text.startswith("```json\n") and text.endswith("\n```"):
             text = text[8:-4]
         return self._validate_analysis(json.loads(text))

@@ -5,14 +5,7 @@
   const form = $('llm-form'), input = $('llm-instruction'), submit = $('llm-submit');
   const followupForm = $('llm-followup-form'), followupInput = $('llm-followup-input');
   const followupSubmit = $('llm-followup-submit'), newTask = $('llm-new-task');
-  const status = $('llm-status'), resultPanel = $('llm-result');
-  const planZones = $('llm-queue'), planNote = $('llm-model-note'), planActions = $('llm-plan-actions');
-  const taskLabels = {queued: '待派发', running: '执行中', analyzing: '分析中',
-    completed: '已完成', failed: '执行失败', skipped: '未执行'};
-  const monitorLabels = {queued: '等待分配', flying: '飞往区域中心', hovering: '高空悬停',
-    relocated: '已转往后续区域', failed: '监控失败', skipped: '未执行'};
-  const visionKinds = {patient: '医疗求助', armed_person: '持刀人员'};
-  let displayedZones = '';
+  const status = $('llm-status'), clarification = $('llm-clarification');
   const modelSelect = $('llm-model-select'), modelInfo = $('llm-model-info');
   const modelRetry = $('llm-model-retry');
   let modelBackend = null, modelPending = false;
@@ -20,108 +13,19 @@
   let needsClarification = false;
   let checking = true, flying = false, mission = null, pollTimer;
   let resetting = false, resetFailed = false, generation = 0, planningController = null;
-  let visionMission = null;
-  const shownAnomalies = new Map();
-  let trafficMission = null;
-
-  function annotatedImage(record) {
-    const view = document.createElement('div'); view.className = 'llm-anomaly-image';
-    const image = document.createElement('img');
-    image.src = record.image_url; image.alt = record.description;
-    view.append(image);
-    for (const detection of record.detections) {
-      const [x1, y1, x2, y2] = detection.bbox;
-      const box = document.createElement('div'); box.className = 'llm-anomaly-box';
-      Object.assign(box.style, {left: `${x1 / 10}%`, top: `${y1 / 10}%`,
-        width: `${(x2 - x1) / 10}%`, height: `${(y2 - y1) / 10}%`});
-      const label = document.createElement('span');
-      label.textContent = visionKinds[detection.status] || '识别目标';
-      box.dataset.align = x1 > 650 ? 'end' : 'start';
-      box.dataset.labelPosition = y1 < 150 ? 'below' : 'above';
-      box.title = detection.label || label.textContent;
-      box.append(label); view.append(box);
-    }
-    return view;
-  }
-
-  function showVision(execution) {
-    const vision = execution?.vision;
-    const missionId = vision ? execution.mission_id : null;
-    const container = $('llm-anomalies');
-    if (visionMission !== missionId) {
-      visionMission = missionId; shownAnomalies.clear();
-      container.replaceChildren();
-    }
-    const error = vision?.errors?.[0]?.error;
-    $('llm-vision-error').hidden = !error;
-    $('llm-vision-error').textContent = error ? `部分目标识别或定位未完成：${error}` : '';
-    if (!vision) return;
-    const targets = vision.targets ?? (vision.anomalies || []).map(record =>
-      ({target_id: `${record.task_id}:${record.image}`, first_observation: record, sightings: 1}));
-    const targetIds = new Set(targets.map(target => target.target_id));
-    for (const [key, entry] of shownAnomalies) {
-      if (!targetIds.has(key)) { entry.card.remove(); shownAnomalies.delete(key); }
-    }
-    for (const [index, target] of targets.entries()) {
-      const record = target.first_observation;
-      const key = target.target_id;
-      const zone = window.liveMap?.getZone(record.zone_id)?.properties.name || record.zone_id;
-      const signature = JSON.stringify([record.task_id, record.image, record.detections,
-        zone, target.person_id, target.sightings, target.location_error]);
-      let entry = shownAnomalies.get(key);
-      if (!entry) {
-        const card = document.createElement('article'); card.className = 'llm-anomaly-card';
-        card.dataset.reviewId = `person:${key}`;
-        entry = {card, signature: null}; shownAnomalies.set(key, entry);
-      }
-      const card = entry.card;
-      if (container.children[index] !== card) container.insertBefore(card, container.children[index] || null);
-      if (entry.signature === signature) continue;
-      entry.signature = signature;
-      const categories = [...new Set(record.detections.map(detection => visionKinds[detection.status]).filter(Boolean))];
-      const title = categories.join('、') || '人员异常';
-      const heading = document.createElement('div'); heading.className = 'event-person-heading';
-      const label = document.createElement('h4'); label.textContent = title;
-      const metadata = document.createElement('p');
-      metadata.textContent = [zone, record.drone_id, target.person_id].filter(Boolean).join(' · ');
-      heading.append(label, metadata);
-      const button = document.createElement('button'); button.type = 'button';
-      button.className = 'llm-anomaly-open'; button.setAttribute('aria-label', `放大异常照片 ${record.image}`);
-      const cue = document.createElement('span'); cue.className = 'event-photo-cue'; cue.textContent = '放大截图';
-      button.append(annotatedImage(record), cue);
-      const description = document.createElement('p'); description.className = 'event-person-description';
-      description.textContent = record.description;
-      const footer = document.createElement('p'); footer.className = 'event-person-meta';
-      footer.textContent = [`首次图像 ${record.image}`, target.sightings > 1 ? `合并 ${target.sightings} 帧识别` : '',
-        target.location_error].filter(Boolean).join(' · ');
-      button.onclick = () => {
-        $('llm-image-dialog').querySelector('h2').textContent = '人员异常照片';
-        $('llm-image-detail').replaceChildren(annotatedImage(record));
-        const caption = document.createElement('p'); caption.textContent = [title, record.description, target.location_error].filter(Boolean).join(' · ');
-        $('llm-image-detail').append(caption); $('llm-image-dialog').showModal();
-      };
-      card.replaceChildren(heading, button, description, footer);
-    }
-  }
   $('llm-image-close').onclick = () => $('llm-image-dialog').close();
 
   function showTraffic(execution) {
     const traffic = execution?.traffic;
-    const missionId = traffic ? execution.mission_id : null;
-    if (trafficMission !== missionId) {
-      trafficMission = missionId;
-      window.trafficView.clear();
-    }
-    if (traffic) window.trafficView.render(execution);
-    const error = traffic?.errors?.[0]?.error || execution?.tasks.find(t => t.monitor?.traffic?.fusion?.error)?.monitor.traffic.fusion.error;
-    $('llm-traffic-error').hidden = !error;
-    $('llm-traffic-error').textContent = error ? '部分监控暂不可用' : '';
+    window.liveMap?.setTraffic((traffic?.targets || []).filter(record => record.events.length || record.status === 'confirmed'));
+    if (traffic?.pursuit) window.pursuitView.update(traffic.pursuit);
   }
 
   // 根据规划与飞行状态锁定输入，防止刷新或重复点击再次派发。
   function controls() {
     for (const element of [submit, input, followupSubmit, followupInput])
       element.disabled = pending || checking || flying || resetting || resetFailed || modelPending || !modelBackend;
+    form.hidden = !!mission || needsClarification;
     $('task-presets').hidden = form.hidden;
     for (const button of $('task-presets').querySelectorAll('button')) button.disabled = input.disabled;
     const modelLocked = modelPending || pending || checking || flying || resetting || resetFailed;
@@ -184,62 +88,12 @@
   };
   modelRetry.onclick = () => { if (!modelRetry.disabled) void updateBackend(); };
 
-  function renderPlanZones(tasks) {
-    const zones = tasks.map(task => {
-      const id = task.target.zone_id;
-      return {id, name: window.liveMap?.getZone(id)?.properties.name || id, status: task.status || 'queued',
-        search: task.drone_id, monitor: task.monitor?.drone_id,
-        monitorStatus: monitorLabels[task.monitor?.status] || task.monitor?.status, error: task.error};
-    });
-    const signature = JSON.stringify(zones);
-    if (signature === displayedZones) return;
-    displayedZones = signature;
-    $('llm-plan-dispatch').hidden = !zones.length;
-    $('llm-plan-count').textContent = `${zones.length} 个巡查区域`;
-    const template = $('llm-plan-zone');
-    const cards = zones.map(zone => {
-      const card = template.content.cloneNode(true);
-      const field = name => card.querySelector(`[data-plan-${name}]`);
-      field('zone').textContent = zone.name;
-      field('code').textContent = zone.id;
-      field('code').hidden = zone.id === zone.name;
-      field('state').textContent = taskLabels[zone.status] || '状态待确认';
-      field('state').dataset.state = zone.status;
-      field('search').textContent = zone.search || '待分配';
-      field('monitor').textContent = zone.monitor || '待分配';
-      field('monitor-state').textContent = zone.monitorStatus || '';
-      field('monitor-state').hidden = !zone.monitorStatus || !zone.monitor && zone.monitorStatus === '等待分配';
-      field('error').textContent = zone.error || '';
-      field('error').hidden = !zone.error;
-      return card;
-    });
-    planZones.replaceChildren(...cards);
-  }
   window.addEventListener('map:ready', () => {
     if (mission) {
-      renderPlanZones(mission.tasks);
-      showVision(mission);
       showTraffic(mission);
       window.dispatchEvent(new CustomEvent('workspace:mission', {detail: mission}));
     }
   });
-
-  function showPlanResult(plan, instruction, duration = '') {
-    const clarification = plan.status === 'needs_clarification';
-    $('llm-answer-heading').textContent = clarification ? '需要你补充' : '巡查计划';
-    $('llm-submitted').textContent = instruction;
-    $('llm-answer').textContent = plan.message;
-    $('llm-elapsed').textContent = duration ? `规划耗时 ${duration} 秒` : '';
-    $('llm-elapsed').hidden = !duration;
-    planNote.open = clarification;
-    $('llm-command-panel').hidden = clarification;
-    const commands = plan.commands;
-    $('llm-commands').textContent = clarification ? '' :
-      JSON.stringify(commands.length === 1 ? commands[0] : {tasks: commands}, null, 2);
-    resultPanel.hidden = false;
-    resultPanel.open = clarification;
-    form.hidden = true;
-  }
 
   // 展示真实巡查任务状态。
   function showMission(data) {
@@ -262,7 +116,6 @@
       return;
     }
     mission = data.execution;
-    showVision(mission);
     showTraffic(mission);
     window.dispatchEvent(new CustomEvent('workspace:mission', {detail: mission}));
     flying = !!data.starting || !!data.uncertain || !!mission?.traffic?.active ||
@@ -270,28 +123,9 @@
       !!mission && !['completed', 'failed'].includes(mission.status);
     if (mission || flying) needsClarification = false;
     if (mission) {
-      renderPlanZones(mission.tasks);
-      const actionLines = [];
-      const rescueLabels = {locating: '定位地面落点', dispatching: '正在派机', delivering: '执行药品投递',
-        returning: '投递完成，正在返航', delivered: '投递完成，已返航降落', failed: '失败', uncertain: '执行状态未确认', stopped: '已停止'};
       const rescues = mission.rescues || [];
-      if (rescues.length) actionLines.push('药品救援', ...rescues.map(rescue =>
-        `${rescue.rescue_id} · ${rescue.zone_id} · ${rescue.image} → ${rescue.drone_id || '尚未分配'}（${rescueLabels[rescue.status] || rescue.status}）` +
-        (rescue.target_position ? `；落点 [${rescue.target_position.map(value => value.toFixed(1)).join(', ')}] 米` : '') +
-        (rescue.error ? `：${rescue.error}` : '')));
       const delivering = rescues.some(rescue => ['dispatching', 'delivering'].includes(rescue.status));
-      const responseLabels = {queued: '等待前一目标处置', dispatching: '正在派机', responding: '抵近并执行投网',
-        resolved: '处置完成，已返航降落', failed: '失败', uncertain: '执行状态未确认', stopped: '已停止'};
       const responses = mission.responses || [];
-      const phaseLabels = {approaching: '抵近目标', threat: '持刀威胁', following: '跑开与无人机跟随',
-        confronting: '转身对抗', netting: '投网与倒地', returning: '处置完成，正在返航', resolved: '处置完成'};
-      if (responses.length) actionLines.push('持刀人员处置', ...responses.map(response =>
-        `${response.response_id} · ${response.zone_id} · ${response.image} → ${response.drone_id || '尚未分配'}（${response.status === 'responding' && phaseLabels[response.phase] || responseLabels[response.status] || response.status}）` +
-        (response.person_id ? `；人物 ${response.person_id}` : '') +
-        (response.error ? `：${response.error}` : '')));
-      const actionText = actionLines.join('\n');
-      if ($('llm-plan-action-log').textContent !== actionText) $('llm-plan-action-log').textContent = actionText;
-      planActions.hidden = !actionLines.length;
       const responding = responses.some(response => ['queued', 'dispatching', 'responding'].includes(response.status));
       const messages = {running: mission.tasks.some(task => task.status === 'analyzing') ?
         '巡查机已返航，正在完成照片分析。' : mission.tasks.some(task => task.monitor.status === 'flying')
@@ -322,7 +156,6 @@
       setStatus(pursuit?.status === 'failed' || !pursuit && mission.status === 'failed' ? 'error' : flying ? 'busy' : 'ready',
         pursuitMessage || messages[mission.status] || '正在确认执行状态…');
       newTask.hidden = false;
-      if (resultPanel.hidden && data.plan) showPlanResult(data.plan, '已恢复最近巡查任务');
     } else if (flying) setStatus('busy', '正在确认任务派发状态，请勿重复提交。');
     if (data.uncertain) setStatus('error', '执行状态尚未确认，正在重新查询；请勿重复提交。');
     controls();
@@ -370,13 +203,8 @@
     setStatus('busy', '正在读取无人机状态并查询地图，请稍候…');
     const controller = new AbortController();
     planningController = controller;
-    const started = performance.now();
-    const elapsed = () => ((performance.now() - started) / 1000).toFixed(1);
-    const ticker = setInterval(() => {
-      if (current !== generation || resetting) return;
-      status.textContent = `正在查询地图并等待模型判断 · 已用 ${Math.floor((performance.now() - started) / 1000)} 秒`;
-    }, 1000);
     const timeout = setTimeout(() => controller.abort(), 675000);
+    let focusFollowup = false;
     try {
       const response = await fetch('/api/llm/plan', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -393,7 +221,8 @@
         throw new Error('服务返回格式异常，请重试。');
       }
       const ready = result.status === 'ready';
-      needsClarification = result.status === 'needs_clarification';
+      if (ready && !result.execution) throw Error('执行服务没有返回任务状态，请刷新页面核实。');
+      needsClarification = !ready;
       const answer = result.message;
       if (previousTurn) {
         for (const [label, text] of [['你', previousTurn.instruction], ['助手', previousTurn.answer]]) {
@@ -406,17 +235,15 @@
       conversation.push({role: 'user', content: instruction}, {role: 'assistant', content: JSON.stringify({
         status: result.status, message: answer, tasks: commands.map(({sequence, ...task}) => task)})});
       previousTurn = {instruction, answer};
-      showPlanResult(result, instruction, elapsed());
-      renderPlanZones(ready ? commands : []);
+      clarification.textContent = needsClarification ? answer : '';
       newTask.hidden = false;
       followupInput.value = '';
       setStatus(ready ? 'busy' : 'question', ready ? '规划完成 · 正在确认执行状态。' : '等待补充信息 · 未生成指令。');
       if (ready) {
-        if (!result.execution) throw Error('执行服务没有返回任务状态，请刷新页面核实。');
-        showMission({execution: result.execution, plan: result});
+        showMission({execution: result.execution});
         if (flying) { clearTimeout(pollTimer); pollTimer = setTimeout(pollMission, 1000); }
       }
-      if (needsClarification) followupInput.focus();
+      focusFollowup = needsClarification;
     } catch (error) {
       if (current !== generation) return;
       const message = error.name === 'AbortError' ? '规划请求超时，正在核实是否已开始执行。' : error.message;
@@ -425,11 +252,12 @@
       checking = true; await pollMission(false);
       if (!checking && !flying) setStatus('error', message);
     } finally {
-      clearTimeout(timeout); clearInterval(ticker);
+      clearTimeout(timeout);
       if (current === generation) {
         pending = false; planningController = null;
         controls(); buttonLabel.textContent = buttonText;
         $('llm-panel').removeAttribute('aria-busy');
+        if (focusFollowup && !followupForm.hidden) followupInput.focus();
       }
     }
   };
@@ -444,16 +272,9 @@
     needsClarification = false;
     input.value = ''; followupInput.value = ''; form.hidden = false;
     $('llm-messages').replaceChildren(); $('llm-history').hidden = true;
-    $('llm-history').open = false; resultPanel.hidden = true;
-    renderPlanZones([]);
-    planNote.open = false;
-    planActions.hidden = true; planActions.open = false;
-    $('llm-command-panel').open = false;
-    $('llm-plan-action-log').textContent = '';
-    $('llm-commands').textContent = ''; $('llm-answer').textContent = '';
-    $('llm-submitted').textContent = ''; $('llm-elapsed').textContent = '';
-    $('llm-answer-heading').textContent = '巡查计划';
-    showVision(null); showTraffic(null);
+    $('llm-history').open = false;
+    clarification.textContent = '';
+    showTraffic(null);
     window.dispatchEvent(new CustomEvent('workspace:mission', {detail: null}));
     if ($('llm-image-dialog').open) $('llm-image-dialog').close();
   }

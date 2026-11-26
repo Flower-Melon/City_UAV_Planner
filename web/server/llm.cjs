@@ -131,7 +131,7 @@ function monitoredTargets(tasks) {
 
 // 按区域排队；每组配备巡查机与高空监控机，监控机可在组内转场复用。
 class MissionExecutor {
-  constructor({root, runtime, timeoutMs = 15000, visionPollMs = 500}) {
+  constructor({root, runtime, timeoutMs = 15000, visionPollMs = 500, onChange = () => {}}) {
     this.root = root;
     this.runtime = runtime;
     this.timeoutMs = timeoutMs;
@@ -141,6 +141,7 @@ class MissionExecutor {
     this.closed = false;
     this.runPromise = null;
     this.visionPollMs = visionPollMs;
+    this.visionWaiters = new Map();
     this.imageFiles = new Map();
     this.trafficSessions = new Map();
     this.trafficIntervalMs = 200;
@@ -151,7 +152,10 @@ class MissionExecutor {
     this.pursuit = null;
     this.pursuitFrames = new Map();
     this.pursuitPromise = null;
+    this.onChange = onChange;
   }
+
+  changed() { this.onChange(this); }
 
   assertIdle() {
     if (this.closed) throw requestError('执行服务已停止，请重启网页服务。', 503);
@@ -247,6 +251,7 @@ class MissionExecutor {
       this.mission.status = this.mission.error_type || this.mission.tasks.some(task => task.status !== 'completed') ||
         this.mission.rescues.some(rescue => rescue.status !== 'delivered') ||
         this.mission.responses.some(response => response.status !== 'resolved') ? 'failed' : 'completed';
+      this.changed();
     }
   }
 
@@ -273,6 +278,7 @@ class MissionExecutor {
         if (this.closed || this.uncertain) throw Error('任务已停止，未启动区域巡查。');
         analysis = this.analyzeTask(task, () => finished, workerId).catch(error => {
           task.vision.status = 'failed'; task.vision.error = error.message;
+          this.changed();
         });
         const result = await this.runtime.request('search', {
           target: structuredClone(task.target),
@@ -281,18 +287,26 @@ class MissionExecutor {
         }, {channel: `search:${workerId}`, timeoutMs: 0, onEvent: event => {
           if (event?.type === 'drone_selected') this.setSelectedDrone(task, event.drone_id);
           if (event?.type === 'capture_directory') this.setCaptureDirectory(task, event.capture_directory);
+          if (event?.type === 'search_frame_saved') this.visionWaiters.get(task)?.();
+          if (event?.type === 'search_started' && !task.search_started) {
+            task.search_started = true;
+            this.changed();
+          }
         }});
         if (result?.completed !== true) throw Object.assign(Error('搜索进程未确认任务完成。'), {uncertain: true});
         this.setSelectedDrone(task, result.drone_id);
         this.setCaptureDirectory(task, result.capture_directory);
         task.status = 'analyzing';
+        this.changed();
       } catch (error) {
         Object.assign(task, {status: 'failed', error_type: error.errorType || error.name, error: error.message});
         if (task.vision.status === 'queued') task.vision.status = 'skipped';
         this.uncertain ||= !!error.uncertain;
         failed = true;
+        this.changed();
       } finally {
         finished = true;
+        this.visionWaiters.get(task)?.();
         const [monitorError] = await Promise.all([monitoring.completed, analysis]);
         if (monitorError) {
           Object.assign(task, {status: 'failed', error_type: monitorError.errorType || monitorError.name,
@@ -300,6 +314,7 @@ class MissionExecutor {
           failed = true;
         }
         if (task.status === 'analyzing') task.status = 'completed';
+        this.changed();
       }
     }
   }
@@ -328,11 +343,13 @@ class MissionExecutor {
         throw Object.assign(Error('监控进程未确认到位悬停。'), {uncertain: true});
       assign(result.drone_id);
       Object.assign(monitor, {status: 'hovering', position_m: result.position_m, flight_height: result.flight_height});
+      this.changed();
       await this.startTraffic(task, workerId);
       return null;
     }).catch(error => {
       Object.assign(monitor, {status: 'failed', error_type: error.errorType || error.name, error: error.message});
       this.uncertain ||= !!error.uncertain;
+      this.changed();
       selectionFailed(error);
       return error;
     });
@@ -415,11 +432,13 @@ class MissionExecutor {
           }
           failures = 0;
           delete state.error;
+          this.changed();
         } catch (error) {
           if (!session.active || this.closed) break;
           state.error = error.message;
           state.vehicles = [];
           state.status = ++failures >= 3 ? 'failed' : 'retrying';
+          this.changed();
           if (failures >= 3) break;
         }
         await new Promise(resolve => setTimeout(resolve, Math.max(0, this.trafficIntervalMs - (Date.now() - started))));
@@ -434,6 +453,7 @@ class MissionExecutor {
         this.runtime.cancel(session.channel);
         state.vehicles = [];
         if (state.status !== 'failed') state.status = 'stopped';
+        this.changed();
       }
     }
   }
@@ -449,6 +469,7 @@ class MissionExecutor {
         await this.runtime.request('traffic_stop', {}, {channel: session.channel, timeoutMs: 15000});
         this.runtime.cancel(session.channel);
         session.state.status = 'stopped';
+        this.changed();
       }
       this.trafficSessions.delete(workerId);
     })();
@@ -471,6 +492,7 @@ class MissionExecutor {
     const state = this.pursuit = {status: 'preparing', vehicle_id: target.id, zone_id: task?.target.zone_id ?? target.zone_id,
       observer_id: observer, elapsed_s: 0, pursuit_id: randomUUID(),
       drone_states: [], position_source: 'ue_global_position', position_updates: 0};
+    this.changed();
     // 预检期间暂停新的转场，避免与追踪同时调度无人机。
     let released;
     this.pursuitPromise = new Promise(resolve => { released = resolve; });
@@ -486,6 +508,7 @@ class MissionExecutor {
       return {target_id: target.id, pursuit: structuredClone(state)};
     } catch (error) {
       Object.assign(state, {status: 'failed', error: error.message});
+      this.changed();
       released();
       throw error;
     }
@@ -504,7 +527,10 @@ class MissionExecutor {
         target_id: state.vehicle_id, observer_id: state.observer_id,
         flight_speed: flight.flight_speed, by_drone: flight.by_drone
       }, {channel, timeoutMs: 0, onEvent: event => {
-        if (event?.type === 'pursuit_state') Object.assign(state, event.state);
+        if (event?.type === 'pursuit_state') {
+          Object.assign(state, event.state);
+          this.changed();
+        }
         if (event?.type === 'pursuit_frame') {
           const previous = this.pursuitFrames.get(event.frame.camera);
           const frame = {...event.frame, sequence: (previous?.latest.sequence || 0) + 1};
@@ -518,6 +544,7 @@ class MissionExecutor {
       Object.assign(state, {status: this.closed ? 'stopped' : 'failed', error: error.message});
     } finally {
       this.runtime.cancel(channel);
+      this.changed();
     }
   }
 
@@ -547,8 +574,10 @@ class MissionExecutor {
     if (typeof name !== 'string' || !name.trim() || name !== name.trim() ||
         task.drone_id && task.drone_id !== name || task.monitor.drone_id === name)
       throw Error('执行端返回的无人机ID无效或发生变更。');
+    const assigned = !task.drone_id;
     task.drone_id = name;
     this.writeTaskRecord(task);
+    if (assigned) this.changed();
   }
 
   setCaptureDirectory(task, directory) {
@@ -579,7 +608,12 @@ class MissionExecutor {
   async analyzeTask(task, finished, workerId) {
     const seen = new Set();
     const summary = task.vision;
+    const channel = `vision:${workerId}`;
     summary.status = 'running';
+    // 搜索机准备及前往现场时预热，首张照片仍走完整视觉判定。
+    void this.runtime.request('vision_warmup', {}, {channel, timeoutMs: 60000}).catch(() => {
+      // 正式请求会重试初始化，并按照片记录仍存在的错误。
+    });
     while (!this.closed) {
       const {directory, frames} = this.readFrames(task);
       summary.total = frames.length;
@@ -592,25 +626,26 @@ class MissionExecutor {
           sequence: task.sequence,
           zone_id: task.target.zone_id, position_m: frame.position_m, edge_id: frame.edge_id};
         try {
-          // 每个目标请求由模型客户端单独限制超时，整帧不再共用固定的两分钟额度。
           const result = await this.runtime.request('vision', {
-            image_path: path.relative(this.root, path.join(directory, frame.image))
-          }, {channel: `vision:${workerId}`, timeoutMs: 0});
+            image_path: path.relative(this.root, path.join(directory, frame.image)), frame
+          }, {channel, timeoutMs: 0});
           if (this.closed) break;
+          const simulation = result?.analysis_source === 'simulation';
           if (!result || !['normal', 'abnormal', 'uncertain'].includes(result.status) ||
               typeof result.description !== 'string' || !Array.isArray(result.detections) ||
               typeof result.llm_skipped !== 'boolean' || !Number.isSafeInteger(result.yolo_detection_count) ||
               typeof result.llm_requested !== 'boolean' || typeof result.analysis_failed !== 'boolean' ||
-              result.yolo_detection_count < 0 || result.llm_skipped !== (result.yolo_detection_count === 0) ||
+              result.yolo_detection_count < 0 || result.llm_skipped !== (simulation || result.yolo_detection_count === 0) ||
+              simulation && (!Array.isArray(result.person_matches) || result.person_matches.length !== result.detections.length) ||
               (result.status === 'abnormal') !== (result.detections.length > 0) ||
               result.detections.some(detection => !detection || !['patient', 'armed_person'].includes(detection.status) ||
                 typeof detection.label !== 'string' || !detection.label.trim() ||
                 !Array.isArray(detection.bbox) || detection.bbox.length !== 4 ||
                 detection.bbox.some(v => !Number.isFinite(v) || v < 0 || v > 1000) ||
                 detection.bbox[0] >= detection.bbox[2] || detection.bbox[1] >= detection.bbox[3]))
-            throw Error('视觉模型返回无效判断或异常框。');
+            throw Error('巡查照片的处理结果或异常框无效。');
           Object.assign(record, result);
-          if (result.llm_skipped) {
+          if (result.yolo_detection_count === 0) {
             summary.analyzed++; summary.filtered++; summary.normal++;
             continue;
           }
@@ -619,7 +654,7 @@ class MissionExecutor {
           if (result.analysis_failed)
             throw Error('本图所有目标的意图识别失败：' + (result.target_errors?.[0]?.error || result.description));
           summary.analyzed++; summary[result.status]++;
-          summary.llm_analyzed++;
+          if (result.llm_requested) summary.llm_analyzed++;
           // 图片可能同时包含病人和持刀人员，按目标分别计数并保留每个框的类别。
           for (const detection of result.detections) summary[detection.status]++;
           for (const error of result.target_errors || []) {
@@ -630,11 +665,16 @@ class MissionExecutor {
             const id = `${task.task_id}:${frame.image}`;
             this.imageFiles.set(id, path.join(directory, frame.image));
             record.image_url = `/api/llm/image?mission_id=${this.mission.mission_id}&id=${encodeURIComponent(id)}`;
-            summary.anomalies.push(record);
+            record.observed_at = Date.now();
+            record.detections.forEach((detection, index) => { detection.evidence_id = `${id}:${index}`; });
             const matched = new Set();
-            for (const detection of record.detections) {
+            for (const [index, detection] of record.detections.entries()) {
               if (this.closed) break;
-              await this.registerTarget(task, record, detection, workerId, matched);
+              await this.registerTarget(task, record, detection, result.person_matches?.[index], workerId, matched);
+            }
+            if (!this.closed) {
+              summary.anomalies.push(record);
+              this.changed();
             }
           }
         } catch (error) {
@@ -643,49 +683,73 @@ class MissionExecutor {
           summary.errors.push({image: frame.image, error: error.message});
         }
       }
-      // 完成标记可能在等待模型期间改变，重新读取清单后才能确认没有尾帧。
-      if (finished() && this.readFrames(task).frames.every(frame => seen.has(frame.image))) break;
-      await new Promise(resolve => setTimeout(resolve, this.visionPollMs));
+      // 处理期间可能已落盘下一张，先读清单再等新通知。
+      if (this.closed) break;
+      if (this.readFrames(task).frames.some(frame => !seen.has(frame.image))) continue;
+      if (finished()) break;
+      await new Promise(resolve => {
+        const wake = () => {
+          clearTimeout(timer);
+          this.visionWaiters.delete(task);
+          resolve();
+        };
+        const timer = setTimeout(wake, this.visionPollMs);
+        this.visionWaiters.set(task, wake);
+      });
     }
     summary.status = this.closed ? 'stopped' : summary.failed || summary.errors.length ? 'completed_with_errors' : 'completed';
+    this.changed();
   }
 
-  async registerTarget(task, record, detection, workerId, matched) {
-    let result;
-    try {
-      result = await this.runtime.request('demo_target', {
-        kind: detection.status, zone_id: task.target.zone_id
-      }, {channel: `location:${workerId}`, timeoutMs: this.timeoutMs});
-      if (this.closed) return;
-      if (typeof result?.person_id !== 'string' || !new RegExp(`^${detection.status}_[0-9]+$`).test(result.person_id) ||
-          result.zone_id !== task.target.zone_id ||
-          !Array.isArray(result.target_position) || result.target_position.length !== 3 ||
-          !result.target_position.every(Number.isFinite))
-        throw Error('未返回有效人物身份和真实地面坐标。');
-    } catch (error) {
-      if (this.closed) return;
-      detection.location_error = `演示目标读取失败：${error.message}`;
-      task.vision.errors.push({image: record.image, error: detection.location_error});
-      return; // 未登记目标的检测保留在照片中，不派发任务。
+  async registerTarget(task, record, detection, personId, workerId, matched) {
+    if (typeof personId !== 'string' || !/^(patient|armed_person)_[0-9]+$/.test(personId)) {
+      detection.location_error = '曝光画面未能唯一核验人物身份。';
+      return;
     }
-    const key = result.person_id;
-    // 登记期间没有await，多个工作组按同一仿真人物身份去重。
-    let target = this.targets.find(candidate => candidate.person_id === key);
-    Object.assign(detection, {person_id: result.person_id, position_m: [...result.target_position]});
+    let target = this.targets.find(candidate => candidate.person_id === personId);
+    let identity;
+    if (!target || observedBefore(target.last_observation, record)) {
+      try {
+        identity = await this.runtime.request('person_identity', {person_id: personId},
+          {channel: `location:${workerId}`, timeoutMs: this.timeoutMs});
+        if (this.closed) return;
+        if (identity?.person_id !== personId || identity.zone_id !== task.target.zone_id ||
+            !['patient', 'armed_person'].includes(identity.kind) ||
+            !personId.startsWith(identity.kind + '_') || !Array.isArray(identity.target_position) ||
+            identity.target_position.length !== 3 || !identity.target_position.every(Number.isFinite))
+          throw Error('未核验到本街区的人物身份和地面坐标。');
+      } catch (error) {
+        if (this.closed) return;
+        if (!target) {
+          detection.location_error = `人物身份核验失败：${error.message}`;
+          task.vision.errors.push({image: record.image, error: detection.location_error});
+          return;
+        }
+        identity = null;
+      }
+      // 等待身份返回时，其他工作组可能已登记同一个人。
+      target = this.targets.find(candidate => candidate.person_id === personId);
+    }
+    const kind = target?.status ?? identity.kind;
+    const position = identity?.target_position ?? target.position_m;
+    Object.assign(detection, {status: kind, person_id: personId, position_m: [...position]});
     const observation = {...record, description: detection.label, detections: [structuredClone(detection)]};
     if (!target) {
-      target = {target_id: `target_${this.targets.length + 1}`, status: detection.status,
-        person_id: result.person_id,
-        position_m: [...result.target_position], sightings: 0, rescue_id: null, response_id: null,
+      target = {target_id: `target_${this.targets.length + 1}`, status: kind,
+        evidence_id: detection.evidence_id,
+        person_id: personId,
+        position_m: [...position], sightings: 0, rescue_id: null, response_id: null,
         first_observation: observation, last_observation: observation};
       this.targets.push(target);
     } else {
       if (observedBefore(observation, target.first_observation)) target.first_observation = observation;
-      if (observedBefore(target.last_observation, observation)) target.last_observation = observation;
-      target.position_m = [...result.target_position];
+      if (observedBefore(target.last_observation, observation)) {
+        target.last_observation = observation;
+        target.position_m = [...position];
+      }
     }
-    if (!matched.has(key)) target.sightings++;
-    matched.add(key);
+    if (!matched.has(personId)) target.sightings++;
+    matched.add(personId);
     detection.target_id = target.target_id;
     if (target.status === 'patient' && !target.rescue_id) this.rescuePatient(target);
     if (target.status === 'armed_person' && !target.response_id) this.respondArmedPerson(target);
@@ -720,17 +784,21 @@ class MissionExecutor {
         throw Error('执行端返回的处置无人机ID无效或重复。');
       response.drone_id = name;
       response.status = 'responding';
+      this.changed();
     };
     try {
       if (this.closed || this.uncertain) throw Error('任务已停止或执行状态未确认，未派出处置机。');
       response.status = 'dispatching';
+      this.changed();
       const result = await this.runtime.request('respond_armed_person', {
         person_id: response.person_id, flight: this.mission.settings.tasks.response
       }, {channel, timeoutMs: 0, onEvent: event => {
         if (event?.type === 'drone_selected') assign(event.drone_id);
         if (event?.type === 'response_phase' &&
-            ['approaching', 'threat', 'following', 'confronting', 'netting', 'returning', 'resolved'].includes(event.phase))
+            ['approaching', 'threat', 'following', 'confronting', 'netting', 'returning', 'resolved'].includes(event.phase)) {
           response.phase = event.phase;
+          if (event.phase === 'returning') this.changed();
+        }
       }});
       if (result?.resolved !== true || result.returned !== true || result.person_id !== response.person_id ||
           !Array.isArray(result.target_position) || result.target_position.length !== 3 ||
@@ -744,6 +812,7 @@ class MissionExecutor {
         error_type: error.errorType || error.name, error: error.message});
     } finally {
       this.runtime.cancel(channel);
+      this.changed();
     }
   }
 
@@ -782,6 +851,7 @@ class MissionExecutor {
         throw Error('执行端返回的救援无人机ID无效或重复。');
       rescue.drone_id = name;
       rescue.status = 'delivering';
+      this.changed();
     };
     try {
       if (this.closed || this.uncertain) throw Error('任务已停止或执行状态未确认，未派出救援机。');
@@ -789,7 +859,10 @@ class MissionExecutor {
         person_id: rescue.person_id, flight: this.mission.settings.tasks.delivery
       }, {channel, timeoutMs: 0, onEvent: event => {
         if (event?.type === 'drone_selected') assign(event.drone_id);
-        if (event?.type === 'delivery_phase' && event.phase === 'returning') rescue.status = 'returning';
+        if (event?.type === 'delivery_phase' && event.phase === 'returning') {
+          rescue.status = 'returning';
+          this.changed();
+        }
         if (event?.type === 'patient_position_selected') {
           if (!Array.isArray(event.target_position) || event.target_position.length !== 3 || !event.target_position.every(Number.isFinite))
             throw Error('执行端返回的病人真实位置无效。');
@@ -808,6 +881,7 @@ class MissionExecutor {
         error_type: error.errorType || error.name, error: error.message});
     } finally {
       this.runtime.cancel(channel);
+      this.changed();
     }
   }
 
@@ -839,6 +913,7 @@ class MissionExecutor {
   }
   close() {
     this.closed = true;
+    for (const wake of this.visionWaiters.values()) wake();
     if (this.pursuitActive) this.stopPursuit(this.pursuit.vehicle_id);
     for (const session of this.trafficSessions.values()) {
       session.active = false;
@@ -853,7 +928,7 @@ class LlmController {
   constructor({root, getState = () => null, restartMonitor = () => {}, spawnProcess = spawn,
     timeoutMs = 660000, executionTimeoutMs = 15000, runtime = null}) {
     this.runtime = runtime || new PythonRuntime({root, spawnProcess});
-    this.executor = new MissionExecutor({root, runtime: this.runtime, timeoutMs: executionTimeoutMs});
+    this.executor = this.makeExecutor(root, executionTimeoutMs);
     this.briefing = new MissionFeed({root, runtime: this.runtime, getExecutor: () => this.executor,
       getMonitoredTargets: monitoredTargets});
     this.getState = getState;
@@ -871,7 +946,18 @@ class LlmController {
     this.closed = false;
   }
 
-  start() { this.runtime.start(); this.briefing.start(); }
+  makeExecutor(root, timeoutMs) {
+    return new MissionExecutor({root, runtime: this.runtime, timeoutMs, onChange: executor => {
+      if (this.briefingQueued) return;
+      this.briefingQueued = true;
+      queueMicrotask(() => {
+        this.briefingQueued = false;
+        if (this.executor === executor && !this.resetting && !this.closed) this.briefing.refresh();
+      });
+    }});
+  }
+
+  start() { this.runtime.start(); }
 
   startVehiclePursuit(target, flight) {
     if (this.resetting || this.planning || this.closed) throw requestError('正在规划、复位或停止，请稍后重试。', 409);
@@ -933,7 +1019,7 @@ class LlmController {
         await this.runtime.terminateAll();
         if (this.closed) return;
         await this.restartMonitor();
-        this.executor = new MissionExecutor({root: previous.root, runtime: this.runtime, timeoutMs: this.executionTimeoutMs});
+        this.executor = this.makeExecutor(previous.root, this.executionTimeoutMs);
         this.plan = null;
         this.resetCompleted = true;
         this.briefing.stage('reset', '机队复位完成');
@@ -983,14 +1069,28 @@ class LlmController {
     if (url.pathname === '/api/llm/backend') return this.handleBackend(request, response);
     if (url.pathname === '/api/llm/plan') return this.handlePlan(request, response);
     if (url.pathname === '/api/llm/mission') return this.handleMission(request, response);
-    if (url.pathname === '/api/llm/briefing') {
+    if (['/api/llm/briefing', '/api/llm/briefing/history'].includes(url.pathname)) {
       if (request.method !== 'GET') {
         response.setHeader('Allow', 'GET'); send(response, 405, {error: '请求方法错误。'}); return;
       }
       if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}`) {
         send(response, 403, {error: '请从本地地图页面查看战报。'}); return;
       }
-      send(response, 200, this.briefing.snapshot()); return;
+      if (url.pathname === '/api/llm/briefing') {
+        send(response, 200, this.briefing.snapshot()); return;
+      }
+      const id = url.searchParams.get('session_id');
+      if (id !== null && !/^[a-f0-9]{32}$/.test(id)) {
+        send(response, 400, {error: '无效的助手会话编号。'}); return;
+      }
+      try {
+        const {history, session} = this.briefing;
+        send(response, 200, id === null ? {sessions: history.list(session)} : {reports: history.read(id, session)});
+      } catch (error) {
+        console.warn(`无法读取助手输出历史 (${error.code || error.name})`);
+        send(response, 503, {error: '暂时无法读取助手输出历史。'});
+      }
+      return;
     }
     if (url.pathname === '/api/llm/image') return this.handleImage(request, response, url);
     if (url.pathname === '/api/llm/reset') return this.handleReset(request, response);
@@ -1078,13 +1178,14 @@ class LlmController {
       if (obsolete()) throw requestError('任务已取消。', 409);
       if (cancelled || response.destroyed || this.closed) return;
       phase = 'fleet';
-      briefingSession = this.briefing.begin();
-      const fleet = planningFleet(this.getState()) || await this.runtime.request('fleet', {},
+      const knownFleet = planningFleet(this.getState());
+      briefingSession = this.briefing.begin(instruction, knownFleet);
+      const fleet = knownFleet || await this.runtime.request('fleet', {},
         {channel: 'fleet', timeoutMs: this.executionTimeoutMs});
       if (obsolete()) throw requestError('任务已取消。', 409);
       if (cancelled || this.closed) return;
+      this.briefing.planningFleet(briefingSession, fleet);
       phase = 'plan';
-      this.briefing.stage('planning', '模型正在解析巡查指令', '结合地图和机队状态确定巡查区域。');
       const result = await this.runtime.request('plan', {instruction, conversation, fleet},
         {channel: 'planning', timeoutMs: this.timeoutMs});
       if (obsolete()) throw requestError('任务已取消。', 409);
@@ -1095,13 +1196,16 @@ class LlmController {
         throw Error('规划进程返回格式异常，请重试。');
       if (result.status === 'ready') {
         phase = 'dispatch'; dispatching = true; this.plan = structuredClone(result);
-        this.briefing.stage('dispatching', '已生成区域巡查计划', `准备派发 ${result.commands.length} 个巡查区域。`);
+        const areas = result.commands.map(command => this.briefing.zoneName(command?.target?.zone_id)).filter(Boolean);
+        this.briefing.stage('dispatching', '已确定巡查范围', '', areas.join('、'));
         const execution = await this.executor.start(result, flight, traffic);
         if (obsolete()) throw requestError('任务已取消。', 409);
-        this.briefing.bind(briefingSession, execution.mission_id);
+        this.briefing.bind(briefingSession, execution.mission_id, execution.tasks);
         send(response, 200, {...result, execution});
       } else {
-        this.briefing.stage('clarification', '等待补充巡查信息', '请查看任务计划中的模型提问。');
+        this.briefing.stage('clarification', '等待补充巡查信息', result.message);
+        this.briefing.saveOutput(briefingSession, {kind: 'clarification', summary: result.message,
+          revision: briefingSession.revision, evidence: [briefingSession.events.at(-1)]});
         send(response, 200, result);
       }
     } catch (error) {

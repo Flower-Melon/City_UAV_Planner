@@ -15,15 +15,19 @@ const llmAPI = new LlmController({root, getState: () => airsimAPI.getState(),
 const abnormalAPI = new AbnormalController({root,
   startPursuit: (target, flight) => llmAPI.startVehiclePursuit(target, flight),
   getPursuit: () => llmAPI.executor.pursuit,
+  onEscape: target => llmAPI.briefing.escape(target),
   executePersonAction: (target, flight, onProgress) => llmAPI.executePersonAction(target, flight, onProgress)});
-const identity = createHash('sha256').update('town12-live-viewer-v9-abnormal:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
+const identity = createHash('sha256').update('city-uav-viewer:' + (process.platform === 'win32' ? root.toLowerCase() : root)).digest('hex');
+const viewerHeader = 'x-city-uav-viewer';
+const revisionHeader = 'x-city-uav-revision';
 const revisionHash = createHash('sha256');
 for (const relative of ['web/serve.cjs', 'web/server/llm.cjs', 'web/server/python.cjs', 'web/js/flight-settings.js',
-  'web/server/mission-feed.cjs', 'llm/mission_briefing.py', 'llm/prompts/mission_briefing.txt',
+  'web/server/mission-feed.cjs', 'web/server/briefing-history.cjs', 'llm/mission_briefing.py', 'llm/prompts/mission_briefing.txt',
   'web/server/airsim.cjs',
   'web/server/abnormal.cjs', 'UAV/API/track_vehicle.py', 'UAV/runtime/flight_control.py',
   'UAV/runtime/pursuit_camera.py', 'Scene/vehicle/escape_vehicle.py',
-  'web/utils/python_bridge.py', 'web/utils/traffic_pipeline.py',
+  'web/utils/python_bridge.py', 'web/utils/traffic_pipeline.py', 'web/utils/vision_pipeline.py',
+  'llm/vision.py', 'llm/prompts/search_vision.txt', 'Model/yolov26/predict.py', 'UAV/API/search_area.py',
   'UAV/API/reset_uav.py'])
   revisionHash.update(relative).update(fs.readFileSync(path.join(root, relative)));
 const revision = revisionHash.digest('hex');
@@ -33,8 +37,8 @@ const types = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
   '.png': 'image/png', '.md': 'text/plain; charset=utf-8'};
 
 const server = http.createServer((request, response) => {
-  response.setHeader('X-Town12-Viewer', identity);
-  response.setHeader('X-Town12-Revision', revision);
+  response.setHeader(viewerHeader, identity);
+  response.setHeader(revisionHeader, revision);
   try {
     const url = new URL(request.url, 'http://127.0.0.1');
     const pathname = decodeURIComponent(url.pathname);
@@ -72,8 +76,8 @@ function open(url) {
 function isExistingViewer(port) {
   return new Promise(resolve => {
     const request = http.request({host: '127.0.0.1', port, path: '/web/index.html', method: 'HEAD', agent: false}, response => {
-      resolve(response.statusCode === 200 && response.headers['x-town12-viewer'] === identity ?
-        response.headers['x-town12-revision'] === revision ? 'current' : 'outdated' : false);
+      resolve(response.statusCode === 200 && response.headers[viewerHeader] === identity ?
+        response.headers[revisionHeader] === revision ? 'current' : 'outdated' : false);
       response.resume();
     });
     const timer = setTimeout(() => { request.destroy(); resolve(false); }, 750);
@@ -103,7 +107,7 @@ function listen(port) {
       continue;
     }
     llmAPI.start();
-    console.log(`Town12 标定可视化：${url}\n按 Ctrl+C 停止服务。`); open(url); return;
+    console.log(`城市无人机巡查平台：${url}\n按 Ctrl+C 停止服务。`); open(url); return;
   }
   throw Error('8765至8784端口均被占用，请关闭不需要的本地服务后重试。');
 })().catch(error => { console.error(error.message); process.exitCode = 1; if (server.listening) server.close(); });

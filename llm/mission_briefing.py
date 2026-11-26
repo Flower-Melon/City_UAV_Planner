@@ -1,48 +1,29 @@
-"""Generate a cited, read-only briefing from a patrol's execution journal."""
+"""Generate a cited briefing when a patrol event changes the situation."""
 
 import json
 from pathlib import Path
-import re
 
 
 class MissionBriefing:
-    def __init__(self, client, model, journal_directory):
+    def __init__(self, client, model):
         self.client = client
         self.model = model
-        self.directory = Path(journal_directory).resolve()
         self.prompt = (Path(__file__).parent / "prompts" / "mission_briefing.txt").read_text(encoding="utf-8")
 
-    def summarize(self, session_id, revision, previous_update=None):
-        if not isinstance(session_id, str) or not re.fullmatch(r"[a-f0-9]{32}", session_id):
-            raise ValueError("无效的任务日志编号。")
-        if type(revision) is not int or revision < 1:
-            raise ValueError("无效的任务日志版本。")
-        journal = (self.directory / f"{session_id}.jsonl").resolve(strict=True)
-        if journal.parent != self.directory:
-            raise ValueError("任务日志路径无效。")
-        with journal.open("rb") as stream:
-            end = stream.seek(0, 2)
-            start = max(0, end - 128 * 1024)
-            stream.seek(max(0, start - 1))
-            if start and stream.read(1) != b"\n":
-                stream.readline(end - start)
-            data = stream.read(end - stream.tell())
-        # The executor may have been appending a newer revision when the file size was sampled.
-        lines = data.split(b"\n")[:-1]
+    def summarize(self, current, events, trigger_ids, previous_update=None):
+        if not isinstance(current, dict) or not events or not trigger_ids:
+            raise ValueError("本次巡查更新缺少有效事件。")
+        evidence = {event["id"]: event for event in events}
+        triggers = set(trigger_ids)
+        if not triggers.issubset(evidence):
+            raise ValueError("巡查更新的触发事件无效。")
 
-        revisions = [json.loads(line) for line in lines]
-        revisions = [entry for entry in revisions if entry["revision"] <= revision]
-        if not revisions or revisions[-1]["revision"] != revision:
-            raise ValueError("指定的任务日志版本尚不可用。")
-        previous_revision = previous_update["revision"] if previous_update else 0
-        event_revisions = [(event, entry["revision"]) for entry in revisions for event in entry["events"]][-24:]
-        events = [dict(event, new_since_previous=recorded_at > previous_revision)
-                  for event, recorded_at in event_revisions]
         response = self.client.responses.create(
             model=self.model,
             instructions=self.prompt,
             input=[{"role": "user", "content": json.dumps(
-                {"current": revisions[-1]["current"], "events": events, "previous_update": previous_update},
+                {"current": current, "events": events, "trigger_ids": trigger_ids,
+                 "previous_update": previous_update},
                 ensure_ascii=False
             )}],
             temperature=0,
@@ -50,18 +31,29 @@ class MissionBriefing:
             store=False,
         )
         if response.status != "completed":
-            raise ValueError("模型未完成本次战报。")
+            raise ValueError("模型未完成本次巡查研判。")
         try:
             result = json.loads(response.output_text)
             summary = result["summary"].strip()
             focus = result["next_focus"].strip()
             citations = result["evidence"]
-            evidence = {event["id"]: event for event, _ in event_revisions}
-            if not (0 < len(summary) <= 240 and 0 < len(focus) <= 140 and isinstance(citations, list)
-                    and 1 <= len(citations) <= 3 and all(type(item) is int and item in evidence for item in citations)
-                    and len(set(citations)) == len(citations)):
+            if not (0 < len(summary) <= 260 and 0 < len(focus) <= 140 and isinstance(citations, list)
+                    and 1 <= len(citations) <= 4 and all(type(item) is int and item in evidence for item in citations)
+                    and len(set(citations)) == len(citations) and triggers.intersection(citations)):
                 raise ValueError
         except (ValueError, TypeError, KeyError, AttributeError):
-            raise ValueError("模型返回的战报或日志引用无效。") from None
+            raise ValueError("模型返回的研判或引用无效。") from None
+
+        subjects = {event.get("subject") for event in events if event["id"] in triggers}
+        subjects.discard(None)
+        case_notes = {}
+        notes = result.get("case_notes")
+        if isinstance(notes, list):
+            for note in notes[:4]:
+                if not isinstance(note, dict):
+                    continue
+                key, text = note.get("id"), note.get("text")
+                if isinstance(key, str) and key in subjects and isinstance(text, str) and 0 < len(text.strip()) <= 120:
+                    case_notes[key] = text.strip()
         return {"summary": summary, "next_focus": focus, "evidence": [evidence[item] for item in citations],
-                "model": self.model}
+                "case_notes": case_notes, "model": self.model}

@@ -266,7 +266,7 @@ class World:
         assets = unreal.AssetRegistryHelpers.get_asset_registry().get_assets_by_class("World")
         for asset in assets:
             name = str(asset.asset_name)
-            if name.startswith("Town12_Tile_") and (name.endswith("_Static") or name.endswith("_Buildings_HLOD_Test")):
+            if "_Tile_" in name and name.endswith(("_Static", "_Buildings_HLOD_Test")):
                 level = unreal.GameplayStatics.get_streaming_level(world, name)
                 if level is not None and level not in self.levels:
                     self.levels.append(level)

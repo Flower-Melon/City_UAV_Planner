@@ -100,12 +100,11 @@ class PythonBridge:
 
                 client, model = create_client(timeout=40, max_retries=0)
                 try:
-                    directory = Path(__file__).resolve().parents[2] / "output" / "mission-briefings"
-                    self.briefing = MissionBriefing(client, model, directory)
+                    self.briefing = MissionBriefing(client, model)
                 except Exception:
                     client.close()
                     raise
-            return self.briefing.summarize(request.get("session_id"), request.get("revision"),
+            return self.briefing.summarize(request["current"], request["events"], request["trigger_ids"],
                                            request.get("previous_update"))
         if operation == "traffic_start":
             from web.utils.traffic_pipeline import start_session
@@ -322,6 +321,10 @@ class PythonBridge:
                         drone_id = selected
                         if on_event is not None:
                             on_event({"type": "drone_selected", "drone_id": drone_id})
+                    if getattr(record, "search_started", False) and on_event is not None:
+                        on_event({"type": "search_started"})
+                    if getattr(record, "search_frame_saved", False) and on_event is not None:
+                        on_event({"type": "search_frame_saved"})
                     directory = getattr(record, "capture_directory", None)
                     if directory is None:
                         return
@@ -344,12 +347,21 @@ class PythonBridge:
                 logger.setLevel(previous_level)
                 handler.close()
             return {"completed": True, "capture_directory": capture_directory, "drone_id": drone_id}
-        if operation == "demo_target":
-            from web.utils.people_state import get_demo_target
+        if operation == "person_identity":
+            from web.utils.people_state import get_person_state
 
-            person = get_demo_target(request.get("kind"), request.get("zone_id"))
+            person_id = request.get("person_id")
+            if not isinstance(person_id, str) or not re.fullmatch(r"(patient|armed_person)_[0-9]+", person_id):
+                raise ValueError("需要曝光画面中的仿真人物ID")
+            person = get_person_state(person_id)
             return {"person_id": person["person_id"], "zone_id": person["zone_id"],
-                    "target_position": person["position_m"]}
+                    "kind": person["kind"], "target_position": person["position_m"]}
+        if operation == "vision_warmup":
+            from web.utils.vision_pipeline import SearchVisionPipeline
+            if self.vision is None:
+                self.vision = SearchVisionPipeline()
+            self.vision.warmup()
+            return {"ready": True}
         if operation in ("vision", "locate_patient", "locate_target"):
             image_path = request.get("image_path")
             if not isinstance(image_path, str) or not image_path:
@@ -369,7 +381,10 @@ class PythonBridge:
             from web.utils.vision_pipeline import SearchVisionPipeline
             if self.vision is None:
                 self.vision = SearchVisionPipeline()
-            return self.vision(path)
+            frame = request.get("frame")
+            if frame is not None and (not isinstance(frame, dict) or frame.get("image") != path.name):
+                raise ValueError("曝光记录与巡查图片不一致")
+            return self.vision(path, frame=frame)
         if operation == "abnormal_spawn":
             from Scene import spawn_vehicle, spawn_armed_person, spawn_patient, set_vehicle_behavior
             from Scene import get_zone, zone_at
@@ -465,7 +480,7 @@ class PythonBridge:
                     message = str(error) if isinstance(error, (ValueError, RuntimeError, OSError)) else type(error).__name__
                     if isinstance(error, ModuleNotFoundError):
                         message = f"Python无法导入模块 {error.name}，请检查目录大小写及当前Python环境的依赖。"
-                    elif operation in ("plan", "vision", "mission_briefing"):
+                    elif operation in ("plan", "vision", "vision_warmup", "mission_briefing"):
                         try:
                             from llm.utils.client import error_message
                             message = error_message(error)

@@ -32,11 +32,12 @@ async function readAbnormalBody(request) {
 }
 
 module.exports = class AbnormalController {
-  constructor({root, startPursuit, getPursuit, executePersonAction}) {
+  constructor({root, startPursuit, getPursuit, executePersonAction, onEscape = () => {}}) {
     this.runtime = new PythonRuntime({root});
     this.startPursuit = startPursuit;
     this.getPursuit = getPursuit;
     this.executePersonAction = executePersonAction;
+    this.onEscape = onEscape;
     this.jobs = new Map();
     this.activePersonActions = new Set();
     this.queue = Promise.resolve();
@@ -91,6 +92,10 @@ module.exports = class AbnormalController {
     this.queue = dispatch.then(() => {}, () => {});
     void dispatch.then(({result}) => result).then(result => {
       Object.assign(job, {status: 'completed', result});
+      if (operation === 'abnormal_escape') {
+        try { this.onEscape({id: result.target_id}); }
+        catch (error) { console.warn(`无法发布车辆场景事件 (${error.name})`); }
+      }
     }, error => {
       Object.assign(job, {status: 'failed', error: error.message});
     }).finally(() => {

@@ -139,7 +139,7 @@ finally:
 
 ### 1.3 mission_briefing
 
-`MissionBriefing(client, model, journal_directory).summarize(session_id, revision, previous_update=None)` 读取指定版本的执行快照和近期事件。提交上一则更新时，模型会获得该更新的日志版本和文本，据此重点说明新增变化。接口返回中文说明 `summary`、人工核验建议 `next_focus` 和经校验的日志引用 `evidence`，复用规划模型配置并通过独立的 Python 通道生成。
+`MissionBriefing(client, model).summarize(current, events, trigger_ids, previous_update=None)` 接收当前任务快照、按目标整理的线索、近期事件和本次触发事件编号。接口返回现场判断 `summary`、核验建议 `next_focus`、经校验的事件引用 `evidence`，以及可选的目标补充判断 `case_notes`。网页服务在关键事件发生后通过独立 Python 通道调用，事件及其证据会接着执行状态进入界面。
 
 ## 2 utils
 
@@ -219,6 +219,7 @@ client, model = create_client(timeout=60.0, max_retries=1)
 | `OPENAI_MODEL` | 规划模型，默认 `gpt-4.1-mini` |
 | `OPENAI_BASE_URL` | 模型服务地址，可选，留空使用官方服务 |
 | `OPENAI_VISION_MODEL` | 视觉模型，可选，未设置时使用 `OPENAI_MODEL` |
+| `OPENAI_VISION_API` | 视觉请求接口，默认 `responses`。支持 Qwen 图像输入和 JSON 输出的兼容服务可用 `qwen_chat`，关闭思考后直接返回分类及依据 |
 | `OLLAMA_BASE_URL` | Ollama 服务根地址，默认 `http://127.0.0.1:11434` |
 | `OLLAMA_MODEL` | Ollama 中的规划模型标签，默认 `qwen3.5:4b-q4_K_M` |
 | `OLLAMA_VISION_MODEL` | 可选，未设置时使用 `OLLAMA_MODEL` |
